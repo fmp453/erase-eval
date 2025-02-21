@@ -1,6 +1,6 @@
 # Erasing with Precision: Evaluating Specific Concept Erasure from Text-to-Image Generative Models
 
-Official implementation of the paper, [Erasing with Precision: Evaluating Specific Concept Erasure from Text-to-Image Generative Models]().
+Official implementation of the paper, [Erasing with Precision: Evaluating Specific Concept Erasure from Text-to-Image Generative Models](https://arxiv.org/abs/2502.13989).
 
 ## Install (our experiments)
 1. base environments
@@ -59,10 +59,16 @@ python eval.py --method esd --protocol 1 --device 0
 ```
 
 ## Citation
-Our paper can be cited as follows
+Our paper can be cited as follows (currently. We are now appealing to change the primary class from eess.IV to cs.CV.)
 ```tex
-@misc{
-    
+@misc{fuchi2025erasingprecisionevaluatingspecific,
+      title={Erasing with Precision: Evaluating Specific Concept Erasure from Text-to-Image Generative Models}, 
+      author={Masane Fuchi and Tomohiro Takagi},
+      year={2025},
+      eprint={2502.13989},
+      archivePrefix={arXiv},
+      primaryClass={eess.IV},
+      url={https://arxiv.org/abs/2502.13989}, 
 }
 ```
 
