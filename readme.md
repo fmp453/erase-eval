@@ -59,7 +59,7 @@ python eval.py --method esd --protocol 1 --device 0
 ```
 
 ## Citation
-Our paper can be cited as follows (currently. We are now appealing to change the primary class from eess.IV to cs.CV.)
+Our paper can be cited as follows. 
 ```tex
 @misc{fuchi2025erasingprecisionevaluatingspecific,
       title={Erasing with Precision: Evaluating Specific Concept Erasure from Text-to-Image Generative Models}, 
@@ -67,7 +67,7 @@ Our paper can be cited as follows (currently. We are now appealing to change the
       year={2025},
       eprint={2502.13989},
       archivePrefix={arXiv},
-      primaryClass={eess.IV},
+      primaryClass={cs.CV},
       url={https://arxiv.org/abs/2502.13989}, 
 }
 ```
