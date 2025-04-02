@@ -2,6 +2,8 @@
 
 Official implementation of the paper, [Erasing with Precision: Evaluating Specific Concept Erasure from Text-to-Image Generative Models](https://arxiv.org/abs/2502.13989).
 
+You can evaluate many concept erasure methods for text-to-image generative models (such as Stbale Diffusion and FLUX) by using this implementation.
+
 ## Install (our experiments)
 1. base environments
     ```bash
@@ -57,6 +59,13 @@ export HF_TOKEN="YOUR_HUGGINGFACE_TOKEN"
 ```bash
 python eval.py --method esd --protocol 1 --device 0
 ```
+
+## Additional Methods
+This repository provides the concept erasure methods listed in [Acknowledgement](#Acknowledgement). If you want to try other methods, 
+
+1. create `train_METHODNAME.py` in `train_methods` directory using diffusers.
+2. create `infer_METHODNAME.py` in `infer_methods` directory using diffusers.
+3. add name and other hyperparameters of your methods in `Arguments.method` of `utils.py`.
 
 ## Citation
 Our paper can be cited as follows. 
