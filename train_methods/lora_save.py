@@ -121,7 +121,7 @@ class LoraInjectedConv2d(nn.Module):
         self.selector.weight.data = self.selector.weight.data.to(self.lora_up.weight.device).to(self.lora_up.weight.dtype)
 
 @torch.no_grad()
-def inspect_lora(model):
+def inspect_lora(model: nn.Module):
     moved = {}
 
     for name, _module in model.named_modules():
@@ -140,7 +140,7 @@ def inspect_lora(model):
     return moved
 
 def _find_modules(
-    model,
+    model: nn.Module,
     ancestor_class: Optional[set[str]] = None,
     search_class: list[Type[nn.Module]] = [nn.Linear],
     exclude_children_of: Optional[list[Type[nn.Module]]] = [
@@ -241,16 +241,16 @@ def save_all(
                 learned_embeds_dict[tok] = learned_embeds.detach().cpu()
 
             torch.save(learned_embeds_dict, ti_path)
-            print("Ti saved to ", ti_path)
+            print(f"Ti saved to {ti_path}")
 
         # save text encoder
         if save_lora:
 
             save_lora_weight(unet, save_path, target_replace_module=target_replace_module_unet)
-            print("Unet saved to ", save_path)
+            print(f"Unet saved to {save_path}")
 
             save_lora_weight(text_encoder, _text_lora_path(save_path), target_replace_module=target_replace_module_text,)
-            print("Text Encoder saved to ", _text_lora_path(save_path))
+            print(f"Text Encoder saved to {_text_lora_path(save_path)}")
 
     else:
         assert save_path.endswith(

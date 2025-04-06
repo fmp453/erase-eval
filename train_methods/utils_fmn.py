@@ -211,7 +211,7 @@ def get_models(pretrained_model_name_or_path: str, placeholder_tokens: list[str]
         placeholder_token_ids,
     )
 
-def text2img_dataloader(train_dataset, train_batch_size, tokenizer):
+def text2img_dataloader(train_dataset, train_batch_size: int, tokenizer: CLIPTokenizer):
     def collate_fn(examples):
         input_ids = [example["instance_prompt_ids"] for example in examples]
         uncond_ids = [example["uncond_prompt_ids"] for example in examples]
@@ -238,7 +238,7 @@ def text2img_dataloader(train_dataset, train_batch_size, tokenizer):
             padding="max_length",
             max_length=tokenizer.model_max_length,
             return_tensors="pt",
-        ).input_ids        
+        ).input_ids
 
         batch = {
             "input_ids": input_ids,
@@ -261,7 +261,7 @@ def text2img_dataloader(train_dataset, train_batch_size, tokenizer):
     return train_dataloader
 
 
-def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encoder: CLIPTextModel, scheduler, t_mutliplier=1.0):
+def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encoder: CLIPTextModel, scheduler: DDPMScheduler, t_mutliplier=1.0):
     weight_dtype = torch.float32
 
     latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype).to(unet.device)).latent_dist.sample()
@@ -309,12 +309,12 @@ def train_inversion(
     num_steps: int,
     scheduler,
     index_no_updates,
-    optimizer,
+    optimizer: optim.Optimizer,
     save_steps: int,
     placeholder_token_ids,
     placeholder_tokens,
     save_path: str,
-    lr_scheduler,
+    lr_scheduler: optim.lr_scheduler.LRScheduler,
     accum_iter: int = 1,
     clip_ti_decay: bool = True
 ):
@@ -531,8 +531,8 @@ def parse_safeloras_embeds(safeloras) -> dict[str, torch.Tensor]:
 
 def apply_learned_embed_in_clip(
     learned_embeds,
-    text_encoder,
-    tokenizer,
+    text_encoder: CLIPTextModel,
+    tokenizer: CLIPTokenizer,
     token: Optional[Union[str, list[str]]] = None,
     idempotent=False,
 ):
@@ -579,7 +579,7 @@ class ForgetMeNotDataset(Dataset):
 
     def __init__(
         self,
-        tokenizer,
+        tokenizer: CLIPTokenizer,
         size=512,
         center_crop=False,
         use_added_token= False,
@@ -707,7 +707,6 @@ def attn_component(
     resolution: int,
     center_crop: bool,
     use_pooler: bool,
-    # with_prior_preservation: bool,
     dataloader_num_workers: int,
     max_train_steps: int,
     num_train_epochs: int,
@@ -724,8 +723,6 @@ def attn_component(
     
     if seed is not None:
         set_seed(seed)
-    
-    # os.makedirs(output_dir, exist_ok=True)
 
     # Load scheduler and models
     noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_name_or_path, subfolder="scheduler")
@@ -831,7 +828,7 @@ def attn_component(
         print("optimize unet...")
     
     # these are default values except lr
-    optimizer = torch.optim.AdamW(
+    optimizer = optim.AdamW(
         params_to_optimize,
         lr=learning_rate,
         betas=(0.9, 0.999),
