@@ -82,7 +82,7 @@ def sample_until(
 
     return latents
 
-def apply_model(unet: UNet2DConditionModel, z: torch.Tensor, t_enc_ddpm: torch.Tensor, emb_0: torch.Tensor):
+def apply_model(unet: UNet2DConditionModel, z: torch.Tensor, t_enc_ddpm: torch.Tensor, emb_0: torch.Tensor) -> torch.Tensor:
     # get conditional and unconditional scores from frozen model at time step t and image z
 
     device = unet.device
@@ -93,13 +93,13 @@ def apply_model(unet: UNet2DConditionModel, z: torch.Tensor, t_enc_ddpm: torch.T
     noise_pred = unet(z, t_enc_ddpm, encoder_hidden_states=emb_0).sample
     return noise_pred
 
-def id2embedding(tokenizer: CLIPTokenizer, all_embeddings, input_ids, device):
+def id2embedding(tokenizer: CLIPTokenizer, all_embeddings: torch.Tensor, input_ids: torch.Tensor, device) -> torch.Tensor:
     input_one_hot = F.one_hot(input_ids.view(-1), num_classes = len(tokenizer.get_vocab())).float()
     input_one_hot = torch.unsqueeze(input_one_hot,0).to(device)
     input_embeds = input_one_hot @ all_embeddings
     return input_embeds
 
-def init_adv(k, tokenizer, all_embeddings, attack_type, device, batch = 1, attack_init_embd = None):
+def init_adv(k, tokenizer, all_embeddings, device, batch = 1, attack_init_embd = None):
     # Different attack types have different initializations (Attack types: add, insert)
     adv_embedding = torch.nn.Parameter(torch.randn([batch, k, 768])).to(device)
     
@@ -116,7 +116,7 @@ def init_adv(k, tokenizer, all_embeddings, attack_type, device, batch = 1, attac
     
     return adv_embedding
 
-def soft_prompt_attack(global_step, word, unet, unet_orig, tokenizer, text_encoder, scheduler, emb_0, emb_p, start_guidance, devices, ddim_steps, ddim_eta, image_size, criteria, k, all_embeddings,  attack_round, attack_type, attack_embd_type, attack_step, attack_lr, attack_init=None, attack_init_embd = None, attack_method='pgd'):
+def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler, emb_0, emb_p, start_guidance, devices, ddim_steps, criteria, k, all_embeddings, attack_type, attack_embd_type, attack_step, attack_lr, attack_init=None, attack_init_embd = None, attack_method='pgd'):
     
     '''
     Perform soft prompt attack on the ESD model
@@ -149,7 +149,7 @@ def soft_prompt_attack(global_step, word, unet, unet_orig, tokenizer, text_encod
     )
     
     # Word Tokenization
-    text_input = tokenizer(word, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt",truncation=True)
+    text_input = tokenizer(word, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt", truncation=True)
     sot_id, mid_id, replace_id, eot_id = split_id(text_input.input_ids.to(devices[0]), k, orig_prompt_len)
     
     # Word embedding for the prompt
@@ -157,9 +157,9 @@ def soft_prompt_attack(global_step, word, unet, unet_orig, tokenizer, text_encod
     sot_embd, mid_embd, _, eot_embd = split_embd(text_embeddings, k, orig_prompt_len)
     
     if attack_init == 'latest':
-        adv_embedding = init_adv(k, tokenizer, all_embeddings,  attack_type, devices[0], 1, attack_init_embd)
+        adv_embedding = init_adv(k, tokenizer, all_embeddings, devices[0], 1, attack_init_embd)
     elif attack_init == 'random':
-        adv_embedding = init_adv(k, tokenizer, all_embeddings,  attack_type, devices[0], 1)
+        adv_embedding = init_adv(k, tokenizer, all_embeddings, devices[0], 1)
     
     adv_embedding.requires_grad = True
     attack_opt = optim.Adam([adv_embedding], lr=attack_lr)
@@ -222,7 +222,7 @@ def split_id(input_ids, k, orig_prompt_len):
     sot_id, mid_id, replace_id, eot_id = torch.split(input_ids, [1, orig_prompt_len, k, 76-orig_prompt_len-k], dim=1)
     return sot_id, mid_id, replace_id, eot_id
 
-def construct_embd(k, adv_embedding, insertion_location, sot_embd, mid_embd, eot_embd):
+def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd: torch.Tensor, mid_embd: torch.Tensor, eot_embd: torch.Tensor):
     if insertion_location == 'prefix_k':     # Prepend k words before the original prompt
         embedding = torch.cat([sot_embd,adv_embedding,mid_embd,eot_embd],dim=1)
     elif insertion_location == 'replace_k':  # Replace k words in the original prompt
@@ -263,7 +263,7 @@ def construct_embd(k, adv_embedding, insertion_location, sot_embd, mid_embd, eot
         embedding = torch.cat(embedding,dim=1)
     return embedding
 
-def construct_id(k, adv_id, insertion_location,sot_id,eot_id,mid_id):
+def construct_id(k, adv_id: torch.Tensor, insertion_location, sot_id, eot_id: torch.Tensor, mid_id: torch.Tensor):
     if insertion_location == 'prefix_k':
         input_ids = torch.cat([sot_id,adv_id,mid_id,eot_id],dim=1)
         
@@ -309,7 +309,7 @@ def construct_id(k, adv_id, insertion_location,sot_id,eot_id,mid_id):
         input_ids = torch.cat(input_ids,dim=1)
     return input_ids
 
-def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_orig, text_encoder, scheduler, emb_0, emb_p, retain_emb_p,  emb_n, retain_emb_n, start_guidance, negative_guidance, devices, ddim_steps, criteria, adv_input_ids, attack_embd_type, adv_embd=None):
+def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_orig, text_encoder, scheduler, emb_0, emb_p, retain_emb_p,  emb_n, retain_emb_n, start_guidance, negative_guidance, devices, ddim_steps, criteria, adv_input_ids, attack_embd_type, adv_embd=None) -> torch.Tensor:
     """_summary_
 
     Args:

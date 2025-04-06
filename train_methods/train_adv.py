@@ -49,17 +49,17 @@ def retain_prompt(dataset_retain):
     # Prompt Dataset to be retained
 
     if dataset_retain == 'imagenet243':
-        retain_dataset = PromptDataset('captions/imagenet243_retain.csv')
+        prompt_dataset_file_path = 'captions/imagenet243_retain.csv'
     elif dataset_retain == 'imagenet243_no_filter':
-        retain_dataset = PromptDataset('captions/imagenet243_no_filter_retain.csv')
+        prompt_dataset_file_path = 'captions/imagenet243_no_filter_retain.csv'
     elif dataset_retain == 'coco_object':
-        retain_dataset = PromptDataset('captions/coco_object_retain.csv')
+        prompt_dataset_file_path = 'captions/coco_object_retain.csv'
     elif dataset_retain == 'coco_object_no_filter':
-        retain_dataset = PromptDataset('captions/coco_object_no_filter_retain.csv')
+        prompt_dataset_file_path = 'captions/coco_object_no_filter_retain.csv'
     else:
         raise ValueError('Invalid dataset for retaining prompts')
     
-    return retain_dataset
+    return PromptDataset(prompt_dataset_file_path)
 
 def param_choices(train_method: str, text_encoder: CustomCLIPTextModel=None, unet: UNet2DConditionModel=None, component='all', final_layer_norm=False):
     parameters = []
@@ -270,14 +270,14 @@ def train(args: Arguments):
                 unet.eval()
                 if attack_round == 0:
                     if args.adv_attack_embd_type == 'word_embd':
-                        adv_word_embd, adv_input_ids = soft_prompt_attack(global_step, word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p,  args.start_guidance,  devices, args.ddim_steps, ddim_eta, args.image_size, criteria, args.adv_prompt_num, all_embeddings, attack_round, args.adv_attack_type,  args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, None, args.adv_attack_method)
+                        adv_word_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type,  args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, None, args.adv_attack_method)
                     elif args.adv_attack_embd_type == 'condition_embd':
-                        adv_condition_embd, adv_input_ids = soft_prompt_attack(global_step, word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance,  devices, args.ddim_steps, ddim_eta, args.image_size, criteria, args.adv_prompt_num, all_embeddings, attack_round, args.adv_attack_type, args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, None, args.adv_attack_method) 
+                        adv_condition_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type, args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, None, args.adv_attack_method) 
                 else:
                     if args.adv_attack_embd_type == 'word_embd':
-                        adv_word_embd, adv_input_ids = soft_prompt_attack(global_step, word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p,  args.start_guidance,  devices, args.ddim_steps, ddim_eta, args.image_size, criteria, args.adv_prompt_num, all_embeddings, attack_round, args.adv_attack_type,  args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, adv_word_embd, args.adv_attack_method)
+                        adv_word_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type,  args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, adv_word_embd, args.adv_attack_method)
                     elif args.adv_attack_embd_type == 'condition_embd':
-                        adv_condition_embd, adv_input_ids = soft_prompt_attack(global_step, word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance,  devices, args.ddim_steps, ddim_eta, args.image_size, criteria, args.adv_prompt_num, all_embeddings, attack_round, args.adv_attack_type, args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, adv_condition_embd, args.adv_attack_method) 
+                        adv_condition_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type, args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, adv_condition_embd, args.adv_attack_method) 
                 
                 global_step += args.adv_attack_step
                 attack_round += 1
