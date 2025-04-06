@@ -70,7 +70,7 @@ def gather_parameters(args: Arguments, unet: UNet2DConditionModel) -> tuple[list
             names.append(name)
             parameters.append(param)
         else:
-            raise ValueError(f"Unknown finetuning method: {args.finetuning_method}")
+            raise ValueError(f"Unknown finetuning method: {args.salun_method}")
 
     return names, parameters
 
@@ -327,7 +327,7 @@ class Imagenette(Dataset):
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> tuple[torch.Tensor, str]:
         example = self.dataset[idx]
         image = example["image"]
         label = example["label"]
@@ -347,7 +347,7 @@ class NSFW(Dataset):
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> torch.Tensor:
         example = self.dataset[idx]
         image = example["image"]
 
@@ -364,7 +364,7 @@ class NOT_NSFW(Dataset):
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> torch.Tensor:
         example = self.dataset[idx]
         image = example["image"]
 
@@ -381,7 +381,7 @@ class CustomData(Dataset):
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> torch.Tensor:
         example = self.dataset[idx]
         image = example["image"]
 

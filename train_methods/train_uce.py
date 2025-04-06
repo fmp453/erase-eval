@@ -14,8 +14,8 @@ from utils import Arguments
 
 def edit_model(
         unet: UNet2DConditionModel,
-        text_encoder,
-        tokenizer,
+        text_encoder: CLIPTextModel,
+        tokenizer: CLIPTokenizer,
         old_text_,
         new_text_,
         retain_text_,

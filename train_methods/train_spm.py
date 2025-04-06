@@ -19,7 +19,7 @@ from tqdm import tqdm
 from train_methods.utils_spm import SPMNetwork, SPMLayer
 
 from transformers import CLIPTokenizer, CLIPTextModel
-from diffusers import UNet2DConditionModel, SchedulerMixin, PNDMScheduler
+from diffusers import UNet2DConditionModel, PNDMScheduler
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
 from utils import Arguments
@@ -182,7 +182,7 @@ def get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_
     schedule_func = TYPE_TO_SCHEDULER_FUNCTION[SchedulerType("cosine_with_restarts")]
     return schedule_func(optimizer, num_warmup_steps=lr_warmup_steps, num_training_steps=num_training_steps, num_cycles=lr_scheduler_num_cycles)
 
-def text_tokenize(tokenizer: CLIPTokenizer, prompts: list[str]):
+def text_tokenize(tokenizer: CLIPTokenizer, prompts: list[str]) -> torch.Tensor:
     return tokenizer(
         prompts,
         padding="max_length",
@@ -191,7 +191,7 @@ def text_tokenize(tokenizer: CLIPTokenizer, prompts: list[str]):
         return_tensors="pt",
     ).input_ids
 
-def encode_prompts(tokenizer, text_encoder, prompts: list[str], return_tokens: bool = False):
+def encode_prompts(tokenizer, text_encoder: CLIPTextModel, prompts: list[str], return_tokens: bool = False) -> torch.Tensor:
     text_tokens = text_tokenize(tokenizer, prompts)
     text_embeddings = text_encoder(text_tokens.to(text_encoder.device))[0]
 
@@ -206,14 +206,14 @@ def get_random_noise(batch_size: int, height: int, width: int, generator: torch.
         device="cpu",
     )
 
-def get_initial_latents(scheduler, n_imgs, height, width, n_prompts, generator=None):
+def get_initial_latents(scheduler: PNDMScheduler, n_imgs: int, height: int, width: int, n_prompts: int, generator=None):
     noise = get_random_noise(n_imgs, height, width, generator=generator).repeat(n_prompts, 1, 1, 1)
     latents = noise * scheduler.init_noise_sigma
     return latents
 
 def predict_noise(
     unet: UNet2DConditionModel,
-    scheduler: SchedulerMixin,
+    scheduler: PNDMScheduler,
     timestep: int,
     latents: torch.FloatTensor,
     text_embeddings: torch.FloatTensor,
@@ -235,7 +235,7 @@ def predict_noise(
 @torch.no_grad()
 def diffusion(
     unet: UNet2DConditionModel,
-    scheduler: SchedulerMixin,
+    scheduler: PNDMScheduler,
     latents: torch.FloatTensor, 
     text_embeddings: torch.FloatTensor,
     total_timesteps: int = 1000,

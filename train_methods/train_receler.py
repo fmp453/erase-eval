@@ -150,7 +150,7 @@ class EraserOutputsCapture:
             handler.remove()
 
     def get_eraser_outs(self, module_name):
-        def hook(model, input, output):
+        def hook(model, input, output: torch.Tensor):
             if output.dim() == 2:
                 output = torch.unsqueeze(output, 0)
             self.eraser_outs[module_name] = output
@@ -297,7 +297,7 @@ def train_receler(args: Arguments):
     device = torch.device(f'cuda:{args.device.split(",")[0]}')
 
     # extend specific concept
-    concept = args.concepts
+    concept: str = args.concepts
     word_print = concept.replace(' ', '')
     original_concept = concept
 
@@ -422,7 +422,7 @@ def train_receler(args: Arguments):
                         print(f'Warning: cannot compute regularization loss for {e_name}, because corresponding mask not found.')  # cannot find mask for regularizing
                         continue
                     reg_count += 1
-                    mask = attn_masks[prefix_name]
+                    mask: torch.Tensor = attn_masks[prefix_name]
                     flip_mask = (~mask.unsqueeze(1).bool()).float()  # (1, 1, w, h)
                     if e_out.dim() == 3:  # (1, w*h, dim) -> (1, dim, w, h)
                         w = flip_mask.shape[2]

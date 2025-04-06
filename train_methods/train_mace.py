@@ -123,7 +123,7 @@ def get_grounding_output(model, image, caption: str, box_threshold, text_thresho
 
     return boxes_filt, pred_phrases
 
-def get_mask(input_image, text_prompt, model, predictor, device, output_dir=None, box_threshold=0.3, text_threshold=0.25):
+def get_mask(input_image: torch.Tensor, text_prompt, model, predictor, device, output_dir=None, box_threshold=0.3, text_threshold=0.25):
     
     os.makedirs(output_dir, exist_ok=True)
         
@@ -132,7 +132,7 @@ def get_mask(input_image, text_prompt, model, predictor, device, output_dir=None
     # run grounding dino model
     boxes_filt, _ = get_grounding_output(model, image, text_prompt, box_threshold, text_threshold, device=device)
         
-    image_np = image.cpu().numpy()
+    image_np: np.ndarray = image.cpu().numpy()
     image_np = ((image_np / max(image_np.max().item(), abs(image_np.min().item())) + 1) * 255 * 0.5).astype(np.uint8)
     
     # C x H x W  to  H x W x C
@@ -263,7 +263,7 @@ def cfr_lora_training(args: Arguments):
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    noise_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+    noise_scheduler: DDPMScheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     
     unet.to(device)
     vae.requires_grad_(False)
