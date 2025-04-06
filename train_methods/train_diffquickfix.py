@@ -1,5 +1,7 @@
 # Localizing and Editing Knowledge in Text-to-Image Generative Models (DiffQuickFix)
 
+# almost of all is copied from https://github.com/adobe-research/DiffQuickFixRelease/blob/main/causal_trace_model_edit.ipynb
+
 import os
 import random
 from copy import deepcopy
@@ -8,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from transformers import CLIPTokenizer, CLIPTextModel
-from diffusers import UNet2DConditionModel, StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionSafetyChecker
 
 from utils import Arguments
@@ -40,6 +42,7 @@ def decode_tokens(tokenizer: CLIPTokenizer, token_array):
         return [decode_tokens(tokenizer, row) for row in token_array]
     return [tokenizer.decode([t]) for t in token_array]
 
+# maybe under construction
 def train_edit(model, projection_matrices, og_matrices, contexts, values, old_texts, new_texts, lamb=0.01):
     print(f'############## Editing function #################')
     # Contexts for the three projection matrices
