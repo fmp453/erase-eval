@@ -1,3 +1,5 @@
+# On Mechanistic Knowledge Localization in Text-to-Image Generative Models (LocoGen)
+
 import torch
 from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel

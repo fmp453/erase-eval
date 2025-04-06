@@ -1,3 +1,5 @@
+# SalUn: Empowering Machine Unlearning via Gradient-based Weight Saliency in Both Image Classification and Generation
+
 # ref: https://github.com/nannullna/safe-diffusion/blob/main/train_sdd.py
 
 import os

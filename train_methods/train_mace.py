@@ -1,3 +1,5 @@
+# MACE: Mass Concept Erasure in Diffusion Models
+
 import os
 import gc
 import math

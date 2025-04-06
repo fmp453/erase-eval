@@ -1,3 +1,5 @@
+# Erasing Concepts from Diffusion Models (ESD)
+
 # ref: https://github.com/nannullna/safe-diffusion/blob/main/train_sdd.py
 
 import inspect

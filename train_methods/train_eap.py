@@ -1,3 +1,5 @@
+# Erasing Undesirable Concepts in Diffusion Models with Adversarial Preservation (EAP)
+
 import os
 import random
 from typing import Optional, Any

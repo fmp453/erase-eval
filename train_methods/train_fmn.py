@@ -1,3 +1,5 @@
+# Forget-Me-Not: Learning to Forget in Text-to-Image Diffusion Models (FMN)
+
 import os
 import shutil
 import warnings

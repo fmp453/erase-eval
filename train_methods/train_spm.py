@@ -1,3 +1,5 @@
+# One-dimensional Adapter to Rule Them All: Concepts, Diffusion Models and Erasing Applications (SPM)
+
 # ref:
 # - https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L566
 # - https://huggingface.co/spaces/baulab/Erasing-Concepts-In-Diffusion/blob/main/train.py

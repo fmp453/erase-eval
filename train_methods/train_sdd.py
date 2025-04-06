@@ -1,10 +1,12 @@
+# Towards Safe Self-Distillation of Internet-Scale Text-to-Image Diffusion Models (SDD)
+# ref: https://github.com/nannullna/safe-diffusion
+
 import random
 from typing import Union
 
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-import torch.utils.checkpoint
 
 from tqdm.auto import tqdm
 from torch.optim.lr_scheduler import LambdaLR
@@ -15,9 +17,6 @@ from diffusers.optimization import get_scheduler
 
 from utils import Arguments
 from train_methods.train_utils import prepare_extra_step_kwargs, sample_until
-
-# sdd (safe self-distill diffusion)
-# ref: https://github.com/nannullna/safe-diffusion
 
 
 def gather_parameters(args: Arguments, unet: UNet2DConditionModel) -> tuple[list[str], list[torch.nn.Parameter]]:

@@ -13,7 +13,6 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-import torch.utils.checkpoint
 
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
