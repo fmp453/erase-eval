@@ -10,12 +10,10 @@ from utils import Arguments
 # Total number of computable operations / modules -- 709
 def high_level_layers(unet: UNet2DConditionModel):
     # Counter for the list
-    c = 0
     
     # Total list of all modules
     named_module_list = []
     for n, _ in unet.named_modules():
-        c += 1
         named_module_list.append(n)
 
     # Ends with 'attn2', 'attn1'
@@ -27,7 +25,7 @@ def high_level_layers(unet: UNet2DConditionModel):
     return attn_list
 
 # Model Editing Function - Non-SDXL models
-def train_edit(args, layer_edit_modules, key_embeddings, value_embeddings):
+def train_edit(args: Arguments, layer_edit_modules, key_embeddings, value_embeddings):
     
     # Iterate through each of the modules and then update the modules based on the closed-form expression
     for layer_num in range(0, len(layer_edit_modules)):
@@ -61,7 +59,7 @@ def train(args: Arguments):
     
     device = torch.device(f'cuda:{args.device.split(",")[0]}')
 
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
+    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     
@@ -87,7 +85,7 @@ def train(args: Arguments):
         return prompts
     
     # Function to generate output embeddings from the text-encoder
-    def generate_text_embeddings(tokenizer, text_encoder, key_prompt, value=False):
+    def generate_text_embeddings(tokenizer: CLIPTokenizer, text_encoder, key_prompt, value=False):
         # Obtaining the embeddings of the last subject token
         # Key : Text-Embedding
         key_embeddings = []

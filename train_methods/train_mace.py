@@ -33,9 +33,9 @@ from utils import Arguments
 warnings.filterwarnings("ignore")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-def inference(args: Arguments, device: str, multi_concept: list[list[str]], output_dir: str):
+def inference(args: Arguments, device: str, multi_concept: list[list[str]], output_dir: str) -> None:
     
-    pipe = StableDiffusionPipeline.from_pretrained(args.sd_version).to(device)
+    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(args.sd_version).to(device)
     pipe.safety_checker = None
     pipe.requires_safety_checker = False
     torch.Generator(device=device).manual_seed(42)
@@ -88,7 +88,7 @@ def get_phrases_from_posmap(posmap: torch.BoolTensor, tokenized: dict, tokenizer
     else:
         raise NotImplementedError("posmap must be 1-dim")
 
-def get_grounding_output(model, image, caption, box_threshold, text_threshold, with_logits=True, device="cpu"):
+def get_grounding_output(model, image, caption: str, box_threshold, text_threshold, with_logits=True, device="cpu"):
     caption = caption.lower()
     caption = caption.strip()
     if not caption.endswith("."):
@@ -125,9 +125,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold, w
 
 def get_mask(input_image, text_prompt, model, predictor, device, output_dir=None, box_threshold=0.3, text_threshold=0.25):
     
-    # make dir
-    if output_dir is not None:
-        os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
         
     image = input_image
     

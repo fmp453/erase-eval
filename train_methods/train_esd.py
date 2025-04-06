@@ -287,7 +287,7 @@ def main(args: Arguments):
     noise_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    ddim_scheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+    ddim_scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
 
     unet_teacher: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     unet_student: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")

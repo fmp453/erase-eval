@@ -81,7 +81,7 @@ def generation(args: Arguments):
     print("generate images for FMN")
 
     device = args.device.split(",")[0]
-    pipe = StableDiffusionPipeline.from_pretrained(args.sd_version).to(device=f"cuda:{device}")
+    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(args.sd_version).to(device=f"cuda:{device}")
     pipe.safety_checker = None
     prompt = f"a photo of {args.concepts}"
     os.makedirs(args.instance_data_dir, exist_ok=True)
@@ -132,7 +132,6 @@ def main(args: Arguments):
     attn_component(
         instance_data_dir=args.instance_data_dir,
         seed=args.seed,
-        # output_dir=args.save_dir,
         output_dir=f"{args.save_dir}/{args.concepts}-attn",
         pretrained_model_name_or_path=args.sd_version,
         multi_concept=multi_concept,

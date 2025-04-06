@@ -413,7 +413,7 @@ def get_imagenette_label_from_concept(concept):
     
     return d[concept]
 
-def setup_forget_data(concept, batch_size, image_size, args: Arguments, interpolation="bicubic"):
+def setup_forget_data(concept: str, batch_size, image_size, args: Arguments, interpolation="bicubic"):
     interpolation = INTERPOLATIONS[interpolation]
     transform = get_transform(interpolation, image_size)
 
@@ -467,7 +467,7 @@ def setup_forget_nsfw_data(batch_size, image_size, interpolation="bicubic"):
 def generate_mask(args: Arguments):
     
     device = torch.device(f'cuda:{args.device.split(",")[0]}')
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
+    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
@@ -573,7 +573,7 @@ def generate_mask(args: Arguments):
 
 def generate_nsfw_mask(args: Arguments):
     device = torch.device(f'cuda:{args.device.split(",")[0]}')
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
+    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")

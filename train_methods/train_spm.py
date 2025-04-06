@@ -105,7 +105,7 @@ class PromptEmbedsPair:
         self.neutral = neutral
 
         if settings is None:
-            # PromptSettingのデフォルト値を採用
+            # applying the default values of PromptSetting
             self.use_template = False
             self.guidance_scale = 1.0
             self.resolution = 512
@@ -298,7 +298,7 @@ def train(
     }
     save_path = Path(save_path)
 
-    noise_scheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+    noise_scheduler: PNDMScheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")

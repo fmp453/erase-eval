@@ -280,7 +280,7 @@ def setup_unet_adapter_eraser(unet: UNet2DConditionModel, eraser_rank, device):
     return erasers
 
 @torch.no_grad()
-def get_learned_conditioning(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, prompt: list[str]):
+def get_learned_conditioning(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, prompt: list[str]) -> torch.Tensor:
     input_ids = tokenizer(
         prompt,
         padding="max_length",
@@ -349,7 +349,7 @@ def train_receler(args: Arguments):
 
     # create attack prompt embeddings
     if args.receler_advrs_iters:
-        advrs_prompt_embs = [nn.Parameter(torch.rand((1, args.num_advrs_prompts, 768), device=device)) for idx in range(len(words))]
+        advrs_prompt_embs = [nn.Parameter(torch.rand((1, args.num_advrs_prompts, 768), device=device)) for _ in range(len(words))]
         advrs_prompt_opts = [optim.Adam([advrs_prompt_embs[idx]], lr=0.1, weight_decay=0.1) for idx in range(len(words))]
 
     scheduler.set_timesteps(args.ddim_steps, device)
