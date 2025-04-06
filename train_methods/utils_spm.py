@@ -43,7 +43,7 @@ class SPMLayer(nn.Module):
             self.lora_down = nn.Conv2d(in_dim, self.dim, kernel_size, stride, padding, bias=False)
             self.lora_up = nn.Conv2d(self.dim, out_dim, (1, 1), (1, 1), bias=False)
 
-        if type(alpha) == torch.Tensor:
+        if isinstance(alpha, torch.Tensor):
             alpha = alpha.detach().numpy()
         alpha = dim if alpha is None or alpha == 0 else alpha
         self.scale = alpha / self.dim
