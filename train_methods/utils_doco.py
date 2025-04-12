@@ -357,7 +357,7 @@ class CustomDiffusionDataset(Dataset):
             instance_prompt = instance_target.split("+")[1]
         return instance_prompt
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> dict[str, torch.Tensor]:
         example = {}
         instance_image, instance_prompt, instance_target = self.instance_images_path[
             index % self.num_instance_images

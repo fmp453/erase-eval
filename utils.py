@@ -210,6 +210,16 @@ class Arguments(BaseModel):
     doco_concept_type: Optional[Literal["object", "style", "nudity", "violence"]] = Field("object")
     doco_num_class_images: Optional[int] = Field(1000)
     doco_num_class_prompts: Optional[int] = Field(200)
+    doco_max_train_steps: Optional[int] = Field(2000)
+    doco_num_train_epochs: Optional[int] = Field(1)
+    doco_center_crop: Literal[True, False] = Field(False)
+    doco_hflip: Literal[True, False] = Field(False)
+    doco_noaug: Literal[True, False] = Field(False) # appropriate True when style erasing according to official implemantation
+    doco_lr_scheduler: Literal["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"] = Field("constant")
+    doco_lr_warmup_steps: Optional[int] = Field(500)
+    doco_dlr_warmup_steps: Optional[int] = Field(500, description="Number of steps for the warmup training of the discriminator.")
+    doco_loss_type_reverse: Optional[str] = Field("model-based")
+    doco_lambda_: Optional[float] = Field(1.0)
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
