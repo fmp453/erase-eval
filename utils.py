@@ -202,6 +202,15 @@ class Arguments(BaseModel):
     # configs for SPM
     # no configuration in SPM
 
+    # config for DoCo
+    doco_parameter_group: Literal["embedding", "cross-attn", "full-weight"] = Field("corss-attn") 
+    doco_lr: Optional[float] = Field(6e-6)
+    doco_dlr: Optional[float] = Field(1e-2)
+    doco_batch_size: Optional[int] = Field(8)
+    doco_concept_type: Optional[Literal["object", "style", "nudity", "violence"]] = Field("object")
+    doco_num_class_images: Optional[int] = Field(1000)
+    doco_num_class_prompts: Optional[int] = Field(200)
+
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
     images_dir: Optional[str] = Field("gen-images")
