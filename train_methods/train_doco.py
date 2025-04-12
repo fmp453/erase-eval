@@ -61,7 +61,7 @@ def create_custom_diffusion(unet: UNet2DConditionModel, parameter_group):
     # change attn class
     def change_attn(unet: UNet2DConditionModel):
         for layer in unet.children():
-            # check  wether the layer is cross attention
+            # check wether the layer is cross attention
             # CrossAttention was renamed to Attention in commit hash e828232
             # https://github.com/huggingface/diffusers/issues/4969
             if isinstance(layer, Attention):
@@ -128,122 +128,24 @@ def seed_everything(seed: int=42) -> None:
     
     os.environ['PYTHONHASHSEED'] = str(seed)
 
-def parse_args(input_args=None):
-    parser = argparse.ArgumentParser(description="Simple example of a training script.")
-    parser.add_argument(
-        "--concept_type",
-        type=str,
-        required=True,
-        choices=["style", "object", "memorization", "nudity", "violence"],
-        help="the type of removed concepts",
-    )
-    parser.add_argument(
-        "--caption_target",
-        type=str,
-        required=True,
-        help="target style to remove, used when kldiv loss",
-    )
-    parser.add_argument(
-        "--instance_data_dir",
-        type=str,
-        default=None,
-        help="A folder containing the training data of instance images.",
-    )
-    parser.add_argument(
-        "--class_data_dir",
-        type=str,
-        default=None,
-        help="A folder containing the training data of class images.",
-    )
-    parser.add_argument(
-        "--instance_prompt",
-        type=str,
-        help="The prompt with identifier specifying the instance",
-    )
-    parser.add_argument(
-        "--class_prompt",
-        type=str,
-        default=None,
-        help="The prompt to specify images in the same class as provided instance images.",
-    )
-    parser.add_argument(
-        "--prior_loss_weight",
-        type=float,
-        default=1.0,
-        help="The weight of prior preservation loss.",
-    )
-    parser.add_argument(
-        "--train_size",
-        type=int,
-        default=1000,
-        help="the number of generated images used for ablating the concept",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="custom-diffusion-model",
-        help="The output directory where the model predictions and checkpoints will be written.",
-    )
-    parser.add_argument(
-        "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
-    )
-    parser.add_argument(
-        "--concepts_list",
-        type=str,
-        default=None,
-        help="Path to json containing multiple concepts, will overwrite parameters like instance_prompt, class_prompt, etc.",
-    )
-    parser.add_argument(
-        "--local_rank",
-        type=int,
-        default=-1,
-        help="For distributed training: local_rank",
-    )
-    parser.add_argument(
-        "--multi_ckpt_path",
-        type=str,
-        default="",
-        help="Multi concept remove checkpoint path.",
-    )
-    
-
-    if input_args is not None:
-        args = parser.parse_args(input_args)
-    else:
-        args = parser.parse_args()
-
-    args.checkpointing_steps = args.doco_max_train_steps / 10
-
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
-
-    return args
-
-
 def main(args: Arguments):
     
     seed_everything(args.seed)
     device = args.device.split(",")[0]
     device = f"cuda:{device}"
     
-    # need to fix
-    if args.concepts_list is None:
-        args.concepts_list = [
-            {
-                "instance_prompt": args.instance_prompt,
-                "class_prompt": args.class_prompt,
-                "instance_data_dir": args.instance_data_dir,
-                "class_data_dir": args.class_data_dir,
-                "caption_target": " ".join(args.caption_target.split("-")),
-            }
-        ]
-    else:
-        with open(args.concepts_list, "r") as f:
-            args.concepts_list = json.load(f)
-
+    concepts_list = [
+        {
+            "instance_prompt": args.concepts,
+            "class_prompt": args.concepts,
+            "instance_data_dir": args.instance_data_dir,
+            "class_data_dir": "for-doco/",
+            "caption_target": " ",
+        }
+    ]
+    
     # Generate class images if prior preservation is enabled.
-    for i, concept in enumerate(args.concepts_list):
+    for i, concept in enumerate(concepts_list):
         # directly path to ablation images and its corresponding prompts is provided.
         if (
             concept["instance_prompt"] is not None
@@ -252,12 +154,11 @@ def main(args: Arguments):
             break
 
         class_images_dir = Path(concept["class_data_dir"])
-        if not class_images_dir.exists():
-            class_images_dir.mkdir(parents=True, exist_ok=True)
+        class_images_dir.mkdir(parents=True, exist_ok=True)
         os.makedirs(f"{class_images_dir}/images", exist_ok=True)
 
         # we need to generate training images
-        if (len(list(Path(os.path.join(class_images_dir, "images")).iterdir()))< args.doco_num_class_images):
+        if (len(list(Path(os.path.join(class_images_dir, "images")).iterdir())) < args.doco_num_class_images):
 
             pipeline = DiffusionPipeline.from_pretrained(args.sd_version)
             pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
@@ -340,7 +241,6 @@ def main(args: Arguments):
 
         torch.cuda.empty_cache()
 
-
     os.makedirs(args.save_dir, exist_ok=True)
 
     tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
@@ -368,7 +268,7 @@ def main(args: Arguments):
     if args.doco_parameter_group == "embedding":
         assert (args.doco_concept_type != "memorization"), "embedding finetuning is not supported for memorization"
 
-        for concept in args.concept_list:
+        for concept in concepts_list:
             token_ids = tokenizer.encode([concept["caption_target"]], add_special_tokens=False)
         # Check if initializer_token is a single token or a sequence of tokens
         modifier_token_id += token_ids
@@ -398,7 +298,7 @@ def main(args: Arguments):
 
     # Dataset and DataLoaders creation:
     train_dataset = CustomDiffusionDataset(
-        concepts_list=args.concepts_list,
+        concepts_list=concepts_list,
         concept_type=args.doco_concept_type,
         tokenizer=tokenizer,
         size=512,

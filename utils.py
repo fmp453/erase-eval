@@ -25,7 +25,7 @@ def get_args():
 class Arguments(BaseModel):
     
     mode: Literal["train", "infer"] = Field("train", description="train or infer")
-    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "original"] = Field("esd")
+    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "original"] = Field("esd")
     sd_version: Optional[str] = Field("compvis/stable-diffusion-v1-4")
     device: Optional[str] = Field("0", description="gpu id. when using two gpus, separated by comma")
     seed: Optional[int] = Field(0)
@@ -62,7 +62,7 @@ class Arguments(BaseModel):
     
     ac_img_dir: Optional[str] = Field("images")
     ac_prompt_path: Optional[str] = Field("dog.csv")
-    ac_concept_type: Optional[Literal["object", "style", "mem"]] = Field("object")
+    ac_concept_type: Literal["object", "style", "mem"] = Field("object")
     ac_batch_size: Optional[int] = Field(8)
     
 
@@ -215,7 +215,6 @@ class Arguments(BaseModel):
     doco_center_crop: Literal[True, False] = Field(False)
     doco_hflip: Literal[True, False] = Field(False)
     doco_noaug: Literal[True, False] = Field(False) # appropriate True when style erasing according to official implemantation
-    doco_lr_scheduler: Literal["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"] = Field("constant")
     doco_lr_warmup_steps: Optional[int] = Field(500)
     doco_dlr_warmup_steps: Optional[int] = Field(500, description="Number of steps for the warmup training of the discriminator.")
     doco_loss_type_reverse: Optional[str] = Field("model-based")
