@@ -47,6 +47,18 @@ class Arguments(BaseModel):
     negative_guidance: Optional[float] = Field(1, desciption='guidance of negative training used to train')
     start_guidance: Optional[float] = Field(3, desciption='guidance of start image used to train')
 
+    # for EAP and AGE
+    gumbel_lr: Optional[float] = Field(1e-3, desciption='learning rate for prompt')
+    gumbel_temp: Optional[float] = Field(2, desciption='temperature for gumbel softmax')
+    gumbel_hard: Literal[0, 1] = Field(0, desciption='hard for gumbel softmax, 0: soft, 1: hard')
+    gumbel_num_centers: Optional[int] = Field(100, desciption='number of centers for kmeans, if <= 0 then do not apply kmeans')
+    gumbel_update: Optional[int] = Field(100, desciption='update frequency for preserved set, if <= 0 then do not update')
+    gumbel_time_step: Optional[int] = Field(0, desciption='time step for the starting point to estimate epsilon')
+    gumbel_multi_steps: Optional[int] = Field(2, desciption='multi steps for calculating the output')
+    gumbel_k_closest: Optional[int] = Field(1000, desciption='number of closest tokens to consider')
+    ignore_special_tokens: Literal[True, False] = Field(True, desciption='ignore special tokens in the embedding matrix')
+    vocab: Optional[str] = Field("EN3K", desciption='vocab')
+    pgd_num_steps: Optional[int] = Field(2, desciption='number of step to optimize adversarial concepts')
 
     # configs for ESD (Erased Stable Diffusion)
     esd_method: Literal["full", "selfattn", "xattn", "noxattn", "notime"] = Field("xattn", description="which parameters are updated")
@@ -66,22 +78,10 @@ class Arguments(BaseModel):
     ac_batch_size: Optional[int] = Field(8)
     
 
-    # configs for AE (Erasing-Adversarial-Preservation)
+    # configs for EAP (Erasing-Adversarial-Preservation)
     eap_method: Literal["full", "selfattn", "xattn", "noxattn", "notime", "xattn_matching", "xlayer", "selflayer"] = Field("xattn", desciption='method of training')
     eap_iterations: Optional[int] = Field(1000, desciption='iterations used to train')
     eap_lr: Optional[float] = Field(1e-5, desciption='learning rate used to train')
-    gumbel_lr: Optional[float] = Field(1e-3, desciption='learning rate for prompt')
-    gumbel_temp: Optional[float] = Field(2, desciption='temperature for gumbel softmax')
-    gumbel_hard: Literal[0, 1] = Field(0, desciption='hard for gumbel softmax, 0: soft, 1: hard')
-    gumbel_num_centers: Optional[int] = Field(100, desciption='number of centers for kmeans, if <= 0 then do not apply kmeans')
-    gumbel_update: Optional[int] = Field(100, desciption='update frequency for preserved set, if <= 0 then do not update')
-    gumbel_time_step: Optional[int] = Field(0, desciption='time step for the starting point to estimate epsilon')
-    gumbel_multi_steps: Optional[int] = Field(2, desciption='multi steps for calculating the output')
-    gumbel_k_closest: Optional[int] = Field(1000, desciption='number of closest tokens to consider')
-    ignore_special_tokens: Literal[True, False] = Field(True, desciption='ignore special tokens in the embedding matrix')
-    vocab: Optional[str] = Field("EN3K", desciption='vocab')
-    pgd_num_steps: Optional[int] = Field(2, desciption='number of step to optimize adversarial concepts')
-
 
     # configs for AdvUnlearn
     # Training setup
@@ -219,6 +219,13 @@ class Arguments(BaseModel):
     doco_dlr_warmup_steps: Optional[int] = Field(500, description="Number of steps for the warmup training of the discriminator.")
     doco_loss_type_reverse: Optional[str] = Field("model-based")
     doco_lambda_: Optional[float] = Field(1.0)
+
+    # configs for AGE
+    age_method: Literal["noxattn", "selfattn", "xattn", "xattn_matching", "full", "notime", "xlayer", "selflayer"] = Field("xattn")
+    age_lr: Optional[float] = Field(1e-5)
+    age_iters: Optional[int] = Field(1000)
+    age_lamda: Optional[float] = Field(1.0)
+    gumbel_topk: Optional[int] = Field(5, description="number of top-k values in the soft gumbel softmax to be considered")
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
