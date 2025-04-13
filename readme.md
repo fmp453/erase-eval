@@ -95,6 +95,8 @@ We reimplemented several methods using [🤗 Diffusers](https://github.com/huggi
 - [LocoEdit](https://github.com/samyadeepbasu/LocoGen)
 - [SalUn](https://github.com/OPTML-Group/Unlearn-Saliency)
 - [Forget-Me-Not (FMN)](https://github.com/SHI-Labs/Forget-Me-Not)
+- [DoCo](https://github.com/yongliang-wu/DoCo)
+- [Adaptive Guided Erasure (AGE)](https://github.com/tuananhbui89/Adaptive-Guided-Erasure/)
 
 File Stracture is followed by [TabSyn](https://github.com/amazon-science/tabsyn). 
 
