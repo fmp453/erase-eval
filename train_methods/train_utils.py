@@ -18,6 +18,27 @@ from diffusers.models.attention_processor import Attention
 
 from train_methods.consts import LEN_EN_3K_VOCAB, LEN_TOKENIZER_VOCAB
 
+def collate_fn(examples):
+    input_ids = [example["instance_prompt_ids"] for example in examples]
+    input_anchor_ids = [example["instance_anchor_prompt_ids"] for example in examples]
+    pixel_values = [example["instance_images"] for example in examples]
+    mask = [example["mask"] for example in examples]
+    
+    input_ids = torch.cat(input_ids, dim=0)
+    input_anchor_ids = torch.cat(input_anchor_ids, dim=0)
+    pixel_values = torch.stack(pixel_values)
+    mask = torch.stack(mask)
+    pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+    mask = mask.to(memory_format=torch.contiguous_format).float()
+
+    batch = {
+        "input_ids": input_ids,
+        "input_anchor_ids": input_anchor_ids,
+        "pixel_values": pixel_values,
+        "mask": mask.unsqueeze(1),
+    }
+    return batch
+
 # EAP and AGE
 def get_english_tokens():
     data_path = 'data/english_3000.csv'
