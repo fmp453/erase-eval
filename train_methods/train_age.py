@@ -11,7 +11,7 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL
 
 from train_methods.train_utils import sample_until, apply_model
 from train_methods.utils_age import ConceptDict
-from train_methods.utils_age import learn_k_means_from_input_embedding, save_embedding_matrix, search_closest_tokens, get_condition
+from train_methods.train_utils import save_embedding_matrix, learn_k_means_from_input_embedding, search_closest_tokens, get_condition
 from train_methods.consts import ddim_alphas
 from utils import Arguments
 

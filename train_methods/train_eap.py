@@ -2,79 +2,22 @@
 
 import os
 import random
-from typing import Optional, Any
 
-import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
 from tqdm import tqdm
-from sklearn.cluster import KMeans
 
 from torch.autograd import Variable
 from diffusers import UNet2DConditionModel, AutoencoderKL, DDIMScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils import Arguments
-from train_methods.consts import ddim_alphas, LEN_TOKENIZER_VOCAB, LEN_EN_3K_VOCAB
+from train_methods.train_utils import apply_model, sample_until, get_vocab, save_embedding_matrix, get_condition, learn_k_means_from_input_embedding, search_closest_tokens
+from train_methods.consts import ddim_alphas, LEN_TOKENIZER_VOCAB
 
-
-@torch.no_grad()
-def sample_until(
-    until: int,
-    latents: torch.Tensor,
-    unet: UNet2DConditionModel,
-    scheduler: DDIMScheduler,
-    prompt_embeds: torch.Tensor,
-    guidance_scale: float,
-    extra_step_kwargs: Optional[dict[str, Any]]=None,
-):
-    """Sample latents until t for a given prompt."""
-    timesteps = scheduler.timesteps
-
-    do_guidance = abs(guidance_scale) > 1.0
-    device = unet.device
-
-    # Denoising loop
-    for i, t in enumerate(timesteps):
-        t = t.to(device)
-        latent_model_input = (torch.cat([latents] * 2) if do_guidance else latents).to(device)
-        latent_model_input = scheduler.scale_model_input(latent_model_input, t)
-
-        # predict the noise residual
-        noise_pred = unet(latent_model_input, t, encoder_hidden_states=prompt_embeds.to(device)).sample
-
-        # perform guidance
-        if do_guidance:
-            noise_pred_out = torch.chunk(noise_pred, 2, dim=0)
-            noise_pred_uncond, noise_pred_prompt = noise_pred_out[0], noise_pred_out[1]
-            
-            cond_guidance = noise_pred_prompt - noise_pred_uncond
-            noise_pred = noise_pred_uncond + (guidance_scale * cond_guidance)
-
-        latents = scheduler.step(model_output=noise_pred, timestep=t, sample=latents).prev_sample
-
-        if i == until - 1:
-            break
-
-    return latents
-
-@torch.no_grad()
-def get_learned_conditioning(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, prompt: list[str]):
-    input_ids = tokenizer(
-        prompt,
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        return_tensors="pt",
-        truncation=True
-    ).input_ids
-    # text_encoder(input_ids=uncond_input["input_ids"].to(device), attention_mask=uncond_input["attention_mask"].to(device) if use_attention_mask else None)[0]
-    device = text_encoder.device
-    emb = text_encoder(input_ids.to(device))[0]
-    return emb
 
 def save_to_dict(var, name, dict):
     if var is not None:
@@ -90,15 +33,6 @@ def save_to_dict(var, name, dict):
     
     dict[name].append(var)
     return dict
-
-def get_english_tokens():
-    data_path = 'captions/english_3000.csv'
-    df = pd.read_csv(data_path)
-    vocab = {}
-    for ir, row in df.iterrows():
-        vocab[row['word']] = ir
-    assert(len(vocab) == LEN_EN_3K_VOCAB)
-    return vocab
 
 def retrieve_embedding_token(model_name, query_token, vocab='EN3K'):
     if vocab == 'CLIP':
@@ -125,22 +59,6 @@ def retrieve_embedding_token(model_name, query_token, vocab='EN3K'):
         raise ValueError("vocab should be either 'CLIP' or 'EN3K'")
 
 @torch.no_grad()
-def get_vocab(tokenizer: CLIPTokenizer, model_name, vocab='EN3K'):
-    if vocab == 'CLIP':
-        if model_name == 'SD-v1-4':
-            tokenizer_vocab = tokenizer.get_vocab()
-        elif model_name == 'SD-v2-1':
-            tokenizer_vocab = tokenizer.encoder
-        else:
-            raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
-    elif vocab == 'EN3K':
-        tokenizer_vocab = get_english_tokens()
-    else:
-        raise ValueError("vocab should be either 'CLIP' or 'EN3K'")
-    
-    return tokenizer_vocab
-
-@torch.no_grad()
 def create_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, start=0, end=LEN_TOKENIZER_VOCAB, model_name='SD-v1-4', save_mode='array', remove_end_token=False, vocab='EN3K'):
 
     tokenizer_vocab = get_vocab(tokenizer, model_name, vocab=vocab)
@@ -155,7 +73,7 @@ def create_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextMode
                 token_ = token.replace('</w>','')
             else:
                 token_ = token
-            emb_ = get_learned_conditioning(tokenizer=tokenizer, text_encoder=text_encoder, prompt=[token_])
+            emb_ = get_condition(tokenizer=tokenizer, text_encoder=text_encoder, prompt=[token_])
             all_embeddings.append(emb_)
         return torch.cat(all_embeddings, dim=0) # shape (49408, 77, 768)
     elif save_mode == 'dict':
@@ -168,98 +86,11 @@ def create_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextMode
                 token_ = token.replace('</w>','')
             else:
                 token_ = token
-            emb_ = get_learned_conditioning(tokenizer=tokenizer, text_encoder=text_encoder, prompt=[token_])
+            emb_ = get_condition(tokenizer=tokenizer, text_encoder=text_encoder, prompt=[token_])
             all_embeddings[token] = emb_
         return all_embeddings
     else:
         raise ValueError("save_mode should be either 'array' or 'dict'")
-
-@torch.no_grad()
-def save_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, model_name='SD-v1-4', save_mode='array', vocab='EN3K'):
-    if vocab == 'CLIP':
-        for start in range(0, LEN_TOKENIZER_VOCAB, 5000):
-            end = min(LEN_TOKENIZER_VOCAB, start+5000)
-            embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=start, end=end, model_name=model_name, save_mode=save_mode)
-            if model_name == 'SD-v1-4':
-                torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}.pt')
-            elif model_name == 'SD-v2-1':
-                torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}_v2-1.pt')
-    elif vocab == 'EN3K':
-        embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=0, end=LEN_EN_3K_VOCAB, model_name=model_name, save_mode=save_mode, vocab='EN3K')
-        if model_name == 'SD-v1-4':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_EN3K.pt')
-        elif model_name == 'SD-v2-1':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_EN3K_v2-1.pt')
-    else:
-        raise ValueError("vocab should be either 'CLIP' or 'EN3K'")
-
-@torch.no_grad()
-def search_closest_tokens(concept, tokenizer, text_encoder, k=5, reshape=True, sim='cosine', model_name='SD-v1-4', ignore_special_tokens=True, vocab='EN3K'):
-    """
-    Given a concept, i.e., "nudity", search for top-k closest tokens in the embedding space
-    """
-
-    tokenizer_vocab = get_vocab(tokenizer, model_name, vocab=vocab)
-    # inverse the dictionary
-    tokenizer_vocab_indexing = {v: k for k, v in tokenizer_vocab.items()}
-
-    # Get the embedding of the concept
-    concept_embedding = get_learned_conditioning(tokenizer, text_encoder, [concept]) # shape (1, 77, 768)
-
-    # Calculate the cosine similarity between the concept and all tokens
-    # load the embedding matrix 
-    all_similarities = []
-    
-    if vocab == 'CLIP':
-        for start in range(0, LEN_TOKENIZER_VOCAB, 5000):
-            end = min(LEN_TOKENIZER_VOCAB, start+5000)
-            if model_name == 'SD-v1-4':
-                embedding_matrix = torch.load(f'models/embedding_matrix_{start}_{end}_array.pt')
-            elif model_name == 'SD-v2-1':
-                embedding_matrix = torch.load(f'models/embedding_matrix_{start}_{end}_array_v2-1.pt')
-            else:
-                raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
-            
-            if reshape == True:
-                concept_embedding = concept_embedding.view(concept_embedding.size(0), -1)
-                embedding_matrix = embedding_matrix.view(embedding_matrix.size(0), -1)
-            if sim == 'cosine':
-                similarities = F.cosine_similarity(concept_embedding, embedding_matrix, dim=-1)
-            elif sim == 'l2':
-                similarities = - F.pairwise_distance(concept_embedding, embedding_matrix, p=2)
-            all_similarities.append(similarities)
-    elif vocab == 'EN3K':
-        if model_name == 'SD-v1-4':
-            embedding_matrix = torch.load(f'models/embedding_matrix_array_EN3K.pt')
-        elif model_name == 'SD-v2-1':
-            embedding_matrix = torch.load(f'models/embedding_matrix_array_EN3K_v2-1.pt')
-        else:
-            raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
-        if reshape == True:
-            concept_embedding = concept_embedding.view(concept_embedding.size(0), -1)
-            embedding_matrix = embedding_matrix.view(embedding_matrix.size(0), -1)
-        if sim == 'cosine':
-            similarities = F.cosine_similarity(concept_embedding, embedding_matrix, dim=-1)
-        elif sim == 'l2':
-            similarities = - F.pairwise_distance(concept_embedding, embedding_matrix, p=2)
-        all_similarities.append(similarities)
-    else:
-        raise ValueError("vocab should be either 'CLIP' or 'EN3K'")
-
-    similarities = torch.cat(all_similarities, dim=0)
-    # sorting the similarities
-    sorted_similarities, indices = torch.sort(similarities, descending=True)
-    
-    sim_dict = {}
-    for im, i in enumerate(indices):
-        if ignore_special_tokens:
-            if detect_special_tokens(tokenizer_vocab_indexing[i.item()]):
-                continue
-        token = tokenizer_vocab_indexing[i.item()]
-        sim_dict[token] = sorted_similarities[im]
-    
-    top_k_tokens = list(sim_dict.keys())[:k]
-    return top_k_tokens, sim_dict
 
 def detect_special_tokens(text):
     text = text.lower()
@@ -268,49 +99,6 @@ def detect_special_tokens(text):
             return True
     return False
 
-def apply_model(unet: UNet2DConditionModel, z: torch.Tensor, t_enc_ddpm: torch.Tensor, emb_0: torch.Tensor):
-    # get conditional and unconditional scores from frozen model at time step t and image z
-    device = unet.device
-    z = z.to(device)
-    t_enc_ddpm = t_enc_ddpm.to(device)
-    emb_0 = emb_0.to(device)
-
-    noise_pred = unet(z, t_enc_ddpm, encoder_hidden_states=emb_0).sample
-    return noise_pred
-
-def my_kmean(sorted_sim_dict, num_centers, compute_mode):
-    similarities = np.array([sorted_sim_dict[token].item() for token in sorted_sim_dict])
-    similarities = similarities.reshape(-1, 1)
-    kmeans = KMeans(n_clusters=num_centers, random_state=0).fit(similarities)
-    cluster_centers = kmeans.cluster_centers_
-    
-    # find the closest token to each cluster center
-    cluster_dict = {}
-    for i, center in enumerate(cluster_centers):
-        closest_token = None
-        closest_similarity = -float('inf')
-        for j, token in enumerate(sorted_sim_dict):
-            similarity = sorted_sim_dict[token].item()
-            if abs(similarity - center) < abs(closest_similarity - center):
-                closest_similarity = similarity
-                closest_token = token
-        cluster_dict[closest_token] = (closest_token, closest_similarity, i)
-    
-    return cluster_dict
-
-@torch.no_grad()
-def learn_k_means_from_input_embedding(sim_dict, num_centers=5, compute_mode='numpy'):
-    """
-    Given a model, a set of tokens, and a concept, learn k-means clustering on the search_closest_tokens's output
-    """
-    if num_centers <= 0:
-        print(f"Number of centers should be greater than 0. Returning the tokens themselves.")
-        return list(sim_dict.keys())
-    if len(list(sim_dict.keys())) <= num_centers:
-        print(f"Number of tokens is less than the number of centers. Returning the tokens themselves.")
-        return list(sim_dict.keys())
-
-    return list(my_kmean(sim_dict, num_centers, compute_mode).keys())
 
 def make_ddim_sampling_parameters(alphacums, ddim_timesteps):
     # select alphas for computing the variance schedule
@@ -414,7 +202,7 @@ def train(args: Arguments):
             return retrieve_embedding_token(model_name='SD-v1-4', query_token=word, vocab=args.vocab)
         else:
             prompt = f'{word}'
-            emb = get_learned_conditioning(tokenizer, text_encoder, [prompt])
+            emb = get_condition([prompt], tokenizer, text_encoder)
             init = emb
             return init
 
@@ -501,8 +289,8 @@ def train(args: Arguments):
         prompt_n = f'{word}'
 
         # get text embeddings for unconditional and conditional prompts
-        emb_0 = get_learned_conditioning(tokenizer, text_encoder, [prompt_0])
-        emb_n = get_learned_conditioning(tokenizer, text_encoder, [prompt_n])
+        emb_0 = get_condition([prompt_0], tokenizer, text_encoder)
+        emb_n = get_condition([prompt_n], tokenizer, text_encoder)
 
         # get the emb_r 
         emb_r = torch.reshape(torch.matmul(gumbel_softmax(one_hot_dict[word]), preserved_matrix_dict[word]).unsqueeze(0), (1, 77, 768))
