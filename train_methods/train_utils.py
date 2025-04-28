@@ -18,6 +18,46 @@ from diffusers.models.attention_processor import Attention
 
 from train_methods.consts import LEN_EN_3K_VOCAB, LEN_TOKENIZER_VOCAB
 
+
+def gather_parameters(method: str, unet: UNet2DConditionModel) -> tuple[list[str], list[torch.nn.Parameter]]:
+    """Gather the parameters to be optimized by the optimizer (U-Net)."""
+    names, parameters = [], []
+    for name, param in unet.named_parameters():
+        if method == "full":
+            # Train all layers.
+            names.append(name)
+            parameters.append(param)
+        elif method == "selfattn":
+            # Attention layer 1 is the self-attention layer.
+            if "attn1" in name:
+                names.append(name)
+                parameters.append(param)
+        elif method == "xattn":
+            # Attention layer 2 is the cross-attention layer.
+            if "attn2" in name:
+                names.append(name)
+                parameters.append(param)
+        elif method == "noxattn":
+            # Train all layers except the cross attention and time_embedding layers.
+            if name.startswith("conv_out.") or ("time_embed" in name):
+                # Skip the time_embedding layer.
+                continue
+            elif "attn2" in name:
+                # Skip the cross attention layer.
+                continue
+            names.append(name)
+            parameters.append(param)
+        elif method == "notime":
+            # Train all layers except the time_embedding layer.
+            if name.startswith("conv_out.") or ("time_embed" in name):
+                continue
+            names.append(name)
+            parameters.append(param)
+        else:
+            raise ValueError(f"Unknown finetuning method: {method}")
+
+    return names, parameters
+
 def collate_fn(examples):
     input_ids = [example["instance_prompt_ids"] for example in examples]
     input_anchor_ids = [example["instance_anchor_prompt_ids"] for example in examples]

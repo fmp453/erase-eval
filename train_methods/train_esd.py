@@ -17,48 +17,9 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters
 
 warnings.filterwarnings("ignore")
-
-def gather_parameters(args: Arguments, unet: UNet2DConditionModel) -> tuple[list[str], list[torch.nn.Parameter]]:
-    """Gather the parameters to be optimized by the optimizer."""
-    names, parameters = [], []
-    for name, param in unet.named_parameters():
-        if args.esd_method == "full":
-            # Train all layers.
-            names.append(name)
-            parameters.append(param)
-        elif args.esd_method == "selfattn":
-            # Attention layer 1 is the self-attention layer.
-            if "attn1" in name:
-                names.append(name)
-                parameters.append(param)
-        elif args.esd_method == "xattn":
-            # Attention layer 2 is the cross-attention layer.
-            if "attn2" in name:
-                names.append(name)
-                parameters.append(param)
-        elif args.esd_method == "noxattn":
-            # Train all layers except the cross attention and time_embedding layers.
-            if name.startswith("conv_out.") or ("time_embed" in name):
-                # Skip the time_embedding layer.
-                continue
-            elif "attn2" in name:
-                # Skip the cross attention layer.
-                continue
-            names.append(name)
-            parameters.append(param)
-        elif args.esd_method == "notime":
-            # Train all layers except the time_embedding layer.
-            if name.startswith("conv_out.") or ("time_embed" in name):
-                continue
-            names.append(name)
-            parameters.append(param)
-        else:
-            raise ValueError(f"Unknown finetuning method: {args.esd_method}")
-
-    return names, parameters
 
 @torch.no_grad()
 def encode_prompt(
@@ -237,7 +198,7 @@ def main(args: Arguments):
     unet_teacher.requires_grad_(False)
     text_encoder.requires_grad_(False)
 
-    names, parameters = gather_parameters(args, unet_student)
+    names, parameters = gather_parameters(args.esd_method, unet_student)
     print(f"Finetuning parameters: {names}")
     num_train_param = sum(p.numel() for p in parameters)
     num_total_param = sum(p.numel() for p in unet_student.parameters())
