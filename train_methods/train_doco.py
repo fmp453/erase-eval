@@ -1,12 +1,9 @@
-import argparse
 import hashlib
 import itertools
-import json
 import math
 import os
 from pathlib import Path
 import random
-
 
 import numpy as np
 import torch
@@ -74,39 +71,6 @@ def create_custom_diffusion(unet: UNet2DConditionModel, parameter_group):
     change_attn(unet)
     unet.set_attn_processor(CustomDiffusionAttnProcessor())
     return unet
-
-
-def save_model_card(
-    repo_id: str, images=None, base_model=str, prompt=str, repo_folder=None
-):
-    img_str = ""
-    for i, image in enumerate(images):
-        image.save(os.path.join(repo_folder, f"image_{i}.png"))
-        img_str += f"./image_{i}.png\n"
-
-    yaml = f"""
-        ---
-        license: creativeml-openrail-m
-        base_model: {base_model}
-        instance_prompt: {prompt}
-        tags:
-        - stable-diffusion
-        - stable-diffusion-diffusers
-        - text-to-image
-        - diffusers
-        - custom diffusion
-        inference: true
-        ---
-            """
-    model_card = f"""
-        # Custom Diffusion - {repo_id}
-
-        These are Custom Diffusion adaption weights for {base_model}. The weights were trained on {prompt} using [Custom Diffusion](https://www.cs.cmu.edu/~custom-diffusion). You can find some example images in the following. \n
-        {img_str[0]}
-        """
-    with open(os.path.join(repo_folder, "README.md"), "w") as f:
-        f.write(yaml + model_card)
-
 
 def freeze_params(params: nn.Parameter) -> None:
     for param in params:

@@ -99,7 +99,6 @@ def detect_special_tokens(text):
             return True
     return False
 
-
 def make_ddim_sampling_parameters(alphacums, ddim_timesteps):
     # select alphas for computing the variance schedule
     alphas = alphacums[ddim_timesteps]
