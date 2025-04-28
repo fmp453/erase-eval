@@ -107,8 +107,7 @@ def create_embedding_matrix(
 def save_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, model_name='SD-v1-4', save_mode='array', vocab='EN3K'):
     if vocab == 'CLIP':
         for start in range(0, LEN_TOKENIZER_VOCAB, 5000):
-            print(f"start: {start} / {LEN_TOKENIZER_VOCAB}")
-            end = min(LEN_TOKENIZER_VOCAB, start+5000)
+            end = min(LEN_TOKENIZER_VOCAB, start + 5000)
             embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=start, end=end, model_name=model_name, save_mode=save_mode)
             if model_name == 'SD-v1-4':
                 torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}.pt')
@@ -138,18 +137,13 @@ def my_kmean(sorted_sim_dict, num_centers, compute_mode):
         similarities = np.array([sorted_sim_dict[token].item() for token in sorted_sim_dict])
         similarities = similarities.reshape(-1, 1)
         kmeans = KMeans(n_clusters=num_centers, random_state=0).fit(similarities)
-        print(f"{kmeans.cluster_centers_=}")
-        print(f"{kmeans.labels_=}")
         cluster_centers = kmeans.cluster_centers_
     elif compute_mode == 'torch':
         from torch_kmeans import KMeans
         similarities = torch.stack([sorted_sim_dict[token] for token in sorted_sim_dict])
         similarities = torch.unsqueeze(similarities, dim=0)
         similarities = torch.unsqueeze(similarities, dim=2) # [1, N, 1]
-        print('similarities shape:', similarities.shape)
         kmeans = KMeans(n_clusters=num_centers).fit(similarities)
-        print(f"{kmeans.cluster_centers=}")
-        print(f"{kmeans.labels=}")
         cluster_centers = kmeans.cluster_centers
 
     # find the closest token to each cluster center
@@ -163,7 +157,6 @@ def my_kmean(sorted_sim_dict, num_centers, compute_mode):
                 closest_similarity = similarity
                 closest_token = token
         cluster_dict[closest_token] = (closest_token, closest_similarity, i)
-    print(f"{cluster_dict=}")
 
     return cluster_dict
 
@@ -173,10 +166,8 @@ def learn_k_means_from_input_embedding(sim_dict: dict, num_centers=5, compute_mo
     Given a model, a set of tokens, and a concept, learn k-means clustering on the search_closest_tokens's output
     """
     if num_centers <= 0:
-        print(f"Number of centers should be greater than 0. Returning the tokens themselves.")
         return list(sim_dict.keys())
     if len(list(sim_dict.keys())) <= num_centers:
-        print(f"Number of tokens is less than the number of centers. Returning the tokens themselves.")
         return list(sim_dict.keys())
 
     return list(my_kmean(sim_dict, num_centers, compute_mode).keys())
