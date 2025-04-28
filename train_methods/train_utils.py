@@ -350,7 +350,7 @@ def sample_until(
             cond_guidance = noise_pred_prompt - noise_pred_uncond
             noise_pred = noise_pred_uncond + (guidance_scale * cond_guidance)
 
-        latents = scheduler.step(model_output=noise_pred, timestep=t, sample=latents).prev_sample
+        latents = scheduler.step(model_output=noise_pred, timestep=t, sample=latents, **extra_step_kwargs).prev_sample
 
         if i == until - 1:
             break
