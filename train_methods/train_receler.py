@@ -17,7 +17,7 @@ from diffusers.models.attention_processor import Attention, AttnProcessor
 from diffusers.models.attention import BasicTransformerBlock
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from train_methods.train_utils import sample_until, apply_model
+from train_methods.train_utils import sample_until, apply_model, get_condition
 from utils import Arguments
 
 def get_mask(attn_maps, word_indices, thres):
@@ -279,26 +279,12 @@ def setup_unet_adapter_eraser(unet: UNet2DConditionModel, eraser_rank, device):
             erasers[eraser_name] = module.adapter
     return erasers
 
-@torch.no_grad()
-def get_learned_conditioning(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, prompt: list[str]) -> torch.Tensor:
-    input_ids = tokenizer(
-        prompt,
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        return_tensors="pt",
-        truncation=True
-    ).input_ids
-    device = text_encoder.device
-    emb = text_encoder(input_ids.to(device))[0]
-    return emb
-
 def train_receler(args: Arguments):
     
     device = torch.device(f'cuda:{args.device.split(",")[0]}')
 
     # extend specific concept
     concept: str = args.concepts
-    word_print = concept.replace(' ', '')
     original_concept = concept
 
     concept_mappings = {'i2p': "hate, harassment, violence, suffering, humiliation, harm, suicide, sexual, nudity, bodily fluids, blood"}
@@ -328,7 +314,6 @@ def train_receler(args: Arguments):
     erasers = setup_unet_adapter_eraser(unet, eraser_rank=args.receler_rank, device=device)
     unet.set_attn_processor(CustomAttnProcessor())
 
-    # setup optimizer
     opt = optim.Adam([param for eraser in erasers.values() for param in eraser.parameters()], lr=args.receler_lr)
 
     # lambda function for only denoising till time step t
@@ -341,8 +326,6 @@ def train_receler(args: Arguments):
         guidance_scale=s
     )
     
-    print('\n'.join(['#'*50, word_print, '#'*50]))
-
     # dicts to store captured attention maps and eraser outputs
     attn_maps = {}
     eraser_outs = {}
@@ -360,9 +343,9 @@ def train_receler(args: Arguments):
         
         word_idx, word = random.sample(list(enumerate(words)),1)[0]
         # get text embeddings for unconditional and conditional prompts
-        emb_0 = get_learned_conditioning(tokenizer, text_encoder, [''])
-        emb_p = get_learned_conditioning(tokenizer, text_encoder, [f'{word}'])
-        emb_n = get_learned_conditioning(tokenizer, text_encoder, [f'{word}'])
+        emb_0 = get_condition([''], tokenizer, text_encoder)
+        emb_p = get_condition([f'{word}'], tokenizer, text_encoder)
+        emb_n = get_condition([f'{word}'], tokenizer, text_encoder)
 
         # hacking the indices of targeted word and adversarial prompts
         text_len = len(tokenizer(f'{word}', add_special_tokens=False)['input_ids'])

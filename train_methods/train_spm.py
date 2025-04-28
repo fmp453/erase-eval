@@ -488,7 +488,6 @@ def train(
 
     del (unet, noise_scheduler, loss, optimizer, network)
     flush()
-    print("Done.")
 
 
 def main(args: Arguments):

@@ -201,7 +201,6 @@ def train(args: Arguments):
     retain_dataset = retain_prompt(args.dataset_retain)
     
     # ======= Stage 1: TRAINING SETUP =======
-    ddim_eta = 0
     tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
@@ -364,7 +363,7 @@ def train(args: Arguments):
                 retain_emb_n = custom_text_encoder(input_ids = retain_input_ids, inputs_embeds=retain_text_embeddings)[0]
                 retain_e_n = apply_model(unet, retain_z, t_enc_ddpm, retain_emb_n)
                 
-                retain_loss = criteria(retain_e_n.to(devices[0]), retain_e_p.to(devices[0]))
+                retain_loss: torch.Tensor = criteria(retain_e_n.to(devices[0]), retain_e_p.to(devices[0]))
                 retain_loss.backward()
                 opt.step()
 

@@ -1,12 +1,9 @@
-import argparse
 import hashlib
 import itertools
-import json
 import math
 import os
 from pathlib import Path
 import random
-
 
 import numpy as np
 import torch
@@ -29,8 +26,9 @@ from diffusers import (
 from diffusers.models.attention_processor import Attention
 from diffusers.optimization import get_scheduler
 
-from train_methods.utils_doco import get_anchor_prompts, collate_fn, retrieve, adjust_gradient
+from train_methods.utils_doco import get_anchor_prompts, retrieve, adjust_gradient
 from train_methods.utils_doco import CustomDiffusionAttnProcessor, PatchGANDiscriminator, CustomDiffusionDataset, PromptDataset, CustomDiffusionPipeline
+from train_methods.train_utils import collate_fn
 from utils import Arguments
 
 def init_discriminator(lr=0.0001, b1=0.5, b2=0.999) -> tuple[PatchGANDiscriminator, nn.BCEWithLogitsLoss, optim.Optimizer]:
@@ -73,39 +71,6 @@ def create_custom_diffusion(unet: UNet2DConditionModel, parameter_group):
     change_attn(unet)
     unet.set_attn_processor(CustomDiffusionAttnProcessor())
     return unet
-
-
-def save_model_card(
-    repo_id: str, images=None, base_model=str, prompt=str, repo_folder=None
-):
-    img_str = ""
-    for i, image in enumerate(images):
-        image.save(os.path.join(repo_folder, f"image_{i}.png"))
-        img_str += f"./image_{i}.png\n"
-
-    yaml = f"""
-        ---
-        license: creativeml-openrail-m
-        base_model: {base_model}
-        instance_prompt: {prompt}
-        tags:
-        - stable-diffusion
-        - stable-diffusion-diffusers
-        - text-to-image
-        - diffusers
-        - custom diffusion
-        inference: true
-        ---
-            """
-    model_card = f"""
-        # Custom Diffusion - {repo_id}
-
-        These are Custom Diffusion adaption weights for {base_model}. The weights were trained on {prompt} using [Custom Diffusion](https://www.cs.cmu.edu/~custom-diffusion). You can find some example images in the following. \n
-        {img_str[0]}
-        """
-    with open(os.path.join(repo_folder, "README.md"), "w") as f:
-        f.write(yaml + model_card)
-
 
 def freeze_params(params: nn.Parameter) -> None:
     for param in params:
@@ -203,7 +168,6 @@ def main(args: Arguments):
                     class_prompt_collection = [x.strip() for x in f.readlines()]
 
             num_new_images = args.doco_num_class_images
-            print(f"Number of class images to sample: {num_new_images}.")
 
             sample_dataset = PromptDataset(class_prompt_collection, num_new_images)
             sample_dataloader = DataLoader(sample_dataset, batch_size=4)
@@ -335,16 +299,7 @@ def main(args: Arguments):
     num_update_steps_per_epoch = len(train_dataloader)
     args.doco_num_train_epochs = math.ceil(args.doco_max_train_steps / num_update_steps_per_epoch)
 
-    # Train!
-    total_batch_size = args.doco_batch_size
-
-    print("***** Running training *****")
-    print(f"  Num examples = {len(train_dataset)}")
-    print(f"  Num batches each epoch = {len(train_dataloader)}")
-    print(f"  Num Epochs = {args.doco_num_train_epochs}")
-    print(f"  Instantaneous batch size per device = {args.doco_batch_size}")
-    print(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    print(f"  Total optimization steps = {args.doco_max_train_steps}")
+    # Train
     global_step = 0
     first_epoch = 0
 
@@ -462,8 +417,3 @@ def main(args: Arguments):
     )
     save_path = os.path.join(args.save_dir, "delta.bin")
     pipeline.save_pretrained(save_path, parameter_group=args.doco_parameter_group)
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    main(args)

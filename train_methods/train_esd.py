@@ -2,10 +2,8 @@
 
 # ref: https://github.com/nannullna/safe-diffusion/blob/main/train_sdd.py
 
-import inspect
 import random
 import warnings
-from typing import Union, Any, Optional
 
 import torch
 import torch.optim as optim
@@ -19,53 +17,15 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters
 
 warnings.filterwarnings("ignore")
 
-def gather_parameters(args: Arguments, unet: UNet2DConditionModel) -> tuple[list[str], list[torch.nn.Parameter]]:
-    """Gather the parameters to be optimized by the optimizer."""
-    names, parameters = [], []
-    for name, param in unet.named_parameters():
-        if args.esd_method == "full":
-            # Train all layers.
-            names.append(name)
-            parameters.append(param)
-        elif args.esd_method == "selfattn":
-            # Attention layer 1 is the self-attention layer.
-            if "attn1" in name:
-                names.append(name)
-                parameters.append(param)
-        elif args.esd_method == "xattn":
-            # Attention layer 2 is the cross-attention layer.
-            if "attn2" in name:
-                names.append(name)
-                parameters.append(param)
-        elif args.esd_method == "noxattn":
-            # Train all layers except the cross attention and time_embedding layers.
-            if name.startswith("conv_out.") or ("time_embed" in name):
-                # Skip the time_embedding layer.
-                continue
-            elif "attn2" in name:
-                # Skip the cross attention layer.
-                continue
-            names.append(name)
-            parameters.append(param)
-        elif args.esd_method == "notime":
-            # Train all layers except the time_embedding layer.
-            if name.startswith("conv_out.") or ("time_embed" in name):
-                continue
-            names.append(name)
-            parameters.append(param)
-        else:
-            raise ValueError(f"Unknown finetuning method: {args.esd_method}")
-
-    return names, parameters
-
 @torch.no_grad()
 def encode_prompt(
-    prompt: Union[str, list[str]]=None,
-    negative_prompt: Union[str, list[str]]=None,
-    removing_prompt: Union[str, list[str]]=None,
+    prompt: str | list[str]=None,
+    negative_prompt: str | list[str]=None,
+    removing_prompt: str | list[str]=None,
     num_images_per_prompt: int=1,
     text_encoder: CLIPTextModel=None,
     tokenizer: CLIPTokenizer=None,
@@ -128,64 +88,6 @@ def encode_prompt(
         prompt_embeds = prompt_embeds.reshape(batch_size * num_images_per_prompt, seq_len, -1)
     
     return prompt_embeds
-
-# Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_extra_step_kwargs
-def prepare_extra_step_kwargs(scheduler, generator, eta):
-    # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
-    # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
-    # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
-    # and should be between [0, 1]
-
-    accepts_eta = "eta" in set(inspect.signature(scheduler.step).parameters.keys())
-    extra_step_kwargs = {}
-    if accepts_eta:
-        extra_step_kwargs["eta"] = eta
-
-    # check if the scheduler accepts generator
-    accepts_generator = "generator" in set(inspect.signature(scheduler.step).parameters.keys())
-    if accepts_generator:
-        extra_step_kwargs["generator"] = generator
-    
-    return extra_step_kwargs
-
-# Sample latents from unet and DDIM scheduler until the given timestep.
-@torch.no_grad()
-def sample_until(
-    until: int,
-    latents: torch.Tensor,
-    unet: UNet2DConditionModel,
-    scheduler: DDIMScheduler,
-    prompt_embeds: torch.Tensor,
-    guidance_scale: float,
-    extra_step_kwargs: Optional[dict[str, Any]]=None,
-):
-    """Sample latents until t for a given prompt."""
-    timesteps = scheduler.timesteps
-
-    do_guidance = abs(guidance_scale) > 1.0
-
-    # Denoising loop
-    for i, t in enumerate(timesteps):
-        latent_model_input = (torch.cat([latents] * 2) if do_guidance else latents)
-        latent_model_input = scheduler.scale_model_input(latent_model_input, t)
-
-        # predict the noise residual
-        noise_pred = unet(latent_model_input, t, encoder_hidden_states=prompt_embeds).sample
-
-        # perform guidance
-        if do_guidance:
-            noise_pred_out = torch.chunk(noise_pred, 2, dim=0)
-            noise_pred_uncond, noise_pred_prompt = noise_pred_out[0], noise_pred_out[1]
-            
-            cond_guidance = noise_pred_prompt - noise_pred_uncond
-            noise_pred = noise_pred_uncond + (guidance_scale * cond_guidance)
-
-        latents = scheduler.step(model_output=noise_pred, timestep=t, sample=latents, **extra_step_kwargs).prev_sample
-
-        if i == until - 1:
-            break
-
-    return latents
 
 def train_step(
     args: Arguments,
@@ -296,7 +198,7 @@ def main(args: Arguments):
     unet_teacher.requires_grad_(False)
     text_encoder.requires_grad_(False)
 
-    names, parameters = gather_parameters(args, unet_student)
+    names, parameters = gather_parameters(args.esd_method, unet_student)
     print(f"Finetuning parameters: {names}")
     num_train_param = sum(p.numel() for p in parameters)
     num_total_param = sum(p.numel() for p in unet_student.parameters())

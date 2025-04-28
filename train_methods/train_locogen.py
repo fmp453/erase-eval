@@ -72,7 +72,6 @@ def train(args: Arguments):
     # Start location # 
     start_loc = args.start_loc # start_loc = 9 is also another option
     relevant_edit_layers = relevant_layers[start_loc*2: start_loc*2 + args.seq]
-    print(f'Relevant Editing layers : {relevant_edit_layers}')
 
     def design_styles(artist):
         # Prompts : With basic augmentations
@@ -139,7 +138,6 @@ def train(args: Arguments):
 
     # Key prompts
     key_prompt = design_styles(args.concepts) if args.loco_concept_type == "style" else design_objects(args.concepts)
-    print(key_prompt)
     layer_edit_modules = []
     for l in relevant_edit_layers:
         # Iterate through the modules in UNet
@@ -148,16 +146,11 @@ def train(args: Arguments):
                 layer_edit_modules.append(m)
     
     # Finished storing the layers which are edited
-    print(f'Number of the layers which are edited : {len(layer_edit_modules)}')
     key_embeddings = generate_text_embeddings(tokenizer, text_encoder, key_prompt)
     target_prompt = ['a painting'] * len(key_embeddings) if args.loco_concept_type == "style" else ["a photo"] * len(key_embeddings)
     
-    print(target_prompt)
     # Flag
     value_embeddings = generate_text_embeddings(tokenizer, text_encoder, target_prompt, value=True)
-
-    print(f'Size of Key Embeddings : {len(key_embeddings)}')
-    print(f'Size of Value embeddings : {len(value_embeddings)}')
 
     train_edit(args, layer_edit_modules, key_embeddings, value_embeddings)
 
