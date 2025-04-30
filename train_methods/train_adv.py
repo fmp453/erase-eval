@@ -268,12 +268,29 @@ def train(args: Arguments):
             # Warmup training
             input_ids = text_input.input_ids.to(devices[0])
             emb_n = custom_text_encoder(input_ids = input_ids, inputs_embeds=text_embeddings)[0]
-            loss = get_train_loss_retain(args.adv_retain_batch, args.adv_retain_train, args.adv_retain_loss_w, unet, unet_orig, custom_text_encoder, scheduler, emb_0, emb_p, retain_emb_p, emb_n, retain_emb_n, args.start_guidance, args.negative_guidance, devices, args.ddim_steps, criteria, input_ids, args.adv_attack_embd_type)
+            adv_embd = None
         else:
             if args.adv_attack_embd_type == 'word_embd':
-                loss = get_train_loss_retain(args.adv_retain_batch, args.adv_retain_train, args.adv_retain_loss_w, unet, unet_orig, custom_text_encoder, scheduler, emb_0, emb_p, retain_emb_p, None, retain_emb_n, args.start_guidance, args.negative_guidance, devices, args.ddim_steps, criteria, adv_input_ids, args.adv_attack_embd_type, adv_word_embd)
+                adv_embd = adv_word_embd
             elif args.adv_attack_embd_type == 'condition_embd':
-                loss = get_train_loss_retain(args.adv_retain_batch, args.adv_retain_train, args.adv_retain_loss_w, unet, unet_orig, custom_text_encoder, scheduler, emb_0, emb_p, retain_emb_p, None, retain_emb_n, args.start_guidance, args.negative_guidance, devices, args.ddim_steps, criteria, adv_input_ids, args.adv_attack_embd_type, adv_condition_embd)
+                adv_embd = adv_condition_embd
+            emb_n = None
+        loss = get_train_loss_retain(
+            args,
+            unet,
+            unet_orig,
+            custom_text_encoder,
+            scheduler,
+            emb_0,
+            emb_p,
+            retain_emb_p,
+            emb_n,
+            retain_emb_n,
+            devices,
+            criteria,
+            adv_input_ids,
+            adv_embd=adv_embd
+        )
         
         # update weights to erase the concept
         loss.backward()
@@ -298,7 +315,6 @@ def train(args: Arguments):
                 t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=devices[0])
                 retain_start_code = torch.randn((args.adv_retain_batch, 4, 64, 64)).to(devices[0])
                 
-                # retain_emb_p = model_orig.get_learned_conditioning(retain_words)
                 with torch.no_grad():
                     retain_text_input = tokenizer(retain_words, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt", truncation=True)
                     retain_emb_p = text_encoder_orig(retain_text_input.input_ids.to(text_encoder_orig.device))[0]

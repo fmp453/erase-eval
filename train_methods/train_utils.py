@@ -681,34 +681,30 @@ def construct_id(k, adv_id: torch.Tensor, insertion_location, sot_id, eot_id: to
         input_ids = torch.cat(input_ids,dim=1)
     return input_ids
 
-def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_orig, text_encoder, scheduler, emb_0, emb_p, retain_emb_p,  emb_n, retain_emb_n, start_guidance, negative_guidance, devices, ddim_steps, criteria, adv_input_ids, attack_embd_type, adv_embd=None) -> torch.Tensor:
-    """_summary_
-
-    Args:
-        unet: ESD model
-        unet_orig: frozen DDPM model
-        scheduler: DDIMSampler for DDPM model
-        
+def get_train_loss_retain(
+    args: Arguments,
+    unet: UNet2DConditionModel,
+    unet_orig: UNet2DConditionModel,
+    text_encoder: CustomCLIPTextModel,
+    scheduler: DDIMScheduler,
+    emb_0: torch.Tensor,
+    emb_p: torch.Tensor,
+    retain_emb_p: torch.Tensor,
+    emb_n: Optional[torch.Tensor],
+    retain_emb_n: torch.Tensor,
+    devices: list[torch.device],
+    criteria,
+    adv_input_ids,
+    adv_embd: Optional[torch.Tensor]
+) -> torch.Tensor:
+    """
         emb_0: unconditional embedding
         emb_p: conditional embedding (for ground truth concept)
         emb_n: conditional embedding (for modified concept)
         
-        start_guidance: unconditional guidance for ESD model
-        negative_guidance: negative guidance for ESD model
-        
-        devices: list of devices for ESD and DDPM models 
-        ddim_steps: number of steps for DDIMSampler
-        ddim_eta: eta for DDIMSampler
-        image_size: image size for DDIMSampler
-        
-        criteria: loss function for ESD model
-        
         adv_input_ids: input_ids for adversarial word embedding
         adv_emb_n: adversarial conditional embedding
         adv_word_emb_n: adversarial word embedding
-
-    Returns:
-        loss: training loss for ESD model
     """
 
     quick_sample_till_t = lambda x, s, code, batch, t: sample_until(
@@ -720,37 +716,37 @@ def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_
         guidance_scale=s,
     )
     
-    t_enc = torch.randint(ddim_steps, (1,), device=devices[0])
+    t_enc = torch.randint(args.ddim_steps, (1,), device=devices[0])
     # time step from 1000 to 0 (0 being good)
-    og_num = round((int(t_enc) / ddim_steps) * 1000)
-    og_num_lim = round((int(t_enc + 1) / ddim_steps) * 1000)
+    og_num = round((int(t_enc) / args.ddim_steps) * 1000)
+    og_num_lim = round((int(t_enc + 1) / args.ddim_steps) * 1000)
     t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=devices[0])
     start_code = torch.randn((1, 4, 64, 64)).to(devices[0])
-    if retain_train == 'reg':
-        retain_start_code = torch.randn((retain_batch, 4, 64, 64)).to(devices[0])
+    if args.adv_retain_train == 'reg':
+        retain_start_code = torch.randn((args.adv_retain_batch, 4, 64, 64)).to(devices[0])
     
     with torch.no_grad():
         # generate an image with the concept from ESD model
         z = quick_sample_till_t(
-            torch.cat([emb_0, emb_p], dim=0) if start_guidance > 1 else emb_p, 
-            start_guidance, start_code, 1, int(t_enc)) # emb_p seems to work better instead of emb_0
+            torch.cat([emb_0, emb_p], dim=0) if args.start_guidance > 1 else emb_p, 
+            args.start_guidance, start_code, 1, int(t_enc)) # emb_p seems to work better instead of emb_0
         # get conditional and unconditional scores from frozen model at time step t and image z
         e_0 = apply_model(unet_orig, z, t_enc_ddpm, emb_0)
         e_p = apply_model(unet_orig, z, t_enc_ddpm, emb_p)
         
-        if retain_train == 'reg':
+        if args.adv_retain_train == 'reg':
             retain_z = quick_sample_till_t(
-                torch.cat([emb_0, retain_emb_p], dim=0) if start_guidance > 1 else retain_emb_p,
-                start_guidance, retain_start_code, retain_batch, int(t_enc)) # emb_p seems to work better instead of emb_0
+                torch.cat([emb_0, retain_emb_p], dim=0) if args.start_guidance > 1 else retain_emb_p,
+                args.start_guidance, retain_start_code, args.adv_retain_batch, int(t_enc)) # emb_p seems to work better instead of emb_0
             retain_e_p = apply_model(unet_orig, retain_z, t_enc_ddpm, retain_emb_p)
     
     if adv_embd is None:
         e_n = apply_model(unet, z, t_enc_ddpm, emb_n)
     else:
-        if attack_embd_type == 'condition_embd':
+        if args.adv_attack_embd_type == 'condition_embd':
             # Train with adversarial conditional embedding
             e_n = apply_model(unet, z, t_enc_ddpm, adv_embd)
-        elif attack_embd_type == 'word_embd':
+        elif args.adv_attack_embd_type == 'word_embd':
             # Train with adversarial word embedding
             adv_emb_n = text_encoder(input_ids=adv_input_ids.to(devices[0]), inputs_embeds=adv_embd.to(devices[0]))[0]
             e_n = apply_model(unet, z, t_enc_ddpm, adv_emb_n)
@@ -761,12 +757,12 @@ def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_
     e_p.requires_grad = False
     
     # reconstruction loss for ESD objective from frozen model and conditional score of ESD model
-    unlearn_loss = criteria(e_n.to(devices[0]), e_0.to(devices[0]) - (negative_guidance*(e_p.to(devices[0]) - e_0.to(devices[0])))) 
-    if retain_train == 'reg':
+    unlearn_loss = criteria(e_n.to(devices[0]), e_0.to(devices[0]) - (args.negative_guidance*(e_p.to(devices[0]) - e_0.to(devices[0])))) 
+    if args.adv_retain_train == 'reg':
         retain_e_n = apply_model(unet, retain_z, t_enc_ddpm, retain_emb_n)
         retain_e_p.requires_grad = False
         retain_loss = criteria(retain_e_n.to(devices[0]), retain_e_p.to(devices[0]))
-        return unlearn_loss + retain_loss_w * retain_loss
+        return unlearn_loss + args.adv_retain_loss_w * retain_loss
 
     return unlearn_loss
 
