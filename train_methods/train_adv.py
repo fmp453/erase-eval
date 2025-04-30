@@ -142,7 +142,7 @@ def train(args: Arguments):
     retain_dataset = retain_prompt(args.dataset_retain)
     
     # ======= Stage 1: TRAINING SETUP =======
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
+    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
     unet_orig: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
@@ -208,20 +208,32 @@ def train(args: Arguments):
                 custom_text_encoder.eval()
                 custom_text_encoder.requires_grad_(False)
                 unet.eval()
+                # args.adv_attack_embd_typeで処理が分岐されていたが呼び出している関数も引数も同じなので統一
+                # 返り値の変数名だけ違うのでそこを揃える形に変更    
                 if attack_round == 0:
-                    if args.adv_attack_embd_type == 'word_embd':
-                        adv_word_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type,  args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, None, args.adv_attack_method)
-                    elif args.adv_attack_embd_type == 'condition_embd':
-                        adv_condition_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type, args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, None, args.adv_attack_method) 
+                    attack_init_embd = None
                 else:
-                    if args.adv_attack_embd_type == 'word_embd':
-                        adv_word_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type,  args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, adv_word_embd, args.adv_attack_method)
-                    elif args.adv_attack_embd_type == 'condition_embd':
-                        adv_condition_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type, args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, adv_condition_embd, args.adv_attack_method) 
+                    attack_init_embd = adv_word_embd if args.adv_attack_embd_type == 'word_embd' else adv_condition_embd
+                adv_word_embd, adv_input_ids = soft_prompt_attack(
+                    word,
+                    unet,
+                    unet_orig,
+                    tokenizer,
+                    custom_text_encoder,
+                    scheduler,
+                    emb_0,
+                    emb_p,
+                    devices=devices,
+                    criteria=criteria,
+                    all_embeddings=all_embeddings,
+                    args=args,
+                    attack_init_embd=attack_init_embd,
+                )
+                if args.adv_attack_embd_type == 'condition_embd':
+                    adv_condition_embd = adv_word_embd
                 
                 global_step += args.adv_attack_step
                 attack_round += 1
-                
         
         # Set model/TextEnocder to train or eval mode
         if args.adv_method == 'text_encoder':
@@ -249,7 +261,6 @@ def train(args: Arguments):
         else:
             retain_text_input = None
             retain_text_embeddings = None
-            # retain_emb_0 = None
             retain_emb_p = None
             retain_emb_n = None
         
