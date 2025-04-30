@@ -2,7 +2,6 @@
 # ref: https://github.com/nannullna/safe-diffusion
 
 import random
-from typing import Union
 
 import torch
 import torch.nn.functional as F
@@ -16,94 +15,7 @@ from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler, UNet2DConditi
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters
-
-@torch.no_grad()
-def encode_prompt(
-    prompt: Union[str, list[str]]=None,
-    negative_prompt: Union[str, list[str]]=None,
-    removing_prompt: Union[str, list[str]]=None,
-    num_images_per_prompt: int=1,
-    text_encoder: CLIPTextModel=None,
-    tokenizer: CLIPTokenizer=None,
-    device: torch.device=None,
-):
-    """Encode a prompt into a text embedding. Prompt can be None."""
-    # Get text embeddings for unconditional and conditional prompts.
-    if isinstance(prompt, str):
-        prompt = [prompt]
-    
-    if removing_prompt is not None and isinstance(removing_prompt, str):
-        removing_prompt = [removing_prompt]
-        assert len(prompt) == len(removing_prompt), f"Safety concept must be the same length as prompt of length {len(prompt)}."
-    
-    if negative_prompt is not None and isinstance(negative_prompt, str):
-        negative_prompt = [negative_prompt]
-        assert len(prompt) == len(negative_prompt), f"Negative prompt must be the same length as prompt of length {len(prompt)}."
-
-    batch_size = len(prompt) if prompt is not None else 1
-
-    use_attention_mask = hasattr(text_encoder.config, "use_attention_mask") and text_encoder.config.use_attention_mask
-    device = device if device is not None else text_encoder.device
-
-    # Tokenization
-    uncond_input = tokenizer(
-        [""] * batch_size if negative_prompt is None else negative_prompt,
-        padding="max_length", 
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-        return_tensors="pt",
-    )
-
-    if prompt is not None:
-        prompt_input = tokenizer(
-            prompt,
-            padding="max_length",
-            max_length=tokenizer.model_max_length, 
-            truncation=True,
-            return_tensors="pt",
-        )
-    else:
-        prompt_input = None
-    
-    if removing_prompt is not None:
-        removing_input = tokenizer(
-            removing_prompt,
-            padding="max_length",
-            max_length=tokenizer.model_max_length, 
-            truncation=True,
-            return_tensors="pt",
-        )
-    else:
-        removing_input = None
-
-    # Encoding
-    prompt_embeds = text_encoder(
-        input_ids=uncond_input["input_ids"].to(device),
-        attention_mask=uncond_input["attention_mask"].to(device) if use_attention_mask else None,
-    )[0]
-    if prompt_input is not None:
-        prompt_emb = text_encoder(
-            input_ids=prompt_input["input_ids"].to(device),
-            attention_mask=prompt_input["attention_mask"].to(device) if use_attention_mask else None,
-        )[0]
-        prompt_embeds = torch.cat([prompt_embeds, prompt_emb], dim=0)
-    
-    if removing_input is not None:
-        removing_emb = text_encoder(
-            input_ids=removing_input["input_ids"].to(device),
-            attention_mask=removing_input["attention_mask"].to(device) if use_attention_mask else None,
-        )[0]
-        prompt_embeds = torch.cat([prompt_embeds, removing_emb], dim=0)
-
-    # Duplicate the embeddings for each image.
-    if num_images_per_prompt > 1:
-        seq_len = prompt_embeds.shape[1]
-        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.reshape(batch_size * num_images_per_prompt, seq_len, -1)
-    
-    return prompt_embeds
-
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt
 
 def train_step(
     args: Arguments,
