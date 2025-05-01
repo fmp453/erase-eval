@@ -16,8 +16,68 @@ from diffusers import UNet2DConditionModel, DDIMScheduler
 from diffusers.models.lora import LoRALinearLayer
 from diffusers.models.attention_processor import Attention
 
+from custom_text_encoder import CustomCLIPTextModel
+from utils import Arguments
 from train_methods.consts import LEN_EN_3K_VOCAB, LEN_TOKENIZER_VOCAB
 
+@torch.no_grad()
+def encode_prompt(
+    prompt: str | list[str]=None,
+    negative_prompt: str | list[str]=None,
+    removing_prompt: str | list[str]=None,
+    num_images_per_prompt: int=1,
+    text_encoder: CLIPTextModel=None,
+    tokenizer: CLIPTokenizer=None,
+    device: torch.device=None,
+):
+    """Encode a prompt into a text embedding. Prompt can be None."""
+    # Get text embeddings for unconditional and conditional prompts.
+    if isinstance(prompt, str):
+        prompt = [prompt]
+    
+    if removing_prompt is not None and isinstance(removing_prompt, str):
+        removing_prompt = [removing_prompt]
+        assert len(prompt) == len(removing_prompt), f"Safety concept must be the same length as prompt of length {len(prompt)}."
+    
+    if negative_prompt is not None and isinstance(negative_prompt, str):
+        negative_prompt = [negative_prompt]
+        assert len(prompt) == len(negative_prompt), f"Negative prompt must be the same length as prompt of length {len(prompt)}."
+
+    batch_size = len(prompt) if prompt is not None else 1
+
+    use_attention_mask = hasattr(text_encoder.config, "use_attention_mask") and text_encoder.config.use_attention_mask
+    device = device if device is not None else text_encoder.device
+
+    # Tokenization
+    uncond_input = tokenizer([""] * batch_size if negative_prompt is None else negative_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
+
+    if prompt is not None:
+        prompt_input = tokenizer(prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
+    else:
+        prompt_input = None
+    
+    if removing_prompt is not None:
+        removing_input = tokenizer(removing_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
+    else:
+        removing_input = None
+
+    # Encoding
+    prompt_embeds = text_encoder(input_ids=uncond_input["input_ids"].to(device), attention_mask=uncond_input["attention_mask"].to(device) if use_attention_mask else None)[0]
+    if prompt_input is not None:
+        prompt_emb = text_encoder(input_ids=prompt_input["input_ids"].to(device), attention_mask=prompt_input["attention_mask"].to(device) if use_attention_mask else None)[0]
+        prompt_embeds = torch.cat([prompt_embeds, prompt_emb], dim=0)
+    
+    if removing_input is not None:
+        removing_emb = text_encoder(input_ids=removing_input["input_ids"].to(device), attention_mask=removing_input["attention_mask"].to(device) if use_attention_mask else None)[0]
+        prompt_embeds = torch.cat([prompt_embeds, removing_emb], dim=0)
+
+    # Duplicate the embeddings for each image.
+    if num_images_per_prompt > 1:
+        seq_len = prompt_embeds.shape[1]
+        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
+        prompt_embeds = prompt_embeds.reshape(batch_size * num_images_per_prompt, seq_len, -1)
+    
+    return prompt_embeds
 
 def gather_parameters(method: str, unet: UNet2DConditionModel) -> tuple[list[str], list[torch.nn.Parameter]]:
     """Gather the parameters to be optimized by the optimizer (U-Net)."""
@@ -246,7 +306,6 @@ def detect_special_tokens(text: str) -> bool:
             return True
     return False
 
-
 @torch.no_grad()
 def search_closest_tokens(
     concept: str, 
@@ -431,26 +490,25 @@ def init_adv(k, tokenizer, all_embeddings, device, batch = 1, attack_init_embd =
     
     return adv_embedding
 
-def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler, emb_0, emb_p, start_guidance, devices, ddim_steps, criteria, k, all_embeddings, attack_type, attack_embd_type, attack_step, attack_lr, attack_init=None, attack_init_embd = None, attack_method='pgd'):
+def soft_prompt_attack(
+    word: str,
+    unet: UNet2DConditionModel,
+    unet_orig: UNet2DConditionModel,
+    tokenizer: CLIPTokenizer,
+    text_encoder: CustomCLIPTextModel,
+    scheduler: DDIMScheduler,
+    emb_0: torch.Tensor,
+    emb_p: torch.Tensor,
+    devices: list[torch.device],
+    criteria,
+    all_embeddings: torch.Tensor,
+    args: Arguments,
+    attack_init_embd: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     
-    '''
-    Perform soft prompt attack on the ESD model
-    Args:
-        attack_type: str
-            The type of attack (add or insert)
-        attack_embd_type: str
-            The type of adversarial embedding (condition_embd or word_embd)
-        attack_step: int
-            The number of steps for the attack
-        attack_lr: float
-            The learning rate for the attack
-        attack_init: str
-            The initialization method for the attack (latest or random)
-        attack_init_embd: torch.Tensor
-            The initial adversarial embedding
-    '''
+    k = args.adv_prompt_num
     orig_prompt_len = len(word.split())
-    if attack_type == 'add':
+    if args.adv_attack_type == 'add':
         k = orig_prompt_len
         
     quick_sample_till_t = lambda x, s, code, t: sample_until(
@@ -460,7 +518,6 @@ def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler
         scheduler=scheduler,
         prompt_embeds=x,
         guidance_scale=s,
-        # extra_step_kwargs: Optional[dict[str, Any]]=None,
     )
     
     # Word Tokenization
@@ -471,38 +528,38 @@ def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler
     text_embeddings = id2embedding(tokenizer, all_embeddings, text_input.input_ids.to(devices[0]), devices[0])
     sot_embd, mid_embd, _, eot_embd = split_embd(text_embeddings, k, orig_prompt_len)
     
-    if attack_init == 'latest':
+    if args.adv_attack_init == 'latest':
         adv_embedding = init_adv(k, tokenizer, all_embeddings, devices[0], 1, attack_init_embd)
-    elif attack_init == 'random':
+    elif args.adv_attack_init == 'random':
         adv_embedding = init_adv(k, tokenizer, all_embeddings, devices[0], 1)
     
     adv_embedding.requires_grad = True
-    attack_opt = optim.Adam([adv_embedding], lr=attack_lr)
+    attack_opt = optim.Adam([adv_embedding], lr=args.adv_attack_lr)
     
-    if attack_embd_type == 'condition_embd':
-        input_adv_condition_embedding = construct_embd(k, adv_embedding, attack_type, sot_embd, mid_embd, eot_embd)
-        adv_input_ids = construct_id(k, replace_id, attack_type, sot_id, eot_id, mid_id)
+    if args.adv_attack_embd_type == 'condition_embd':
+        input_adv_condition_embedding = construct_embd(k, adv_embedding, args.adv_attack_type, sot_embd, mid_embd, eot_embd)
+        adv_input_ids = construct_id(k, replace_id, args.adv_attack_type, sot_id, eot_id, mid_id)
     
-    print(f'[{attack_type}] Starting {attack_method} attack on "{word}"')
-    for i in range(attack_step):
+    print(f'[{args.adv_attack_type}] Starting {args.adv_attack_method} attack on "{word}"')
+    for i in range(args.adv_attack_step):
         # ===== Randomly sample a time step from 0 to 1000 =====
-        t_enc = torch.randint(ddim_steps, (1,), device=devices[0]) # time step from 1000 to 0 (0 being good)
-        og_num = round((int(t_enc)/ddim_steps)*1000)
-        og_num_lim = round((int(t_enc+1)/ddim_steps)*1000)
+        t_enc = torch.randint(args.ddim_steps, (1,), device=devices[0]) # time step from 1000 to 0 (0 being good)
+        og_num = round((int(t_enc)/args.ddim_steps)*1000)
+        og_num_lim = round((int(t_enc+1)/args.ddim_steps)*1000)
         t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=devices[0])
         start_code = torch.randn((1, 4, 64, 64)).to(devices[0]) # random inital noise            
     
         with torch.no_grad():
             # generate an image with the concept from ESD model
             z = quick_sample_till_t(
-                torch.cat([emb_0, emb_p], dim=0) if start_guidance > 1 else emb_p,
-                start_guidance, start_code, int(t_enc)) # emb_p seems to work better instead of emb_0
+                torch.cat([emb_0, emb_p], dim=0) if args.start_guidance > 1 else emb_p,
+                args.start_guidance, start_code, int(t_enc)) # emb_p seems to work better instead of emb_0
             e_p = apply_model(unet_orig, z, t_enc_ddpm, emb_p)
         
         # Construct input_ids and input_embeds for the ESD model
-        if attack_embd_type == 'word_embd':
-            input_adv_word_embedding = construct_embd(k, adv_embedding, attack_type, sot_embd, mid_embd, eot_embd)
-            adv_input_ids = construct_id(k, replace_id, attack_type, sot_id, eot_id, mid_id)
+        if args.adv_attack_embd_type == 'word_embd':
+            input_adv_word_embedding = construct_embd(k, adv_embedding, args.adv_attack_type, sot_embd, mid_embd, eot_embd)
+            adv_input_ids = construct_id(k, replace_id, args.adv_attack_type, sot_id, eot_id, mid_id)
             input_adv_condition_embedding = text_encoder(input_ids = adv_input_ids.to(devices[0]), inputs_embeds=input_adv_word_embedding)[0]
         
         # get conditional score from ESD model with adversarial condition embedding
@@ -512,9 +569,9 @@ def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler
         loss: torch.Tensor = criteria(e_n.to(devices[0]), e_p.to(devices[0]))
         loss.backward(retain_graph=True)
         
-        if attack_method == 'pgd':
+        if args.adv_attack_method == 'pgd':
             attack_opt.step()
-        elif attack_method == 'fast_at':
+        elif args.adv_attack_method == 'fast_at':
             adv_embedding.grad.sign_()
             attack_opt.step()
         else:
@@ -522,9 +579,9 @@ def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler
         
         print(f'Attack_Loss: {loss.item()}')
     
-    if attack_embd_type == 'condition_embd':
+    if args.adv_attack_embd_type == 'condition_embd':
         return input_adv_condition_embedding, adv_input_ids 
-    elif attack_embd_type == 'word_embd':
+    elif args.adv_attack_embd_type == 'word_embd':
         return input_adv_word_embedding, adv_input_ids 
     else:
         raise ValueError('attack_embd_type must be either condition_embd or word_embd')
@@ -624,36 +681,32 @@ def construct_id(k, adv_id: torch.Tensor, insertion_location, sot_id, eot_id: to
         input_ids = torch.cat(input_ids,dim=1)
     return input_ids
 
-def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_orig, text_encoder, scheduler, emb_0, emb_p, retain_emb_p,  emb_n, retain_emb_n, start_guidance, negative_guidance, devices, ddim_steps, criteria, adv_input_ids, attack_embd_type, adv_embd=None) -> torch.Tensor:
-    """_summary_
-
-    Args:
-        unet: ESD model
-        unet_orig: frozen DDPM model
-        scheduler: DDIMSampler for DDPM model
-        
+def get_train_loss_retain(
+    args: Arguments,
+    unet: UNet2DConditionModel,
+    unet_orig: UNet2DConditionModel,
+    text_encoder: CustomCLIPTextModel,
+    scheduler: DDIMScheduler,
+    emb_0: torch.Tensor,
+    emb_p: torch.Tensor,
+    retain_emb_p: torch.Tensor,
+    emb_n: Optional[torch.Tensor],
+    retain_emb_n: torch.Tensor,
+    devices: list[torch.device],
+    criteria,
+    adv_input_ids,
+    adv_embd: Optional[torch.Tensor]
+) -> torch.Tensor:
+    """
         emb_0: unconditional embedding
         emb_p: conditional embedding (for ground truth concept)
         emb_n: conditional embedding (for modified concept)
         
-        start_guidance: unconditional guidance for ESD model
-        negative_guidance: negative guidance for ESD model
-        
-        devices: list of devices for ESD and DDPM models 
-        ddim_steps: number of steps for DDIMSampler
-        ddim_eta: eta for DDIMSampler
-        image_size: image size for DDIMSampler
-        
-        criteria: loss function for ESD model
-        
         adv_input_ids: input_ids for adversarial word embedding
         adv_emb_n: adversarial conditional embedding
         adv_word_emb_n: adversarial word embedding
-
-    Returns:
-        loss: training loss for ESD model
     """
-    # quick_sample_till_t = lambda x, s, code, batch, t: sample_model(model, sampler, x, image_size, image_size, ddim_steps, s, ddim_eta, start_code=code, n_samples=batch, till_T=t, verbose=False)
+
     quick_sample_till_t = lambda x, s, code, batch, t: sample_until(
         until=t,
         latents=code,
@@ -661,45 +714,41 @@ def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_
         scheduler=scheduler,
         prompt_embeds=x,
         guidance_scale=s,
-        # extra_step_kwargs: Optional[dict[str, Any]]=None,
     )
     
-    t_enc = torch.randint(ddim_steps, (1,), device=devices[0])
+    t_enc = torch.randint(args.ddim_steps, (1,), device=devices[0])
     # time step from 1000 to 0 (0 being good)
-    og_num = round((int(t_enc) / ddim_steps) * 1000)
-    og_num_lim = round((int(t_enc + 1) / ddim_steps) * 1000)
-
+    og_num = round((int(t_enc) / args.ddim_steps) * 1000)
+    og_num_lim = round((int(t_enc + 1) / args.ddim_steps) * 1000)
     t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=devices[0])
-
     start_code = torch.randn((1, 4, 64, 64)).to(devices[0])
-    if retain_train == 'reg':
-        retain_start_code = torch.randn((retain_batch, 4, 64, 64)).to(devices[0])
+    if args.adv_retain_train == 'reg':
+        retain_start_code = torch.randn((args.adv_retain_batch, 4, 64, 64)).to(devices[0])
     
     with torch.no_grad():
         # generate an image with the concept from ESD model
         z = quick_sample_till_t(
-            torch.cat([emb_0, emb_p], dim=0) if start_guidance > 1 else emb_p, 
-            start_guidance, start_code, 1, int(t_enc)) # emb_p seems to work better instead of emb_0
+            torch.cat([emb_0, emb_p], dim=0) if args.start_guidance > 1 else emb_p, 
+            args.start_guidance, start_code, 1, int(t_enc)) # emb_p seems to work better instead of emb_0
         # get conditional and unconditional scores from frozen model at time step t and image z
         e_0 = apply_model(unet_orig, z, t_enc_ddpm, emb_0)
         e_p = apply_model(unet_orig, z, t_enc_ddpm, emb_p)
         
-        if retain_train == 'reg':
+        if args.adv_retain_train == 'reg':
             retain_z = quick_sample_till_t(
-                torch.cat([emb_0, retain_emb_p], dim=0) if start_guidance > 1 else retain_emb_p,
-                start_guidance, retain_start_code, retain_batch, int(t_enc)) # emb_p seems to work better instead of emb_0
+                torch.cat([emb_0, retain_emb_p], dim=0) if args.start_guidance > 1 else retain_emb_p,
+                args.start_guidance, retain_start_code, args.adv_retain_batch, int(t_enc)) # emb_p seems to work better instead of emb_0
             retain_e_p = apply_model(unet_orig, retain_z, t_enc_ddpm, retain_emb_p)
     
     if adv_embd is None:
         e_n = apply_model(unet, z, t_enc_ddpm, emb_n)
     else:
-        if attack_embd_type == 'condition_embd':
+        if args.adv_attack_embd_type == 'condition_embd':
             # Train with adversarial conditional embedding
             e_n = apply_model(unet, z, t_enc_ddpm, adv_embd)
-        elif attack_embd_type == 'word_embd':
+        elif args.adv_attack_embd_type == 'word_embd':
             # Train with adversarial word embedding
-            print('====== Training with adversarial word embedding =====')
-            adv_emb_n = text_encoder(input_ids = adv_input_ids.to(devices[0]), inputs_embeds=adv_embd.to(devices[0]))[0]
+            adv_emb_n = text_encoder(input_ids=adv_input_ids.to(devices[0]), inputs_embeds=adv_embd.to(devices[0]))[0]
             e_n = apply_model(unet, z, t_enc_ddpm, adv_emb_n)
         else:
             raise ValueError('attack_embd_type must be either condition_embd or word_embd')
@@ -708,31 +757,20 @@ def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_
     e_p.requires_grad = False
     
     # reconstruction loss for ESD objective from frozen model and conditional score of ESD model
-    if retain_train == 'reg':
-        # reconstruction loss for ESD objective from frozen model and conditional score of ESD model
-        print('====== Training with retain batch =====')
-        unlearn_loss = criteria(e_n.to(devices[0]), e_0.to(devices[0]) - (negative_guidance*(e_p.to(devices[0]) - e_0.to(devices[0])))) 
-        
+    unlearn_loss = criteria(e_n.to(devices[0]), e_0.to(devices[0]) - (args.negative_guidance*(e_p.to(devices[0]) - e_0.to(devices[0])))) 
+    if args.adv_retain_train == 'reg':
         retain_e_n = apply_model(unet, retain_z, t_enc_ddpm, retain_emb_n)
-        
         retain_e_p.requires_grad = False
         retain_loss = criteria(retain_e_n.to(devices[0]), retain_e_p.to(devices[0]))
-        
-        loss = unlearn_loss + retain_loss_w * retain_loss
-        return loss
-        
-    else:
-        # reconstruction loss for ESD objective from frozen model and conditional score of ESD model
-        unlearn_loss = criteria(e_n.to(devices[0]), e_0.to(devices[0]) - (negative_guidance*(e_p.to(devices[0]) - e_0.to(devices[0])))) 
-        return unlearn_loss
+        return unlearn_loss + args.adv_retain_loss_w * retain_loss
+
+    return unlearn_loss
 
 
-##########################################
 """
 utils for MACE
 
 """
-##########################################
 
 def importance_sampling_fn(t, temperature=0.05):
     """Importance Sampling Function f(t)"""

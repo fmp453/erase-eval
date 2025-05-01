@@ -1,7 +1,6 @@
 # Defensive Unlearning with Adversarial Training for Robust Concept Erasure in Diffusion Models (AdvUnlearn)
 
 import random
-from typing import Union
 
 import pandas as pd
 import torch
@@ -11,7 +10,7 @@ from tqdm import trange
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import UNet2DConditionModel, AutoencoderKL, DDIMScheduler
 
-from train_methods.train_utils import id2embedding, soft_prompt_attack, get_train_loss_retain, apply_model, sample_until
+from train_methods.train_utils import id2embedding, soft_prompt_attack, get_train_loss_retain, apply_model, sample_until, encode_prompt
 from train_methods.custom_text_encoder import CustomCLIPTextModel
 
 from utils import Arguments
@@ -115,64 +114,6 @@ def param_choices(train_method: str, text_encoder: CustomCLIPTextModel=None, une
     
     return parameters
 
-@torch.no_grad()
-def encode_prompt(
-    prompt: Union[str, list[str]]=None,
-    negative_prompt: Union[str, list[str]]=None,
-    removing_prompt: Union[str, list[str]]=None,
-    num_images_per_prompt: int=1,
-    text_encoder: CLIPTextModel=None,
-    tokenizer: CLIPTokenizer=None,
-    device: torch.device=None,
-):
-    """Encode a prompt into a text embedding. Prompt can be None."""
-    # Get text embeddings for unconditional and conditional prompts.
-    if isinstance(prompt, str):
-        prompt = [prompt]
-    
-    if removing_prompt is not None and isinstance(removing_prompt, str):
-        removing_prompt = [removing_prompt]
-        assert len(prompt) == len(removing_prompt), f"Safety concept must be the same length as prompt of length {len(prompt)}."
-    
-    if negative_prompt is not None and isinstance(negative_prompt, str):
-        negative_prompt = [negative_prompt]
-        assert len(prompt) == len(negative_prompt), f"Negative prompt must be the same length as prompt of length {len(prompt)}."
-
-    batch_size = len(prompt) if prompt is not None else 1
-
-    use_attention_mask = hasattr(text_encoder.config, "use_attention_mask") and text_encoder.config.use_attention_mask
-    device = device if device is not None else text_encoder.device
-
-    # Tokenization
-    uncond_input = tokenizer([""] * batch_size if negative_prompt is None else negative_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-
-    if prompt is not None:
-        prompt_input = tokenizer(prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-    else:
-        prompt_input = None
-    
-    if removing_prompt is not None:
-        removing_input = tokenizer(removing_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-    else:
-        removing_input = None
-
-    # Encoding
-    prompt_embeds = text_encoder(input_ids=uncond_input["input_ids"].to(device), attention_mask=uncond_input["attention_mask"].to(device) if use_attention_mask else None)[0]
-    if prompt_input is not None:
-        prompt_emb = text_encoder(input_ids=prompt_input["input_ids"].to(device), attention_mask=prompt_input["attention_mask"].to(device) if use_attention_mask else None)[0]
-        prompt_embeds = torch.cat([prompt_embeds, prompt_emb], dim=0)
-    
-    if removing_input is not None:
-        removing_emb = text_encoder(input_ids=removing_input["input_ids"].to(device), attention_mask=removing_input["attention_mask"].to(device) if use_attention_mask else None)[0]
-        prompt_embeds = torch.cat([prompt_embeds, removing_emb], dim=0)
-
-    # Duplicate the embeddings for each image.
-    if num_images_per_prompt > 1:
-        seq_len = prompt_embeds.shape[1]
-        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.reshape(batch_size * num_images_per_prompt, seq_len, -1)
-    
-    return prompt_embeds
 
 def train(args: Arguments):
     
@@ -201,7 +142,7 @@ def train(args: Arguments):
     retain_dataset = retain_prompt(args.dataset_retain)
     
     # ======= Stage 1: TRAINING SETUP =======
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
+    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
     unet_orig: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
@@ -267,20 +208,32 @@ def train(args: Arguments):
                 custom_text_encoder.eval()
                 custom_text_encoder.requires_grad_(False)
                 unet.eval()
+                # args.adv_attack_embd_typeで処理が分岐されていたが呼び出している関数も引数も同じなので統一
+                # 返り値の変数名だけ違うのでそこを揃える形に変更    
                 if attack_round == 0:
-                    if args.adv_attack_embd_type == 'word_embd':
-                        adv_word_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type,  args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, None, args.adv_attack_method)
-                    elif args.adv_attack_embd_type == 'condition_embd':
-                        adv_condition_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type, args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, None, args.adv_attack_method) 
+                    attack_init_embd = None
                 else:
-                    if args.adv_attack_embd_type == 'word_embd':
-                        adv_word_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type,  args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, adv_word_embd, args.adv_attack_method)
-                    elif args.adv_attack_embd_type == 'condition_embd':
-                        adv_condition_embd, adv_input_ids = soft_prompt_attack(word, unet, unet_orig, tokenizer, custom_text_encoder, scheduler, emb_0, emb_p, args.start_guidance, devices, args.ddim_steps, criteria, args.adv_prompt_num, all_embeddings, args.adv_attack_type, args.adv_attack_embd_type, args.adv_attack_step, args.adv_attack_lr, args.adv_attack_init, adv_condition_embd, args.adv_attack_method) 
+                    attack_init_embd = adv_word_embd if args.adv_attack_embd_type == 'word_embd' else adv_condition_embd
+                adv_word_embd, adv_input_ids = soft_prompt_attack(
+                    word,
+                    unet,
+                    unet_orig,
+                    tokenizer,
+                    custom_text_encoder,
+                    scheduler,
+                    emb_0,
+                    emb_p,
+                    devices=devices,
+                    criteria=criteria,
+                    all_embeddings=all_embeddings,
+                    args=args,
+                    attack_init_embd=attack_init_embd,
+                )
+                if args.adv_attack_embd_type == 'condition_embd':
+                    adv_condition_embd = adv_word_embd
                 
                 global_step += args.adv_attack_step
                 attack_round += 1
-                
         
         # Set model/TextEnocder to train or eval mode
         if args.adv_method == 'text_encoder':
@@ -308,7 +261,6 @@ def train(args: Arguments):
         else:
             retain_text_input = None
             retain_text_embeddings = None
-            # retain_emb_0 = None
             retain_emb_p = None
             retain_emb_n = None
         
@@ -316,12 +268,29 @@ def train(args: Arguments):
             # Warmup training
             input_ids = text_input.input_ids.to(devices[0])
             emb_n = custom_text_encoder(input_ids = input_ids, inputs_embeds=text_embeddings)[0]
-            loss = get_train_loss_retain(args.adv_retain_batch, args.adv_retain_train, args.adv_retain_loss_w, unet, unet_orig, custom_text_encoder, scheduler, emb_0, emb_p, retain_emb_p, emb_n, retain_emb_n, args.start_guidance, args.negative_guidance, devices, args.ddim_steps, criteria, input_ids, args.adv_attack_embd_type)
+            adv_embd = None
         else:
             if args.adv_attack_embd_type == 'word_embd':
-                loss = get_train_loss_retain(args.adv_retain_batch, args.adv_retain_train, args.adv_retain_loss_w, unet, unet_orig, custom_text_encoder, scheduler, emb_0, emb_p, retain_emb_p, None, retain_emb_n, args.start_guidance, args.negative_guidance, devices, args.ddim_steps, criteria, adv_input_ids, args.adv_attack_embd_type, adv_word_embd)
+                adv_embd = adv_word_embd
             elif args.adv_attack_embd_type == 'condition_embd':
-                loss = get_train_loss_retain(args.adv_retain_batch, args.adv_retain_train, args.adv_retain_loss_w, unet, unet_orig, custom_text_encoder, scheduler, emb_0, emb_p, retain_emb_p, None, retain_emb_n, args.start_guidance, args.negative_guidance, devices, args.ddim_steps, criteria, adv_input_ids, args.adv_attack_embd_type, adv_condition_embd)
+                adv_embd = adv_condition_embd
+            emb_n = None
+        loss = get_train_loss_retain(
+            args,
+            unet,
+            unet_orig,
+            custom_text_encoder,
+            scheduler,
+            emb_0,
+            emb_p,
+            retain_emb_p,
+            emb_n,
+            retain_emb_n,
+            devices,
+            criteria,
+            adv_input_ids,
+            adv_embd=adv_embd
+        )
         
         # update weights to erase the concept
         loss.backward()
@@ -346,7 +315,6 @@ def train(args: Arguments):
                 t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=devices[0])
                 retain_start_code = torch.randn((args.adv_retain_batch, 4, 64, 64)).to(devices[0])
                 
-                # retain_emb_p = model_orig.get_learned_conditioning(retain_words)
                 with torch.no_grad():
                     retain_text_input = tokenizer(retain_words, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt", truncation=True)
                     retain_emb_p = text_encoder_orig(retain_text_input.input_ids.to(text_encoder_orig.device))[0]
