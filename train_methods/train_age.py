@@ -17,16 +17,9 @@ from utils import Arguments
 
 
 def train_age(args: Arguments) -> None:
-    '''
-    train_method : str
-        The parameters to train for erasure (noxattn, xattan).
-    '''
-
-    # const
     ddim_steps = args.ddim_steps
     train_method = args.age_method
 
-    # PROMPT CLEANING
     prompt = args.concepts
     preserved = ""
 
@@ -63,9 +56,7 @@ def train_age(args: Arguments) -> None:
     for name, param in unet.named_parameters():
         # train all layers except x-attns and time_embed layers
         if train_method == 'noxattn':
-            if name.startswith('out.') or 'attn2' in name or 'time_embed' in name:
-                pass
-            else:
+            if not (name.startswith('out.') or 'attn2' in name or 'time_embed' in name):
                 parameters.append(param)
         # train only self attention layers
         if train_method == 'selfattn':
@@ -96,7 +87,6 @@ def train_age(args: Arguments) -> None:
                     parameters.append(param)
 
     unet.train()
-    # create a lambda function for cleaner use of sampling code (only denoising till time step t)
     quick_sample_till_t = lambda x, s, code, t: sample_until(
         until=t,
         latents=code,
@@ -110,7 +100,6 @@ def train_age(args: Arguments) -> None:
     losses = []
     opt = optim.Adam(parameters, lr=args.age_lr)
     criteria = nn.MSELoss()
-    history_dict = {}
 
     pbar = trange(args.pgd_num_steps * args.age_iters)
 
@@ -195,7 +184,6 @@ def train_age(args: Arguments) -> None:
     
     print('weight_pi_dict:', weight_pi_dict)
 
-    # optimizer for all pi vectors
     opt_weight_pi = optim.Adam([weight_pi for weight_pi in weight_pi_dict.values()], lr=args.gumbel_lr)
 
     """
