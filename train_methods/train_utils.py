@@ -166,12 +166,8 @@ def get_vocab(tokenizer: CLIPTokenizer, model_name, vocab='EN3K'):
     return tokenizer_vocab
 
 @torch.no_grad()
-def get_condition(
-    prompt: str |list[str],
-    tokenizer: CLIPTokenizer,
-    text_encoder: CLIPTextModel
-) -> torch.Tensor:
-    token_ids = tokenizer.encode(
+def get_condition(prompt: str | list[str], tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel) -> torch.Tensor:
+    token_ids = tokenizer(
         [prompt] if isinstance(prompt, str) else prompt, 
         truncation=True,
         padding="max_length",
@@ -226,28 +222,20 @@ def create_embedding_matrix(
 
 @torch.no_grad()
 def save_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, model_name='SD-v1-4', save_mode='array', vocab='EN3K'):
+    model_suffix = "" if model_name == 'SD-v1-4' else "_v2-1"
     if vocab == 'CLIP':
         for start in range(0, LEN_TOKENIZER_VOCAB, 5000):
             end = min(LEN_TOKENIZER_VOCAB, start + 5000)
             embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=start, end=end, model_name=model_name, save_mode=save_mode)
-            if model_name == 'SD-v1-4':
-                torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}.pt')
-            elif model_name == 'SD-v2-1':
-                torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}_v2-1.pt')
+            torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}{model_suffix}.pt')
     
     elif vocab == 'EN3K':
         embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=0, end=LEN_EN_3K_VOCAB, model_name=model_name, save_mode=save_mode, vocab='EN3K')
-        if model_name == 'SD-v1-4':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_EN3K.pt')
-        elif model_name == 'SD-v2-1':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_EN3K_v2-1.pt')
+        torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_EN3K{model_suffix}.pt')
     
     elif vocab == 'Imagenet':
         embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=0, end=1000, model_name=model_name, save_mode=save_mode, vocab='Imagenet')
-        if model_name == 'SD-v1-4':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_Imagenet.pt')
-        elif model_name == 'SD-v2-1':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_Imagenet_v2-1.pt')
+        torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_Imagenet{model_suffix}.pt')
 
     else:
         raise ValueError("vocab should be either 'CLIP' or 'EN3K'")
@@ -326,34 +314,26 @@ def search_closest_tokens(
     # inverse the dictionary
     tokenizer_vocab_indexing = {v: k for k, v in tokenizer_vocab.items()}
 
-    concept_embedding: torch.Tensor = get_condition(concept, tokenizer, text_encoder)
+    concept_embedding = get_condition(concept, tokenizer, text_encoder)
 
     # Calculate the cosine similarity between the concept and all tokens
     # load the embedding matrix 
     all_similarities = []
+    model_suffix = "" if model_name == 'SD-v1-4' else "_v2-1"
+    if model_name not in ['SD-v1-4' or 'SD-v2-1']:
+        raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
     
     if vocab == 'CLIP':
         for start in range(0, LEN_TOKENIZER_VOCAB, 5000):
             end = min(LEN_TOKENIZER_VOCAB, start+5000)
-            if model_name == 'SD-v1-4':
-                embedding_matrix: torch.Tensor = torch.load(f'models/embedding_matrix_{start}_{end}_array.pt')
-            elif model_name == 'SD-v2-1':
-                embedding_matrix: torch.Tensor = torch.load(f'models/embedding_matrix_{start}_{end}_array_v2-1.pt')
-            else:
-                raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
-            
+            embedding_matrix: torch.Tensor = torch.load(f'models/embedding_matrix_{start}_{end}_array{model_suffix}.pt')
             if reshape:
                 concept_embedding = concept_embedding.view(concept_embedding.size(0), -1)
                 embedding_matrix = embedding_matrix.view(embedding_matrix.size(0), -1)
             similarities = get_similarities(sim, concept_embedding, embedding_matrix)
             all_similarities.append(similarities)
     elif vocab == 'EN3K':
-        if model_name == 'SD-v1-4':
-            embedding_matrix = torch.load(f'models/embedding_matrix_array_EN3K.pt')
-        elif model_name == 'SD-v2-1':
-            embedding_matrix = torch.load(f'models/embedding_matrix_array_EN3K_v2-1.pt')
-        else:
-            raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
+        embedding_matrix = torch.load(f'models/embedding_matrix_array_EN3K{model_suffix}.pt')
         if reshape:
             concept_embedding = concept_embedding.view(concept_embedding.size(0), -1)
             embedding_matrix = embedding_matrix.view(embedding_matrix.size(0), -1)
@@ -457,21 +437,13 @@ def sample_until(
     return latents
 
 def apply_model(unet: UNet2DConditionModel, z: torch.Tensor, t_enc_ddpm: torch.Tensor, emb_0: torch.Tensor) -> torch.Tensor:
-    # get conditional and unconditional scores from frozen model at time step t and image z
-
     device = unet.device
-    z = z.to(device)
-    t_enc_ddpm = t_enc_ddpm.to(device)
-    emb_0 = emb_0.to(device)
-
-    noise_pred = unet(z, t_enc_ddpm, encoder_hidden_states=emb_0).sample
-    return noise_pred
+    return unet(z.to(device), t_enc_ddpm.to(device), encoder_hidden_states=emb_0.to(device)).sample
 
 def id2embedding(tokenizer: CLIPTokenizer, all_embeddings: torch.Tensor, input_ids: torch.Tensor, device) -> torch.Tensor:
     input_one_hot = F.one_hot(input_ids.view(-1), num_classes = len(tokenizer.get_vocab())).float()
     input_one_hot = torch.unsqueeze(input_one_hot,0).to(device)
-    input_embeds = input_one_hot @ all_embeddings
-    return input_embeds
+    return input_one_hot @ all_embeddings
 
 def init_adv(k, tokenizer, all_embeddings, device, batch = 1, attack_init_embd = None):
     # Different attack types have different initializations (Attack types: add, insert)
@@ -486,10 +458,8 @@ def init_adv(k, tokenizer, all_embeddings, device, batch = 1, attack_init_embd =
         tmp_embeddings = id2embedding(tokenizer, all_embeddings, tmp_ids, device)
         tmp_embeddings = tmp_embeddings.reshape(batch, k, 768)
         adv_embedding.data = tmp_embeddings.data
-    adv_embedding = adv_embedding.detach().requires_grad_(True)
+    return adv_embedding.detach().requires_grad_(True)
     
-    return adv_embedding
-
 def soft_prompt_attack(
     word: str,
     unet: UNet2DConditionModel,
@@ -596,15 +566,15 @@ def split_id(input_ids, k, orig_prompt_len):
 
 def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd: torch.Tensor, mid_embd: torch.Tensor, eot_embd: torch.Tensor):
     if insertion_location == 'prefix_k':     # Prepend k words before the original prompt
-        embedding = torch.cat([sot_embd,adv_embedding,mid_embd,eot_embd],dim=1)
+        embedding = torch.cat([sot_embd,adv_embedding, mid_embd,eot_embd], dim=1)
     elif insertion_location == 'replace_k':  # Replace k words in the original prompt
         replace_embd = eot_embd[:,0,:].repeat(1,mid_embd.shape[1],1)
-        embedding = torch.cat([sot_embd,adv_embedding,replace_embd,eot_embd],dim=1)
+        embedding = torch.cat([sot_embd,adv_embedding, replace_embd,eot_embd], dim=1)
     elif insertion_location == 'add':      # Add perturbation to the original prompt
         replace_embd = eot_embd[:,0,:].repeat(1,k,1)
-        embedding = torch.cat([sot_embd,adv_embedding+mid_embd,replace_embd,eot_embd],dim=1)
+        embedding = torch.cat([sot_embd ,adv_embedding + mid_embd, replace_embd,eot_embd], dim=1)
     elif insertion_location == 'suffix_k':   # Append k words after the original prompt
-        embedding = torch.cat([sot_embd,mid_embd,adv_embedding,eot_embd],dim=1)
+        embedding = torch.cat([sot_embd, mid_embd, adv_embedding, eot_embd], dim=1)
     elif insertion_location == 'mid_k':      # Insert k words in the middle of the original prompt
         embedding = [sot_embd,]
         total_num = mid_embd.size(1)
@@ -612,7 +582,7 @@ def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd:
         embedding.append(adv_embedding)
         embedding.append(mid_embd[:,total_num//2:,:])
         embedding.append(eot_embd)
-        embedding = torch.cat(embedding,dim=1)
+        embedding = torch.cat(embedding, dim=1)
     elif insertion_location == 'insert_k':   # seperate k words into the original prompt with equal intervals
         embedding = [sot_embd,]
         total_num = mid_embd.size(1)
@@ -622,8 +592,7 @@ def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd:
             embedding.append(adv_embedding[:,i,:].unsqueeze(1))
         embedding.append(mid_embd[:,internals*(i+1):,:])
         embedding.append(eot_embd)
-        embedding = torch.cat(embedding,dim=1)
-        
+        embedding = torch.cat(embedding, dim=1)
     elif insertion_location == 'per_k_words':
         embedding = [sot_embd,]
         for i in range(adv_embedding.size(1) - 1):
@@ -632,7 +601,7 @@ def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd:
         embedding.append(adv_embedding[:,-1,:].unsqueeze(1))
         embedding.append(mid_embd[:,3*(i+1):,:])
         embedding.append(eot_embd)
-        embedding = torch.cat(embedding,dim=1)
+        embedding = torch.cat(embedding, dim=1)
     return embedding
 
 def construct_id(k, adv_id: torch.Tensor, insertion_location, sot_id, eot_id: torch.Tensor, mid_id: torch.Tensor):
@@ -970,7 +939,17 @@ def get_ca_layers(unet: UNet2DConditionModel, with_to_k=True):
     return projection_matrices, ca_layers, og_matrices
 
 @torch.no_grad()
-def prepare_k_v(text_encoder, projection_matrices, ca_layers, og_matrices, test_set, tokenizer, with_to_k=True, all_words=False, prepare_k_v_for_lora=False):
+def prepare_k_v(
+    text_encoder: CLIPTextModel, 
+    projection_matrices, 
+    ca_layers,
+    og_matrices,
+    test_set,
+    tokenizer: CLIPTokenizer,
+    with_to_k=True,
+    all_words=False,
+    prepare_k_v_for_lora=False
+):
     
     all_contexts, all_valuess = [], []
     
