@@ -26,7 +26,7 @@ from train_methods.segment_anything.segment_anything import SamPredictor, sam_hq
 from train_methods.groundingdino.models import build_model
 from train_methods.groundingdino.util.slconfig import SLConfig
 from train_methods.groundingdino.util.utils import clean_state_dict
-from train_methods.mace_data import MACEDataset
+from train_methods.data import MACEDataset
 
 from utils import Arguments
 
