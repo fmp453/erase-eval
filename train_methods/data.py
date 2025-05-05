@@ -11,7 +11,7 @@ from torchvision import transforms
 from torch.utils.data import Dataset
 from transformers import CLIPTokenizer
 
-from train_methods.train_utils import prompt_augmentation
+from train_methods.train_utils import prompt_augmentation, tokenize
 
 class MACEDataset(Dataset):
     def __init__(
@@ -125,13 +125,7 @@ class MACEDataset(Dataset):
         example["instance_images"] = self.image_transforms(instance_image)
         example["instance_masks"] = binary_tensor
 
-        example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
+        example["instance_prompt_ids"] = tokenize(instance_prompt, self.tokenizer).input_ids
         prompt_ids = self.tokenizer(
             instance_prompt,
             truncation=True,
@@ -158,7 +152,7 @@ class AblatingConceptDataset(Dataset):
     def __init__(self, concept_type, image_dir, prompt_path, tokenizer, concept, anchor_concept=None, size=512, hflip=False, aug=True):
         
         self.size = size
-        self.tokenizer = tokenizer
+        self.tokenizer: CLIPTokenizer = tokenizer
         self.interpolation = Image.Resampling.BILINEAR
         self.aug = aug
         self.concept_type = concept_type
@@ -247,25 +241,12 @@ class AblatingConceptDataset(Dataset):
         elif random_scale > self.size:
             instance_prompt = np.random.choice(["zoomed in ", "close up "]) + instance_prompt
 
-        example = {}
-        example["instance_images"] = torch.from_numpy(instance_image).permute(2, 0, 1)
-        example["mask"] = torch.from_numpy(mask)
-
-        example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-        example["instance_anchor_prompt_ids"] = self.tokenizer(
-            instance_anchor_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-
+        example = {
+            "instance_images": torch.from_numpy(instance_image).permute(2, 0, 1),
+            "mask": torch.from_numpy(mask),
+            "instance_prompt_ids": tokenize(instance_prompt, self.tokenizer).input_ids,
+            "instance_anchor_prompt_ids": self.tokenizer(instance_anchor_prompt, self.tokenizer).input_ids
+        }
         return example
 
 
@@ -399,24 +380,12 @@ class DocoDataset(Dataset):
         elif random_scale > self.size:
             instance_prompt = (np.random.choice(["zoomed in ", "close up "]) + instance_prompt)
 
-        example["instance_images"] = torch.from_numpy(instance_image).permute(2, 0, 1)
-        example["mask"] = torch.from_numpy(mask)
-
-        example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-        example["instance_anchor_prompt_ids"] = self.tokenizer(
-            instance_anchor_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-
+        example = {
+            "instance_images": torch.from_numpy(instance_image).permute(2, 0, 1),
+            "mask": torch.from_numpy(mask),
+            "instance_prompt_ids": tokenize(instance_prompt, self.tokenizer).input_ids,
+            "instance_anchor_prompt_ids": self.tokenizer(instance_anchor_prompt, self.tokenizer).input_ids
+        }
         return example
 
 class DocoPromptDataset(Dataset):

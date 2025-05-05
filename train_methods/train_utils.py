@@ -20,6 +20,14 @@ from custom_text_encoder import CustomCLIPTextModel
 from utils import Arguments
 from train_methods.consts import LEN_EN_3K_VOCAB, LEN_TOKENIZER_VOCAB
 
+def tokenize(prompt: list[str], tokenizer: CLIPTokenizer) -> dict[str, torch.Tensor]:
+    return tokenizer(
+        prompt,
+        padding="max_length",
+        max_length=tokenizer.model_max_length, 
+        truncation=True, 
+        return_tensors="pt"
+    )
 
 def prompt_augmentation(content, augment=True, sampled_indices=None, concept_type='object') -> list[str]:
     if augment:
@@ -129,18 +137,10 @@ def encode_prompt(
     device = device if device is not None else text_encoder.device
 
     # Tokenization
-    uncond_input = tokenizer([""] * batch_size if negative_prompt is None else negative_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-
-    if prompt is not None:
-        prompt_input = tokenizer(prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-    else:
-        prompt_input = None
+    uncond_input = tokenize([""] * batch_size if negative_prompt is None else negative_prompt, tokenizer)
+    prompt_input = tokenize(prompt, tokenizer) if prompt is not None else None    
+    removing_input = tokenize(removing_prompt, tokenizer) if removing_prompt is not None else None
     
-    if removing_prompt is not None:
-        removing_input = tokenizer(removing_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-    else:
-        removing_input = None
-
     # Encoding
     prompt_embeds = text_encoder(input_ids=uncond_input["input_ids"].to(device), attention_mask=uncond_input["attention_mask"].to(device) if use_attention_mask else None)[0]
     if prompt_input is not None:
@@ -247,13 +247,7 @@ def get_vocab(tokenizer: CLIPTokenizer, model_name, vocab='EN3K'):
 
 @torch.no_grad()
 def get_condition(prompt: str | list[str], tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel) -> torch.Tensor:
-    token_ids = tokenizer(
-        [prompt] if isinstance(prompt, str) else prompt, 
-        truncation=True,
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        return_tensors="pt",
-    ).input_ids
+    token_ids = tokenize([prompt] if isinstance(prompt, str) else prompt, tokenizer).input_ids
     return text_encoder(token_ids.to(text_encoder.device))[0]
 
 @torch.no_grad()
@@ -571,7 +565,7 @@ def soft_prompt_attack(
     )
     
     # Word Tokenization
-    text_input = tokenizer(word, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt", truncation=True)
+    text_input = tokenize(word, tokenizer)
     sot_id, mid_id, replace_id, eot_id = split_id(text_input.input_ids.to(devices[0]), k, orig_prompt_len)
     
     # Word embedding for the prompt
@@ -1055,13 +1049,7 @@ def prepare_k_v(
         texts_new = [item[0] for item in curr_item["new"]]
         texts_combined = texts_old + texts_new
 
-        tokenized_inputs = tokenizer(
-            texts_combined,
-            padding="max_length",
-            max_length=tokenizer.model_max_length,
-            truncation=True,
-            return_tensors="pt"
-        )
+        tokenized_inputs = tokenize(texts_combined, tokenizer)
         
         # Text embeddings
         text_embeddings = text_encoder(tokenized_inputs.input_ids.to(text_encoder.device))[0]
