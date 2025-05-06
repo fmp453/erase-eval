@@ -1,16 +1,13 @@
 import os
-import random
 import regex as re
 import requests
 from io import BytesIO
 from pathlib import Path
 
 import openai
-import numpy as np
 import torch
 import torch.nn as nn
 from clip_retrieval.clip_client import ClipClient
-from torch.utils.data import Dataset
 from torchvision import transforms
 from PIL import Image
 from tqdm.auto import tqdm
@@ -213,185 +210,6 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
                 pbar.update(1)
     return
 
-class PromptDataset(Dataset):
-    "A simple dataset to prepare the prompts to generate class images on multiple GPUs."
-
-    def __init__(self, prompt, num_samples):
-        self.prompt = prompt
-        self.num_samples = num_samples
-
-    def __len__(self):
-        return self.num_samples
-
-    def __getitem__(self, index):
-        example = {}
-        example["prompt"] = self.prompt[index % len(self.prompt)]
-        example["index"] = index
-        return example
-
-
-class CustomDiffusionDataset(Dataset):
-    """
-    A dataset to prepare the instance and class images with the prompts for fine-tuning the model.
-    It pre-processes the images and the tokenizes prompts.
-    """
-
-    def __init__(
-        self,
-        concepts_list,
-        concept_type,
-        tokenizer: CLIPTokenizer,
-        size=512,
-        center_crop=False,
-        hflip=False,
-        aug=True,
-    ):
-        self.size = size
-        self.center_crop = center_crop
-        self.tokenizer = tokenizer
-        self.interpolation = Image.Resampling.BILINEAR
-        self.aug = aug
-        self.concept_type = concept_type
-
-        self.instance_images_path = []
-        self.class_images_path = []
-        for concept in concepts_list:
-            with open(concept["instance_data_dir"], "r") as f:
-                inst_images_path = f.read().splitlines()
-            with open(concept["instance_prompt"], "r") as f:
-                inst_prompt = f.read().splitlines()
-            inst_img_path = [
-                (x, y, concept["caption_target"])
-                for (x, y) in zip(inst_images_path, inst_prompt)
-            ]
-            self.instance_images_path.extend(inst_img_path)
-
-        random.shuffle(self.instance_images_path)
-        self.num_instance_images = len(self.instance_images_path)
-        self.num_class_images = len(self.class_images_path)
-        self._length = max(self.num_class_images, self.num_instance_images)
-        self.flip = transforms.RandomHorizontalFlip(0.5 * hflip)
-
-        self.image_transforms = transforms.Compose(
-            [
-                self.flip,
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(size)
-                if center_crop
-                else transforms.RandomCrop(size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-
-    def __len__(self):
-        return self._length
-
-    def preprocess(self, image: np.ndarray, scale, resample):
-        outer, inner = self.size, scale
-        if scale > self.size:
-            outer, inner = scale, self.size
-        top, left = np.random.randint(0, outer - inner + 1), np.random.randint(0, outer - inner + 1)
-        image = image.resize((scale, scale), resample=resample)
-        image = np.array(image).astype(np.uint8)
-        image = (image / 127.5 - 1.0).astype(np.float32)
-        instance_image = np.zeros((self.size, self.size, 3), dtype=np.float32)
-        mask = np.zeros((self.size // 8, self.size // 8))
-        if scale > self.size:
-            instance_image = image[top : top + inner, left : left + inner, :]
-            mask = np.ones((self.size // 8, self.size // 8))
-        else:
-            instance_image[top : top + inner, left : left + inner, :] = image
-            mask[
-                top // 8 + 1 : (top + scale) // 8 - 1,
-                left // 8 + 1 : (left + scale) // 8 - 1,
-            ] = 1.0
-        return instance_image, mask
-
-    def __getprompt__(self, instance_prompt, instance_target):
-        if self.concept_type == "style":
-            r = np.random.choice([0, 1, 2])
-            instance_prompt = (
-                f"{instance_prompt}, in the style of {instance_target}"
-                if r == 0
-                else f"in {instance_target}'s style, {instance_prompt}"
-                if r == 1
-                else f"in {instance_target}'s style, {instance_prompt}"
-            )
-        elif self.concept_type in ["nudity", "violence"]:
-            r = np.random.choice([0, 1, 2])
-            instance_prompt = (
-                f"{instance_target}, {instance_prompt}"
-                if r == 0
-                else f"in {instance_target}'s style, {instance_prompt}"
-                if r == 1
-                else f"in {instance_target}'s style, {instance_prompt}"
-            )
-        elif self.concept_type == "object":
-            anchor, target = instance_target.split("+")
-            instance_prompt = instance_prompt.replace(anchor, target)
-        elif self.concept_type == "memorization":
-            instance_prompt = instance_target.split("+")[1]
-        return instance_prompt
-
-    def __getitem__(self, index) -> dict[str, torch.Tensor]:
-        example = {}
-        instance_image, instance_prompt, instance_target = self.instance_images_path[
-            index % self.num_instance_images
-        ]
-        instance_image = Image.open(instance_image)
-        if not instance_image.mode == "RGB":
-            instance_image = instance_image.convert("RGB")
-        instance_image = self.flip(instance_image)
-        # modify instance prompt according to the concept_type to include target concept
-        # multiple style/object fine-tuning
-        if ";" in instance_target:
-            instance_target = instance_target.split(";")
-            instance_target = instance_target[index % len(instance_target)]
-
-        instance_anchor_prompt = instance_prompt
-        instance_prompt = self.__getprompt__(instance_prompt, instance_target)
-        # apply resize augmentation and create a valid image region mask
-        random_scale = self.size
-        if self.aug:
-            random_scale = (
-                np.random.randint(self.size // 3, self.size + 1)
-                if np.random.uniform() < 0.66
-                else np.random.randint(int(1.2 * self.size), int(1.4 * self.size))
-            )
-        instance_image, mask = self.preprocess(
-            instance_image, random_scale, self.interpolation
-        )
-
-        if random_scale < 0.6 * self.size:
-            instance_prompt = (
-                np.random.choice(["a far away ", "very small "]) + instance_prompt
-            )
-        elif random_scale > self.size:
-            instance_prompt = (
-                np.random.choice(["zoomed in ", "close up "]) + instance_prompt
-            )
-
-        example["instance_images"] = torch.from_numpy(instance_image).permute(2, 0, 1)
-        example["mask"] = torch.from_numpy(mask)
-
-        example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-        example["instance_anchor_prompt_ids"] = self.tokenizer(
-            instance_anchor_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-
-        return example
-
 def get_anchor_prompts(
     class_prompt,
     concept_type,
@@ -458,20 +276,13 @@ def safe_dir(dir: Path):
         dir.mkdir()
     return dir
 
-import torch
-
 def adjust_gradient(model: nn.Module, optim: torch.optim.Optimizer, norm_grad, loss_a: torch.Tensor, loss_b: torch.Tensor, lambda_=1):
-    # Clear gradients
     optim.zero_grad()
 
-    # Calculate gradients for loss_b
     loss_b.backward(retain_graph=True)
     norm_grad()
     b_grads = [p[1].grad.clone() for p in model.named_parameters() if ("attn2" in p[0] and p[1].grad != None)]
-    # Clear gradients
     optim.zero_grad()
-
-    # Calculate gradients for loss_a
     loss_a.backward()
     norm_grad()
 
@@ -489,6 +300,5 @@ def adjust_gradient(model: nn.Module, optim: torch.optim.Optimizer, norm_grad, l
                 adjustment = lambda_ * dot_product * b_grad_norm
                 p.grad -= adjustment
 
-    # Apply gradient updates
     optim.step()
     optim.zero_grad()
