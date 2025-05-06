@@ -22,6 +22,7 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, DDPMScheduler, Autoen
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
+from train_methods.consts import imagenette_labels
 from train_methods.data import Imagenette, NSFW, SalUnDataset
 from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize
 
@@ -126,7 +127,6 @@ def salun(args: Arguments, mask_path: str):
     num_total_param = sum(p.numel() for p in unet_student.parameters())
     print(f"Finetuning parameters: {num_train_param} / {num_total_param} ({num_train_param / num_total_param:.2%})")
 
-    # Create optimizer and scheduler
     # use default values except lr
     optimizer = optim.Adam(parameters, lr=args.salun_lr)
     lr_scheduler: LambdaLR = get_scheduler(
@@ -206,18 +206,16 @@ def get_transform(interpolation=InterpolationMode.BICUBIC, size=512):
     return transform
 
 def get_imagenette_label_from_concept(concept):
-    l = ["tench", "English springer", "cassette player", "chainsaw", "church", "French horn", "garbage truck", "gas pump", "golf ball", "parachute"]
     d = {}
-    for i in range(len(l)):
-        d[l[i]] = i
+    for i in range(len(imagenette_labels)):
+        d[imagenette_labels[i]] = i
     
     return d[concept]
 
 def setup_forget_data(args: Arguments, device: torch.device):
     transform = get_transform(size=args.image_size)
-    num_images = 800
 
-    if args.concepts in ["tench", "English springer", "cassette player", "chainsaw", "church", "French horn", "garbage truck", "gas pump", "golf ball", "parachute"]:
+    if args.concepts in imagenette_labels:
         train_set = Imagenette("train", transform=transform)
         class_to_forget = get_imagenette_label_from_concept(args.concepts)
         descriptions = [f"an image of a {label}" for label in train_set.class_to_idx.keys()]
@@ -233,7 +231,7 @@ def setup_forget_data(args: Arguments, device: torch.device):
         num_images_per_prompt = 5
         pipe.to(device)
         os.makedirs("salun-data/train", exist_ok=True)
-        for i in trange(num_images // num_images_per_prompt):
+        for i in trange(800 // num_images_per_prompt):
             generator = torch.Generator(device).manual_seed(args.seed)
             images = pipe(descriptions, guidance_scale=args.guidance_scale, num_images_per_prompt=num_images_per_prompt, generator=generator).images
 
@@ -263,12 +261,12 @@ def generate_mask(args: Arguments):
     criteria = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(unet.parameters(), lr=args.salun_masking_lr)
 
-    gradients = {}
+    gradients: dict[str, torch.nn.Parameter] = {}
     for name, param in unet.named_parameters():
         gradients[name] = 0
 
     pbar = trange(len(train_dl))
-    is_imagenette = args.concepts in ["tench", "English springer", "cassette player", "chainsaw", "church", "French horn", "garbage truck", "gas pump", "golf ball", "parachute"]
+    is_imagenette = args.concepts in imagenette_labels
     for _ in pbar:
 
         optimizer.zero_grad()
@@ -384,7 +382,6 @@ def generate_nsfw_mask(args: Arguments):
             forget_input = vae.encode(images).latent_dist.sample()
             forget_ids = tokenize(prompts, tokenizer).input_ids[0]
             forget_emb = text_encoder(forget_ids.to(text_encoder.device))[0]
-
             null_ids = tokenize(null_prompts, tokenizer).input_ids[0]
             null_emb = text_encoder(null_ids.to(text_encoder.device))[0]
 
@@ -408,7 +405,6 @@ def generate_nsfw_mask(args: Arguments):
             gradients[name] = torch.abs_(gradients[name])
 
         threshold = 0.5
-        # for i in threshold_list:
         sorted_dict_positions = {}
         hard_dict = {}
 
