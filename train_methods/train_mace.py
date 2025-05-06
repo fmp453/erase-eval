@@ -23,7 +23,7 @@ from diffusers.optimization import get_scheduler
 from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn
 from train_methods.train_utils import AttnController, LoRAAttnProcessor
 from train_methods.segment_anything.segment_anything import SamPredictor, sam_hq_model_registry
-from train_methods.groundingdino.models import build_model
+from train_methods.groundingdino.models import build_model, GroundingDINO
 from train_methods.groundingdino.util.slconfig import SLConfig
 from train_methods.groundingdino.util.utils import clean_state_dict
 from train_methods.data import MACEDataset
@@ -88,7 +88,7 @@ def get_phrases_from_posmap(posmap: torch.BoolTensor, tokenized: dict, tokenizer
     else:
         raise NotImplementedError("posmap must be 1-dim")
 
-def get_grounding_output(model, image, caption: str, box_threshold, text_threshold, with_logits=True, device="cpu"):
+def get_grounding_output(model: GroundingDINO, image, caption: str, box_threshold, text_threshold, with_logits=True, device="cpu"):
     caption = caption.lower()
     caption = caption.strip()
     if not caption.endswith("."):
@@ -114,7 +114,7 @@ def get_grounding_output(model, image, caption: str, box_threshold, text_thresho
     tokenized = tokenlizer(caption)
     # build pred
     pred_phrases = []
-    for logit, box in zip(logits_filt, boxes_filt):
+    for logit, _ in zip(logits_filt, boxes_filt):
         pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
         if with_logits:
             pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
@@ -123,7 +123,7 @@ def get_grounding_output(model, image, caption: str, box_threshold, text_thresho
 
     return boxes_filt, pred_phrases
 
-def get_mask(input_image: torch.Tensor, text_prompt, model, predictor, device, output_dir=None, box_threshold=0.3, text_threshold=0.25):
+def get_mask(input_image: torch.Tensor, text_prompt, model, predictor: SamPredictor, device, output_dir=None, box_threshold=0.3, text_threshold=0.25):
     
     os.makedirs(output_dir, exist_ok=True)
         
@@ -197,7 +197,6 @@ def making_data(args: Arguments):
         os.makedirs(mask_save_path, exist_ok=True)
         for file in files:
             file_path = os.path.join(root, file)
-            # print(file_path)
             # read images and get masks
             image = Image.open(file_path)
             if not image.mode == "RGB":

@@ -263,7 +263,6 @@ def main(args: Arguments):
         concepts_list=concepts_list,
         concept_type=args.doco_concept_type,
         tokenizer=tokenizer,
-        size=512,
         center_crop=args.doco_center_crop,
         hflip=args.doco_hflip,
         aug=not args.doco_noaug,
