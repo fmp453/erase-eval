@@ -2,10 +2,12 @@ import os
 import random
 from itertools import product
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 import torch
+from datasets import load_dataset
 from PIL import Image
 from torchvision import transforms
 from torch.utils.data import Dataset
@@ -18,13 +20,11 @@ class MACEDataset(Dataset):
         self,
         tokenizer: CLIPTokenizer,
         size: int=512,
-        multi_concept=None,
-        mapping=None,
-        batch_size=None,
-        train_seperate=False,
-        aug_length: int=30,
-        prompt_len: int=30,
-        input_data_path=None
+        multi_concept: Optional[list[str, str]]=None,
+        mapping: Optional[list[str]]=None,
+        batch_size: Optional[int]=None,
+        train_seperate: bool=False,
+        input_data_path: Optional[str]=None
     ):  
         self.size = size
         self.tokenizer = tokenizer
@@ -32,7 +32,6 @@ class MACEDataset(Dataset):
         self.batch_size = batch_size
         self.concept_number = 0
         self.train_seperate = train_seperate
-        self.aug_length = aug_length
         
         self.all_concept_image_path  = []
         self.all_concept_mask_path  = []
@@ -71,8 +70,7 @@ class MACEDataset(Dataset):
                 self.all_concept_mask_path.append(single_concept_masks_path)
                      
             erased_concept = c.replace("-", " ")
-            
-            sampled_indices = random.sample(range(0, prompt_len), self.aug_length)
+            sampled_indices = random.sample(range(0, 30), 30)
             self.instance_prompt.append(prompt_augmentation(erased_concept, augment=True, sampled_indices=sampled_indices, concept_type=t))
             self.target_prompt.append(prompt_augmentation(mapping_concept, augment=True, sampled_indices=sampled_indices, concept_type=t))
                 
@@ -124,7 +122,6 @@ class MACEDataset(Dataset):
         example["instance_prompt"] = instance_prompt
         example["instance_images"] = self.image_transforms(instance_image)
         example["instance_masks"] = binary_tensor
-
         example["instance_prompt_ids"] = tokenize(instance_prompt, self.tokenizer).input_ids
         prompt_ids = self.tokenizer(
             instance_prompt,
@@ -132,9 +129,7 @@ class MACEDataset(Dataset):
             padding="max_length",
             max_length=self.tokenizer.model_max_length
         ).input_ids
-
         concept_ids = self.tokenizer(target_tokens, add_special_tokens=False).input_ids
-
         pooler_token_id = self.tokenizer("<|endoftext|>", add_special_tokens=False).input_ids[0]
 
         concept_positions = [0] * self.tokenizer.model_max_length
@@ -149,10 +144,19 @@ class MACEDataset(Dataset):
 
 class AblatingConceptDataset(Dataset):
     # ref: https://huggingface.co/spaces/nupurkmr9/concept-ablation/blob/main/concept-ablation-diffusers/utils.py
-    def __init__(self, concept_type, image_dir, prompt_path, tokenizer, concept, anchor_concept=None, size=512, hflip=False, aug=True):
+    def __init__(
+        self,
+        concept_type: str,
+        image_dir: str,
+        prompt_path: str,
+        tokenizer: CLIPTokenizer,
+        concept: str,
+        anchor_concept: Optional[str]=None,
+        aug: bool=True
+    ):
         
-        self.size = size
-        self.tokenizer: CLIPTokenizer = tokenizer
+        self.size = 512
+        self.tokenizer = tokenizer
         self.interpolation = Image.Resampling.BILINEAR
         self.aug = aug
         self.concept_type = concept_type
@@ -176,12 +180,12 @@ class AblatingConceptDataset(Dataset):
         self.num_instance_images = len(self.instance_images_path)
         self.num_class_images = len(self.class_images_path)
         self._length = max(self.num_class_images, self.num_instance_images)
-        self.flip = transforms.RandomHorizontalFlip(0.5 * hflip)
+        self.flip = transforms.RandomHorizontalFlip(0.5)
 
         self.image_transforms = transforms.Compose([
             self.flip,
-            transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.RandomCrop(size),
+            transforms.Resize(self.size, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.RandomCrop(self.size),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),
         ])
@@ -257,12 +261,11 @@ class DocoDataset(Dataset):
         concepts_list: list[str],
         concept_type: str,
         tokenizer: CLIPTokenizer,
-        size: int=512,
         center_crop=False,
         hflip=False,
         aug=True,
     ):
-        self.size = size
+        self.size = 512
         self.center_crop = center_crop
         self.tokenizer = tokenizer
         self.interpolation = Image.Resampling.BILINEAR
@@ -291,10 +294,10 @@ class DocoDataset(Dataset):
         self.image_transforms = transforms.Compose(
             [
                 self.flip,
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(size)
+                transforms.Resize(self.size, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.CenterCrop(self.size)
                 if center_crop
-                else transforms.RandomCrop(size),
+                else transforms.RandomCrop(self.size),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
             ]
@@ -401,3 +404,222 @@ class DocoPromptDataset(Dataset):
         example["prompt"] = self.prompt[index % len(self.prompt)]
         example["index"] = index
         return example
+
+class ForgetMeNotDataset(Dataset):
+    def __init__(
+        self,
+        tokenizer: CLIPTokenizer,
+        size: int=512,
+        center_crop: bool=False,
+        use_pooler: bool=False,
+        multi_concept: Optional[list[str]]=None,
+        data_dir: str="fmn-data"
+    ):  
+        self.use_pooler = use_pooler
+        self.size = size
+        self.center_crop = center_crop
+        self.tokenizer = tokenizer
+        self.instance_images_path  = []
+        self.instance_prompt  = []
+
+        token_idx = 1
+        for c, t, num_tok in multi_concept:
+            p = Path(data_dir)
+            if not p.exists():
+                raise ValueError(f"Instance {p} images root doesn't exists.")                   
+            
+            image_paths = list(p.iterdir())
+            self.instance_images_path += image_paths
+
+            target_snippet = f"{''.join([ f'<s{token_idx + i}>' for i in range(num_tok)])}"
+            if t == "object":
+                self.instance_prompt += [(f"a photo of {target_snippet}", target_snippet)] * len(image_paths)
+            elif t == "style":
+                self.instance_prompt += [(f"a photo in the style of {target_snippet}", target_snippet)] * len(image_paths)
+            else:
+                raise ValueError("unknown concept type!")
+            token_idx += num_tok
+        self.num_instance_images = len(self.instance_images_path)
+        self._length = self.num_instance_images
+
+        self.image_transforms = transforms.Compose(
+            [
+                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, index):
+        example = {}
+        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
+        instance_prompt, target_tokens = self.instance_prompt[index % self.num_instance_images]
+
+        if not instance_image.mode == "RGB":
+            instance_image = instance_image.convert("RGB")
+        example["instance_prompt"] = instance_prompt
+        example["instance_images"] = self.image_transforms(instance_image)
+
+        example["instance_prompt_ids"] = tokenize(instance_prompt, self.tokenizer).input_ids
+        prompt_ids = self.tokenizer(
+            instance_prompt,
+            truncation=True,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length
+        ).input_ids
+        concept_ids = self.tokenizer(target_tokens, add_special_tokens=False).input_ids
+        pooler_token_id = self.tokenizer("<|endoftext|>", add_special_tokens=False).input_ids[0]
+
+        concept_positions = [0] * self.tokenizer.model_max_length
+        for i, tok_id in enumerate(prompt_ids):
+            if tok_id == concept_ids[0] and prompt_ids[i:i + len(concept_ids)] == concept_ids:
+                concept_positions[i:i + len(concept_ids)] = [1]*len(concept_ids)
+            if self.use_pooler and tok_id == pooler_token_id:
+                concept_positions[i] = 1
+        example["concept_positions"] = torch.tensor(concept_positions)[None]               
+
+        return example
+
+class FMNPivotalTuningDataset(Dataset):
+    def __init__(
+        self,
+        instance_data_root: str,
+        tokenizer: CLIPTokenizer,
+        token_map: Optional[dict]=None,
+        use_template: Optional[str]=None,
+        size: int=512,
+        h_flip: bool=True,
+        color_jitter: bool=False,
+        resize: bool=True,
+        blur_amount: int=70,
+    ):
+        self.size = size
+        self.tokenizer = tokenizer
+        self.resize = resize
+
+        self.instance_data_root = Path(instance_data_root)
+        if not self.instance_data_root.exists():
+            raise ValueError("Instance images root doesn't exists.")
+
+        self.instance_images_path = list(Path(instance_data_root).iterdir())
+        self.num_instance_images = len(self.instance_images_path)
+        self.token_map = token_map
+        self.use_template = use_template
+
+        if use_template == "naked":
+            self.templates = ["a photo of naked"]
+        elif use_template == "style":
+            self.templates = ["a photo in the style of {}"]
+        else:
+            self.templates = ["a photo of {}"]
+
+        self._length = self.num_instance_images
+        self.h_flip = h_flip
+        self.image_transforms = transforms.Compose(
+            [
+                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR)
+                if resize
+                else transforms.Lambda(lambda x: x),
+                transforms.ColorJitter(0.1, 0.1)
+                if color_jitter
+                else transforms.Lambda(lambda x: x),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
+
+        self.blur_amount = blur_amount
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, index):
+        example = {}
+        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
+        if not instance_image.mode == "RGB":
+            instance_image = instance_image.convert("RGB")
+        example["instance_images"] = self.image_transforms(instance_image)
+
+        if self.use_template:
+            assert self.token_map is not None
+            input_tok = list(self.token_map.values())[0]
+            text = random.choice(self.templates).format(input_tok)
+        else:
+            text = self.instance_images_path[index % self.num_instance_images].stem
+            if self.token_map is not None:
+                for token, value in self.token_map.items():
+                    text = text.replace(token, value)
+        
+        if self.h_flip and random.random() > 0.5:
+            hflip = transforms.RandomHorizontalFlip(p=1)
+            example["instance_images"] = hflip(example["instance_images"])
+            
+        example["instance_prompt_ids"] = self.tokenizer(
+            text,
+            padding="do_not_pad",
+            truncation=True,
+            max_length=self.tokenizer.model_max_length,
+        ).input_ids
+        
+        example["uncond_prompt_ids"] = self.tokenizer(
+            "",
+            padding="do_not_pad",
+            truncation=True,
+            max_length=self.tokenizer.model_max_length,
+        ).input_ids        
+
+        return example
+
+class Imagenette(Dataset):
+    def __init__(self, split: str, class_to_forget=None, transform=None):
+        self.dataset = load_dataset("frgfm/imagenette", "160px")[split]
+        self.class_to_idx = {cls: i for i, cls in enumerate(self.dataset.features["label"].names)}
+        self.file_to_class = {str(idx): self.dataset["label"][idx] for idx in range(len(self.dataset))}
+
+        self.class_to_forget = class_to_forget
+        self.num_classes = max(self.class_to_idx.values()) + 1
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx) -> tuple[torch.Tensor, str]:
+        example = self.dataset[idx]
+        image = example["image"]
+        label = example["label"]
+
+        if example["label"] == self.class_to_forget:
+            label = np.random.randint(0, self.num_classes)
+
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+class NSFW(Dataset):
+    def __init__(self, transform=None):
+        self.dataset = load_dataset("data/nsfw")["train"]
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx) -> torch.Tensor:
+        example = self.dataset[idx]
+        return example["image"] if not self.transform else self.transform(example["image"])
+
+class SalUnDataset(Dataset):
+    def __init__(self, data_path, transform=None):
+        self.dataset = load_dataset("imagefolder", data_dir=data_path, split="train")
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx) -> torch.Tensor:
+        example = self.dataset[idx]
+        return example["image"] if not self.transform else self.transform(example["image"])
+

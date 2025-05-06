@@ -70,8 +70,6 @@ def train(args: Arguments):
         tokenizer=tokenizer,
         concept=args.concepts,
         anchor_concept=args.anchor_concept,
-        size=512,
-        hflip=True,
         aug=(args.ac_concept_type != "style")
     )
 
