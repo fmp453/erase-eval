@@ -7,6 +7,7 @@ import warnings
 from transformers import CLIPTokenizer
 from diffusers import StableDiffusionPipeline
 
+from train_methods.train_utils import get_devices
 from train_methods.utils_fmn import ti_component, attn_component
 from utils import Arguments
 
@@ -98,7 +99,7 @@ def main(args: Arguments):
     placeholder_tokens = make_placeholder_tokens(initializer_tokens)
     placeholder_token_at_data = make_placeholder_token_at_data(placeholder_tokens)
 
-    device = f"cuda:{args.device.split(',')[0]}"
+    device = get_devices(args)[0]
 
     generation(args)
 

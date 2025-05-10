@@ -20,6 +20,13 @@ from custom_text_encoder import CustomCLIPTextModel
 from utils import Arguments
 from train_methods.consts import LEN_EN_3K_VOCAB, LEN_TOKENIZER_VOCAB
 
+def get_devices(args: Arguments) -> list[torch.device]:
+    devices = args.device.split(",")
+    if len(devices) > 1:
+        return [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
+    return [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
+    
+
 def tokenize(prompt: list[str], tokenizer: CLIPTokenizer) -> dict[str, torch.Tensor]:
     return tokenizer(
         prompt,

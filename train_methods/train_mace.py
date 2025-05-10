@@ -20,7 +20,7 @@ from diffusers import UNet2DConditionModel, AutoencoderKL, DDPMScheduler, Stable
 from diffusers.loaders import AttnProcsLayers
 from diffusers.optimization import get_scheduler
 
-from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn
+from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn, get_devices
 from train_methods.train_utils import AttnController, LoRAAttnProcessor
 from train_methods.segment_anything.segment_anything import SamPredictor, sam_hq_model_registry
 from train_methods.groundingdino.models import build_model, GroundingDINO
@@ -173,7 +173,7 @@ def get_mask(input_image: torch.Tensor, text_prompt, model, predictor: SamPredic
     return final_mask
 
 def making_data(args: Arguments):
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
 
     multi_concept = []
     concepts = args.concepts.split(",")
@@ -245,7 +245,7 @@ def collate_fn(examples):
 
 def cfr_lora_training(args: Arguments):
     
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
     mapping_concept = args.anchor_concept.split(",")
     multi_concept = []
     concepts = args.concepts.split(",")

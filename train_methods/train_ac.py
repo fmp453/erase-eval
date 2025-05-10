@@ -17,7 +17,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, StableDiffusionPipeline
 
 from train_methods.data import AblatingConceptDataset
-from train_methods.train_utils import collate_fn
+from train_methods.train_utils import collate_fn, get_devices
 from utils import Arguments
 
 warnings.filterwarnings("ignore")
@@ -33,8 +33,7 @@ def train(args: Arguments):
     vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     
-    device = args.device.split(",")[0]
-    device = f"cuda:{device}"
+    device = get_devices(args)[0]
 
     text_encoder.eval()
     vae.eval()

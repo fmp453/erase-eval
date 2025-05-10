@@ -4,6 +4,7 @@ import torch
 from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel
 
+from train_methods.train_utils import get_devices
 from utils import Arguments
 
 
@@ -57,7 +58,7 @@ def train_edit(args: Arguments, layer_edit_modules, key_embeddings, value_embedd
 # LocoEdit function
 def train(args: Arguments):
     
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
 
     tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")

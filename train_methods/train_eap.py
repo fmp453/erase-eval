@@ -15,7 +15,7 @@ from diffusers import UNet2DConditionModel, AutoencoderKL, DDIMScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils import Arguments
-from train_methods.train_utils import apply_model, sample_until, get_vocab, save_embedding_matrix, get_condition, learn_k_means_from_input_embedding, search_closest_tokens
+from train_methods.train_utils import apply_model, sample_until, get_vocab, save_embedding_matrix, get_condition, learn_k_means_from_input_embedding, search_closest_tokens, get_devices
 from train_methods.consts import ddim_alphas, LEN_TOKENIZER_VOCAB
 
 
@@ -124,11 +124,7 @@ def train(args: Arguments):
     print('to be preserved:', preserved_words)
     preserved_words.append('')
 
-    devices = args.device.split(",")
-    if len(devices) > 1:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
-    else:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
+    devices = get_devices(args)
 
     tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")

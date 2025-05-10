@@ -17,7 +17,7 @@ from diffusers.models.attention_processor import Attention, AttnProcessor
 from diffusers.models.attention import BasicTransformerBlock
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from train_methods.train_utils import sample_until, apply_model, get_condition
+from train_methods.train_utils import sample_until, apply_model, get_condition, get_devices
 from utils import Arguments
 
 def get_mask(attn_maps, word_indices, thres):
@@ -281,7 +281,7 @@ def setup_unet_adapter_eraser(unet: UNet2DConditionModel, eraser_rank, device):
 
 def train_receler(args: Arguments):
     
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
 
     # extend specific concept
     concept: str = args.concepts

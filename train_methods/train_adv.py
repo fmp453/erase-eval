@@ -10,7 +10,7 @@ from tqdm import trange
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import UNet2DConditionModel, AutoencoderKL, DDIMScheduler
 
-from train_methods.train_utils import id2embedding, soft_prompt_attack, get_train_loss_retain, apply_model, sample_until, encode_prompt
+from train_methods.train_utils import id2embedding, soft_prompt_attack, get_train_loss_retain, apply_model, sample_until, encode_prompt, get_devices
 from train_methods.custom_text_encoder import CustomCLIPTextModel
 
 from utils import Arguments
@@ -117,11 +117,7 @@ def param_choices(train_method: str, text_encoder: CustomCLIPTextModel=None, une
 
 def train(args: Arguments):
     
-    devices = args.device.split(",")
-    if len(devices) > 1:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
-    else:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
+    devices = get_devices(args)
     
     # ====== Stage 0: PROMPT CLEANING ======
     prompt = args.concepts

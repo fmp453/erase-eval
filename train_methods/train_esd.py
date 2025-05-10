@@ -17,7 +17,7 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices
 
 warnings.filterwarnings("ignore")
 
@@ -110,11 +110,7 @@ def main(args: Arguments):
 
     # This script requires two CUDA devices
     # Sample latents on the first device, and train the unet on the second device
-    devices = args.device.split(",")
-    if len(devices) > 1:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
-    else:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
+    devices = get_devices(args)
 
     # Load pretrained models
     noise_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")

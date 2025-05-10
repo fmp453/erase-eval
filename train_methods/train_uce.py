@@ -9,6 +9,7 @@ import torch
 from diffusers import UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTokenizer
 
+from train_methods.train_utils import get_devices
 from utils import Arguments
 
 
@@ -177,7 +178,7 @@ def edit_model(
 def train(args: Arguments):    
     
     technique = args.technique
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
     erase_scale = args.erase_scale
     anchor_concepts = args.anchor_concept
 

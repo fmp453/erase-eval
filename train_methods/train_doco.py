@@ -28,7 +28,7 @@ from diffusers.optimization import get_scheduler
 
 from train_methods.utils_doco import get_anchor_prompts, retrieve, adjust_gradient
 from train_methods.utils_doco import CustomDiffusionAttnProcessor, PatchGANDiscriminator, CustomDiffusionPipeline
-from train_methods.train_utils import collate_fn
+from train_methods.train_utils import collate_fn, get_devices
 from train_methods.data import DocoDataset, DocoPromptDataset
 from utils import Arguments
 
@@ -97,8 +97,7 @@ def seed_everything(seed: int=42) -> None:
 def main(args: Arguments):
     
     seed_everything(args.seed)
-    device = args.device.split(",")[0]
-    device = f"cuda:{device}"
+    device = get_devices(args)[0]
     
     concepts_list = [
         {
