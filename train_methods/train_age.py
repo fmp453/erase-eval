@@ -11,14 +11,13 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL
 
 from train_methods.train_utils import sample_until, apply_model
 from train_methods.utils_age import ConceptDict
-from train_methods.train_utils import save_embedding_matrix, learn_k_means_from_input_embedding, search_closest_tokens, get_condition, get_devices
+from train_methods.train_utils import save_embedding_matrix, learn_k_means_from_input_embedding, search_closest_tokens, get_condition, get_devices, gather_parameters
 from train_methods.consts import ddim_alphas
 from utils import Arguments
 
 
 def train_age(args: Arguments) -> None:
     ddim_steps = args.ddim_steps
-    train_method = args.age_method
 
     prompt = args.concepts
     preserved = ""
@@ -52,39 +51,7 @@ def train_age(args: Arguments) -> None:
     unet.to(device)
     orig_unet.to(device)
 
-    parameters = []
-    for name, param in unet.named_parameters():
-        # train all layers except x-attns and time_embed layers
-        if train_method == 'noxattn':
-            if not (name.startswith('out.') or 'attn2' in name or 'time_embed' in name):
-                parameters.append(param)
-        # train only self attention layers
-        if train_method == 'selfattn':
-            if 'attn1' in name:
-                parameters.append(param)
-        # train only x attention layers
-        if train_method == 'xattn':
-            if 'attn2' in name:
-                parameters.append(param)
-        # train only qkv layers in x attention layers
-        if train_method == 'xattn_matching':
-            if 'attn2' in name and ('to_q' in name or 'to_k' in name or 'to_v' in name):
-                parameters.append(param)
-        # train all layers
-        if train_method == 'full':
-            parameters.append(param)
-        # train all layers except time embed layers
-        if train_method == 'notime':
-            if not (name.startswith('out.') or 'time_embed' in name):
-                parameters.append(param)
-        if train_method == 'xlayer':
-            if 'attn2' in name:
-                if 'output_blocks.6.' in name or 'output_blocks.8.' in name:
-                    parameters.append(param)
-        if train_method == 'selflayer':
-            if 'attn1' in name:
-                if 'input_blocks.4.' in name or 'input_blocks.7.' in name:
-                    parameters.append(param)
+    _, parameters = gather_parameters(args.age_method, unet=unet)
 
     unet.train()
     quick_sample_till_t = lambda x, s, code, t: sample_until(
@@ -94,7 +61,6 @@ def train_age(args: Arguments) -> None:
         scheduler=scheduler,
         prompt_embeds=x,
         guidance_scale=s,
-        # extra_step_kwargs: Optional[dict[str, Any]]=None,
     )
 
     losses = []
@@ -121,10 +87,6 @@ def train_age(args: Arguments) -> None:
 
 
     # Search the closest tokens in the vocabulary for each erased word, using the similarity matrix
-    # if vocab in ['EN3K', 'Imagenet', 'CLIP'], then use the pre-defined vocabulary
-    # if vocab in concept_dict.all_concepts, then use the custom concepts, i.e., 'nudity', 'artistic', 'human_body'
-    # if vocab is 'keyword', then use the keywords in the erased words, defined in utils_concept.py
-
     concept_dict = ConceptDict()
     concept_dict.load_all_concepts()
 
@@ -174,15 +136,12 @@ def train_age(args: Arguments) -> None:
                 preserved_matrix = create_prompt(word)
             else:
                 preserved_matrix = torch.cat((preserved_matrix, create_prompt(word)), dim=0)
-            print(i, word, preserved_matrix.shape)
         preserved_matrix = preserved_matrix.flatten(start_dim=1) # [n, 77*768]
         weight_pi = torch.zeros((1, preserved_matrix.shape[0]), device=unet.device, dtype=preserved_matrix.dtype) # [1, n]
         weight_pi = weight_pi + 1 / preserved_matrix.shape[0]
         weight_pi = Variable(weight_pi, requires_grad=True)
         weight_pi_dict[erase_word] = weight_pi
         preserved_matrix_dict[erase_word] = preserved_matrix
-    
-    print('weight_pi_dict:', weight_pi_dict)
 
     opt_weight_pi = optim.Adam([weight_pi for weight_pi in weight_pi_dict.values()], lr=args.gumbel_lr)
 
@@ -290,4 +249,3 @@ def train_age(args: Arguments) -> None:
 
 def main(args: Arguments):
     train_age(args)
-

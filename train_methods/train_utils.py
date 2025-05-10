@@ -200,6 +200,15 @@ def gather_parameters(method: str, unet: UNet2DConditionModel) -> tuple[list[str
                 continue
             names.append(name)
             parameters.append(param)
+        # for Adaptive-Guided-Erasure: layerの名前が合ってるかはチェックが必要
+        elif method == "xlayer":
+            if "attn2" in name:
+                if "output_blocks.6." in name or "output_blocks.8." in name:
+                    parameters.append(name)
+        elif method == "selflayer":
+            if "attn1" in name:
+                if "input_blocks.4." in name or "input_blocks.7." in name:
+                    parameters.append(param)
         else:
             raise ValueError(f"Unknown finetuning method: {method}")
 
