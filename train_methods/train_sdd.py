@@ -15,7 +15,7 @@ from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler, UNet2DConditi
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices
 
 def train_step(
     args: Arguments,
@@ -89,11 +89,7 @@ def train_step(
 
 def main(args: Arguments):    
     
-    devices = args.device.split(",")
-    if len(devices) > 1:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
-    else:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
+    devices = get_devices(args)
 
     # Load pretrained model
     tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")

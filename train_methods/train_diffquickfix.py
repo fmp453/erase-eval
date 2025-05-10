@@ -13,6 +13,7 @@ from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import StableDiffusionPipeline
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionSafetyChecker
 
+from train_methods.train_utils import get_devices
 from utils import Arguments
 
 class SafteyChecker(StableDiffusionSafetyChecker):
@@ -100,7 +101,7 @@ def train(args: Arguments):
     target_prompt = args.anchor_concept
 
     torch.cuda.empty_cache()
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
     
     sd_pipeline: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(args.sd_version)
     sd_pipeline.safety_checker = SafteyChecker(sd_pipeline.safety_checker.config)

@@ -11,7 +11,7 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL
 
 from train_methods.train_utils import sample_until, apply_model
 from train_methods.utils_age import ConceptDict
-from train_methods.train_utils import save_embedding_matrix, learn_k_means_from_input_embedding, search_closest_tokens, get_condition
+from train_methods.train_utils import save_embedding_matrix, learn_k_means_from_input_embedding, search_closest_tokens, get_condition, get_devices
 from train_methods.consts import ddim_alphas
 from utils import Arguments
 
@@ -36,7 +36,7 @@ def train_age(args: Arguments) -> None:
     print('to be preserved:', preserved_words)
     preserved_words.append('')
 
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
     tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     orig_unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")

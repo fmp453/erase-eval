@@ -22,7 +22,7 @@ from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel, PNDMScheduler
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
-from train_methods.train_utils import tokenize
+from train_methods.train_utils import tokenize, get_devices
 from utils import Arguments
 
 
@@ -287,7 +287,7 @@ def train(
     tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
     
     text_encoder.to(device)
     text_encoder.eval()

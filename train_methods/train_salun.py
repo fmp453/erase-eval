@@ -24,7 +24,7 @@ from diffusers.optimization import get_scheduler
 from utils import Arguments
 from train_methods.consts import imagenette_labels
 from train_methods.data import Imagenette, NSFW, SalUnDataset
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize, get_devices
 
 warnings.filterwarnings("ignore")
 
@@ -105,12 +105,7 @@ def salun(args: Arguments, mask_path: str):
         with open(args.concepts[0], "r") as f:
             args.concepts = f.read().splitlines()
 
-    devices = args.device.split(",")
-    if len(devices) > 1:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
-    else:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
-
+    devices = get_devices(args)
     noise_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
@@ -244,7 +239,7 @@ def setup_forget_data(args: Arguments, device: torch.device):
 
 def generate_mask(args: Arguments):
     
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
     tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
@@ -346,7 +341,7 @@ def generate_mask(args: Arguments):
     return res
 
 def generate_nsfw_mask(args: Arguments):
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
     tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
