@@ -130,28 +130,9 @@ def main(args: Arguments):
     )
 
     attn_component(
-        instance_data_dir=args.instance_data_dir,
-        seed=args.seed,
+        args=args,
         output_dir=f"{args.save_dir}/{args.concepts}-attn",
-        pretrained_model_name_or_path=args.sd_version,
         multi_concept=multi_concept,
-        scale_lr=args.fmn_scale_lr,
-        learning_rate=args.fmn_lr_attn,
-        gradient_accumulation_steps=args.fmn_gradient_accumulation_steps,
-        train_batch_size=args.fmn_train_batch_size,
-        only_optimize_ca=args.only_optimize_ca,
-        resolution=args.image_size,
-        center_crop=args.center_crop,
-        use_pooler=args.use_pooler,
-        dataloader_num_workers=args.fmn_dataloader_num_workers,
-        max_train_steps=args.fmn_max_train_steps_attn,
-        num_train_epochs=args.fmn_num_train_epochs,
-        lr_scheduler=args.lr_scheduler,
-        lr_warmup_steps=args.fmn_lr_warmup_steps_attn,
-        lr_num_cycles=args.fmn_lr_num_cycles_attn,
-        lr_power=args.fmn_lr_power_attn,
-        no_real_image=False,
-        max_grad_norm=args.max_grad_norm,
         device=device
     )
 
