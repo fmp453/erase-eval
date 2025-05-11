@@ -105,11 +105,11 @@ def main(args: Arguments):
 
     # Ti -> Attn の順で行う
     ti_component(
+        args=args,
         output_dir=f"{args.save_dir}/{args.concepts}-ti",
         placeholder_tokens=placeholder_tokens,
         placeholder_token_at_data=placeholder_token_at_data,
         initializer_tokens=initializer_tokens,
-        color_jitter=False,
         device=device,
     )
 
