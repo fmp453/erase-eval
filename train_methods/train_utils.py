@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 from tqdm.auto import tqdm
 from transformers import CLIPTokenizer, CLIPTextModel
-from diffusers import UNet2DConditionModel, DDIMScheduler
+from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, DDPMScheduler
 from diffusers.models.lora import LoRALinearLayer
 from diffusers.models.attention_processor import Attention
 
@@ -20,12 +20,22 @@ from custom_text_encoder import CustomCLIPTextModel
 from utils import Arguments
 from train_methods.consts import LEN_EN_3K_VOCAB, LEN_TOKENIZER_VOCAB
 
+def get_models(args: Arguments) -> tuple[CLIPTokenizer, CLIPTextModel, AutoencoderKL, UNet2DConditionModel, DDIMScheduler, DDPMScheduler]:
+    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
+    vae = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
+    unet = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    ddim_scheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+    ddpm_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+
+    return tokenizer, text_encoder, vae, unet, ddim_scheduler, ddpm_scheduler
+
+
 def get_devices(args: Arguments) -> list[torch.device]:
     devices = args.device.split(",")
     if len(devices) > 1:
         return [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
     return [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
-    
 
 def tokenize(prompt: list[str], tokenizer: CLIPTokenizer) -> dict[str, torch.Tensor]:
     return tokenizer(
@@ -200,6 +210,15 @@ def gather_parameters(method: str, unet: UNet2DConditionModel) -> tuple[list[str
                 continue
             names.append(name)
             parameters.append(param)
+        # for Adaptive-Guided-Erasure: layerの名前が合ってるかはチェックが必要
+        elif method == "xlayer":
+            if "attn2" in name:
+                if "output_blocks.6." in name or "output_blocks.8." in name:
+                    parameters.append(name)
+        elif method == "selflayer":
+            if "attn1" in name:
+                if "input_blocks.4." in name or "input_blocks.7." in name:
+                    parameters.append(param)
         else:
             raise ValueError(f"Unknown finetuning method: {method}")
 

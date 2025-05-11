@@ -17,7 +17,7 @@ from diffusers.models.attention_processor import Attention, AttnProcessor
 from diffusers.models.attention import BasicTransformerBlock
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from train_methods.train_utils import sample_until, apply_model, get_condition, get_devices
+from train_methods.train_utils import sample_until, apply_model, get_condition, get_devices, get_models
 from utils import Arguments
 
 def get_mask(attn_maps, word_indices, thres):
@@ -298,11 +298,7 @@ def train_receler(args: Arguments):
     else:
         words = [concept]
 
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")    
+    tokenizer, text_encoder, vae, unet, scheduler, _ = get_models(args)
 
     unet.eval()
     vae.eval()

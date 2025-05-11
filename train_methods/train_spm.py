@@ -18,11 +18,10 @@ from tqdm import tqdm
 
 from train_methods.utils_spm import SPMNetwork, SPMLayer
 
-from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel, PNDMScheduler
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
-from train_methods.train_utils import tokenize, get_devices
+from train_methods.train_utils import tokenize, get_devices, get_models
 from utils import Arguments
 
 
@@ -179,25 +178,12 @@ def get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_
     schedule_func = TYPE_TO_SCHEDULER_FUNCTION[SchedulerType("cosine_with_restarts")]
     return schedule_func(optimizer, num_warmup_steps=lr_warmup_steps, num_training_steps=num_training_steps, num_cycles=lr_scheduler_num_cycles)
 
-def encode_prompts(tokenizer, text_encoder: CLIPTextModel, prompts: list[str], return_tokens: bool = False) -> torch.Tensor:
-    text_tokens = tokenize(prompts, tokenizer).input_ids
-    text_embeddings = text_encoder(text_tokens.to(text_encoder.device))[0]
-
-    if return_tokens:
-        return text_embeddings, torch.unique(text_tokens, dim=1)
-    return text_embeddings
-
 def get_random_noise(batch_size: int, height: int, width: int, generator: torch.Generator=None) -> torch.Tensor:
     return torch.randn(
         (batch_size, 4, height // 8, width // 8),
         generator=generator,
         device="cpu",
     )
-
-def get_initial_latents(scheduler: PNDMScheduler, n_imgs: int, height: int, width: int, n_prompts: int, generator=None):
-    noise = get_random_noise(n_imgs, height, width, generator=generator).repeat(n_prompts, 1, 1, 1)
-    latents = noise * scheduler.init_noise_sigma
-    return latents
 
 def predict_noise(
     unet: UNet2DConditionModel,
@@ -284,9 +270,7 @@ def train(
     save_path = Path(save_path)
 
     noise_scheduler: PNDMScheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, vae, unet, _, _ = get_models(args)
     device = get_devices(args)[0]
     
     text_encoder.to(device)
@@ -305,9 +289,7 @@ def train(
     ).to(device)
 
     trainable_params = network.prepare_optimizer_params(text_encoder_lr, unet_lr, lr)
-    
     optimizer = bnb.optim.AdamW8bit(trainable_params, lr=lr)
-    
     lr_scheduler = get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_steps)
     criteria = torch.nn.MSELoss()
 
@@ -323,7 +305,8 @@ def train(
                 settings.unconditional,
             ]:
                 if cache[prompt] == None:
-                    cache[prompt] = encode_prompts(tokenizer, text_encoder, [prompt])
+                    input_ids = tokenize([prompt], tokenizer).input_ids
+                    cache[prompt] = text_encoder(input_ids.to(text_encoder.device))[0]
 
             prompt_pair = PromptEmbedsPair(
                 criteria,
@@ -347,11 +330,10 @@ def train(
             optimizer.zero_grad()
 
             prompt_pair: PromptEmbedsPair = prompt_pairs[torch.randint(0, len(prompt_pairs), (1,)).item()]
-
             timesteps_to = torch.randint(1, max_denoising_steps, (1,)).item()
 
-            height, width = (resolution, resolution)
-            latents = get_initial_latents(noise_scheduler, prompt_pair.batch_size, height, width, 1).to(device)
+            noise = get_random_noise(prompt_pair.batch_size, resolution, resolution).repeat(1, 1, 1, 1).to(device)
+            latents = noise * noise_scheduler.init_noise_sigma
 
             with network:
                 denoised_latents = diffusion(
@@ -388,16 +370,14 @@ def train(
                 noise_scheduler,
                 current_timestep,
                 denoised_latents,
-                concat_embeddings(prompt_pair.unconditional, prompt_pair.target, prompt_pair.batch_size,)
+                concat_embeddings(prompt_pair.unconditional, prompt_pair.target, prompt_pair.batch_size)
             ).to("cpu")
 
         # ------------------------- latent anchoring part -----------------------------
 
         if prompt_pair.action == "erase_with_la":
-            # noise sampling
             anchors = sample(prompt_pair)
 
-            # get latents
             repeat = prompt_pair.sampling_batch_size // prompt_pair.batch_size
             with network:
                 anchor_latents = predict_noise(
@@ -421,8 +401,6 @@ def train(
         else:
             anchor_latents = None
             anchor_latents_ori = None
-
-        # --------------------------------------------------------------
 
         positive_latents.requires_grad = False
         neutral_latents.requires_grad = False

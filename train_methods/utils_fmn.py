@@ -135,9 +135,8 @@ def text2img_dataloader(train_dataset, train_batch_size: int, tokenizer: CLIPTok
 
 
 def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encoder: CLIPTextModel, scheduler: DDPMScheduler, t_mutliplier=1.0):
-    weight_dtype = torch.float32
 
-    latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype).to(unet.device)).latent_dist.sample()
+    latents = vae.encode(batch["pixel_values"].to(unet.device)).latent_dist.sample()
     latents = latents * 0.18215
 
     noise = torch.randn_like(latents)
@@ -163,11 +162,8 @@ def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encode
     
         # resize to match model_pred
         mask = F.interpolate(mask.float(), size=model_pred.shape[-2:], mode="nearest") + 0.05
-        
         mask = mask / mask.mean()
-
         model_pred = model_pred * mask
-
         target = target * mask
 
     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -261,7 +257,6 @@ def ti_component(
     placeholder_tokens: str = "<s>",
     placeholder_token_at_data: Optional[str] = None,
     initializer_tokens: Optional[str] = None,
-    class_prompt: Optional[str] = None,
     seed: int = 42,
     resolution: int = 512,
     color_jitter: bool = True,
@@ -322,9 +317,7 @@ def ti_component(
     )
 
     train_dataset.blur_amount = 20
-
     train_dataloader = text2img_dataloader(train_dataset, train_batch_size, tokenizer)
-
     index_no_updates = torch.arange(len(tokenizer)) != placeholder_token_ids[0]
 
     for tok_id in placeholder_token_ids:
@@ -583,9 +576,6 @@ def attn_component(
     optimizer = optim.AdamW(
         params_to_optimize,
         lr=learning_rate,
-        betas=(0.9, 0.999),
-        weight_decay=0.01,
-        eps=1e-8,
     )
 
     train_dataset = ForgetMeNotDataset(

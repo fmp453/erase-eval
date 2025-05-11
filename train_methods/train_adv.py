@@ -7,10 +7,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import trange
-from transformers import CLIPTextModel, CLIPTokenizer
-from diffusers import UNet2DConditionModel, AutoencoderKL, DDIMScheduler
+from diffusers import UNet2DConditionModel
 
-from train_methods.train_utils import id2embedding, soft_prompt_attack, get_train_loss_retain, apply_model, sample_until, encode_prompt, get_devices
+from train_methods.train_utils import id2embedding, soft_prompt_attack, get_train_loss_retain, apply_model, sample_until, encode_prompt, get_devices, tokenize, get_models
 from train_methods.custom_text_encoder import CustomCLIPTextModel
 
 from utils import Arguments
@@ -138,13 +137,8 @@ def train(args: Arguments):
     retain_dataset = retain_prompt(args.dataset_retain)
     
     # ======= Stage 1: TRAINING SETUP =======
-    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
     unet_orig: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    text_encoder_orig: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    unet_orig: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder_orig, vae, unet, scheduler, _ = get_models(args)
 
     vae.eval()
     unet.to(devices[0])
@@ -245,7 +239,7 @@ def train(args: Arguments):
         # Retaining prompts for retaining regularized training
         if args.adv_retain_train == 'reg':
             retain_words = retain_dataset.get_random_prompts(args.adv_retain_batch)
-            retain_text_input = tokenizer(retain_words, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt", truncation=True)
+            retain_text_input = tokenize(retain_words, tokenizer)
             retain_input_ids = retain_text_input.input_ids.to(devices[0])
             
             with torch.no_grad():
@@ -253,7 +247,7 @@ def train(args: Arguments):
             
             retain_text_embeddings = id2embedding(tokenizer, all_embeddings, retain_text_input.input_ids.to(devices[0]), devices[0])
             retain_text_embeddings = retain_text_embeddings.reshape(args.adv_retain_batch, -1, retain_text_embeddings.shape[-1])  # [batch, 77, 768]
-            retain_emb_n = custom_text_encoder(input_ids = retain_input_ids, inputs_embeds=retain_text_embeddings)[0]
+            retain_emb_n = custom_text_encoder(input_ids=retain_input_ids, inputs_embeds=retain_text_embeddings)[0]
         else:
             retain_text_input = None
             retain_text_embeddings = None
@@ -287,8 +281,7 @@ def train(args: Arguments):
             adv_input_ids,
             adv_embd=adv_embd
         )
-        
-        # update weights to erase the concept
+
         loss.backward()
         losses.append(loss.item())
         pbar.set_postfix({"loss": loss.item()})
@@ -312,7 +305,7 @@ def train(args: Arguments):
                 retain_start_code = torch.randn((args.adv_retain_batch, 4, 64, 64)).to(devices[0])
                 
                 with torch.no_grad():
-                    retain_text_input = tokenizer(retain_words, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt", truncation=True)
+                    retain_text_input = tokenize(retain_words, tokenizer)
                     retain_emb_p = text_encoder_orig(retain_text_input.input_ids.to(text_encoder_orig.device))[0]
             
                 retain_z = quick_sample_till_t(
@@ -320,11 +313,11 @@ def train(args: Arguments):
                     args.start_guidance, retain_start_code, args.adv_retain_batch, int(t_enc)) # emb_p seems to work better instead of emb_0
                 retain_e_p = apply_model(unet_orig, retain_z, t_enc_ddpm, retain_emb_p)
                 
-                retain_text_input = tokenizer(retain_words, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt",truncation=True)
+                retain_text_input = tokenize(retain_words, tokenizer)
                 retain_input_ids = retain_text_input.input_ids.to(devices[0])
                 retain_text_embeddings = id2embedding(tokenizer, all_embeddings, retain_text_input.input_ids.to(devices[0]), devices[0])
                 retain_text_embeddings = retain_text_embeddings.reshape(args.adv_retain_batch, -1, retain_text_embeddings.shape[-1])  # [batch, 77, 768]
-                retain_emb_n = custom_text_encoder(input_ids = retain_input_ids, inputs_embeds=retain_text_embeddings)[0]
+                retain_emb_n = custom_text_encoder(input_ids=retain_input_ids, inputs_embeds=retain_text_embeddings)[0]
                 retain_e_n = apply_model(unet, retain_z, t_enc_ddpm, retain_emb_n)
                 
                 retain_loss: torch.Tensor = criteria(retain_e_n.to(devices[0]), retain_e_p.to(devices[0]))
