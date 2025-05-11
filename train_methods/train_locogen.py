@@ -1,12 +1,10 @@
 # On Mechanistic Knowledge Localization in Text-to-Image Generative Models (LocoGen)
 
 import torch
-from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel
 
-from train_methods.train_utils import get_devices
+from train_methods.train_utils import get_devices, get_models, tokenize
 from utils import Arguments
-
 
 # Total number of computable operations / modules -- 709
 def high_level_layers(unet: UNet2DConditionModel):
@@ -60,9 +58,7 @@ def train(args: Arguments):
     
     device = get_devices(args)[0]
 
-    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
+    tokenizer, text_encoder, _, unet, _, _ = get_models(args)
     
     text_encoder.to(device)
     unet.to(device)
@@ -85,13 +81,13 @@ def train(args: Arguments):
         return prompts
     
     # Function to generate output embeddings from the text-encoder
-    def generate_text_embeddings(tokenizer: CLIPTokenizer, text_encoder, key_prompt, value=False):
+    def generate_text_embeddings(tokenizer, text_encoder, key_prompt, value=False):
         # Obtaining the embeddings of the last subject token
         # Key : Text-Embedding
         key_embeddings = []
         key_tokens = []
         for prompt_curr in key_prompt:
-            text_input_curr= tokenizer(prompt_curr, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt",)
+            text_input_curr= tokenize(prompt_curr, tokenizer)
             # Append the embeddings
             with torch.no_grad():
                 text_embeddings = text_encoder(text_input_curr.input_ids.to(text_encoder.device))[0]

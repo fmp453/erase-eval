@@ -24,7 +24,7 @@ from diffusers.optimization import get_scheduler
 from utils import Arguments
 from train_methods.consts import imagenette_labels
 from train_methods.data import Imagenette, NSFW, SalUnDataset
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize, get_devices
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize, get_devices, get_models
 
 warnings.filterwarnings("ignore")
 
@@ -106,14 +106,9 @@ def salun(args: Arguments, mask_path: str):
             args.concepts = f.read().splitlines()
 
     devices = get_devices(args)
-    noise_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    ddim_scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    unet_teacher: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     unet_student: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, _, unet_teacher, ddim_scheduler, noise_scheduler = get_models(args)
 
-    # Freeze vae and text_encoder
     unet_teacher.requires_grad_(False)
     text_encoder.requires_grad_(False)
 

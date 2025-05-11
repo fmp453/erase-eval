@@ -11,11 +11,11 @@ from tqdm.auto import tqdm
 from torch.optim.lr_scheduler import LambdaLR
 from torch.nn.utils import clip_grad_norm_
 from transformers import CLIPTextModel, CLIPTokenizer
-from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler, UNet2DConditionModel
+from diffusers import DDPMScheduler, DDIMScheduler, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices, get_models
 
 def train_step(
     args: Arguments,
@@ -91,16 +91,9 @@ def main(args: Arguments):
     
     devices = get_devices(args)
 
-    # Load pretrained model
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    unet_teacher: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     unet_student: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    ddim_scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    noise_scheduler: DDPMScheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+    tokenizer, text_encoder, vae, unet_teacher, ddim_scheduler, noise_scheduler = get_models(args)
 
-    # Freeze vae and text_encoder
     unet_teacher.requires_grad_(False)
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)

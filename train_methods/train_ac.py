@@ -13,11 +13,10 @@ from collections import OrderedDict
 from tqdm import trange
 from torch.utils.data import DataLoader
 
-from transformers import CLIPTextModel, CLIPTokenizer
-from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline
 
 from train_methods.data import AblatingConceptDataset
-from train_methods.train_utils import collate_fn, get_devices
+from train_methods.train_utils import collate_fn, get_devices, get_models
 from utils import Arguments
 
 warnings.filterwarnings("ignore")
@@ -27,11 +26,7 @@ warnings.filterwarnings("ignore")
 
 def train(args: Arguments):
     
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    scheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, vae, unet, scheduler, _ = get_models(args)
     
     device = get_devices(args)[0]
 

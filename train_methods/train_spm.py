@@ -18,11 +18,10 @@ from tqdm import tqdm
 
 from train_methods.utils_spm import SPMNetwork, SPMLayer
 
-from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel, PNDMScheduler
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
-from train_methods.train_utils import tokenize, get_devices
+from train_methods.train_utils import tokenize, get_devices, get_models
 from utils import Arguments
 
 
@@ -271,9 +270,7 @@ def train(
     save_path = Path(save_path)
 
     noise_scheduler: PNDMScheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, vae, unet, _, _ = get_models(args)
     device = get_devices(args)[0]
     
     text_encoder.to(device)

@@ -112,7 +112,6 @@ def main(args: Arguments):
         placeholder_tokens=placeholder_tokens,
         placeholder_token_at_data=placeholder_token_at_data,
         initializer_tokens=initializer_tokens,
-        class_prompt=None,
         seed=args.seed,
         resolution=args.image_size,
         color_jitter=False,

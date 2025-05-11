@@ -6,12 +6,11 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import trange
 from torch.autograd import Variable
-from transformers import CLIPTokenizer, CLIPTextModel
-from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL
+from diffusers import UNet2DConditionModel
 
 from train_methods.train_utils import sample_until, apply_model
 from train_methods.utils_age import ConceptDict
-from train_methods.train_utils import save_embedding_matrix, learn_k_means_from_input_embedding, search_closest_tokens, get_condition, get_devices, gather_parameters
+from train_methods.train_utils import save_embedding_matrix, learn_k_means_from_input_embedding, search_closest_tokens, get_condition, get_devices, gather_parameters, get_models
 from train_methods.consts import ddim_alphas
 from utils import Arguments
 
@@ -36,12 +35,8 @@ def train_age(args: Arguments) -> None:
     preserved_words.append('')
 
     device = get_devices(args)[0]
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     orig_unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")    
+    tokenizer, text_encoder, vae, unet, scheduler, _ = get_models(args)
 
     unet.eval()
     vae.eval()

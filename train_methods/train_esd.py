@@ -17,7 +17,7 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices, get_models
 
 warnings.filterwarnings("ignore")
 
@@ -112,16 +112,9 @@ def main(args: Arguments):
     # Sample latents on the first device, and train the unet on the second device
     devices = get_devices(args)
 
-    # Load pretrained models
-    noise_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    ddim_scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-
-    unet_teacher: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     unet_student: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, _, unet_teacher, ddim_scheduler, noise_scheduler = get_models(args)
 
-    # Freeze vae and text_encoder
     unet_teacher.requires_grad_(False)
     text_encoder.requires_grad_(False)
 

@@ -7,10 +7,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import trange
-from transformers import CLIPTextModel, CLIPTokenizer
-from diffusers import UNet2DConditionModel, AutoencoderKL, DDIMScheduler
+from diffusers import UNet2DConditionModel
 
-from train_methods.train_utils import id2embedding, soft_prompt_attack, get_train_loss_retain, apply_model, sample_until, encode_prompt, get_devices, tokenize
+from train_methods.train_utils import id2embedding, soft_prompt_attack, get_train_loss_retain, apply_model, sample_until, encode_prompt, get_devices, tokenize, get_models
 from train_methods.custom_text_encoder import CustomCLIPTextModel
 
 from utils import Arguments
@@ -138,13 +137,8 @@ def train(args: Arguments):
     retain_dataset = retain_prompt(args.dataset_retain)
     
     # ======= Stage 1: TRAINING SETUP =======
-    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
     unet_orig: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    text_encoder_orig: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    unet_orig: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder_orig, vae, unet, scheduler, _ = get_models(args)
 
     vae.eval()
     unet.to(devices[0])

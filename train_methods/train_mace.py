@@ -15,12 +15,12 @@ from tqdm import tqdm
 from PIL import Image
 from torchvision import transforms
 from torchvision.transforms.functional import to_pil_image
-from transformers import CLIPTokenizer, CLIPTextModel, AutoTokenizer
-from diffusers import UNet2DConditionModel, AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, DPMSolverMultistepScheduler
+from transformers import AutoTokenizer
+from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.loaders import AttnProcsLayers
 from diffusers.optimization import get_scheduler
 
-from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn, get_devices
+from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn, get_devices, get_models
 from train_methods.train_utils import AttnController, LoRAAttnProcessor
 from train_methods.segment_anything.segment_anything import SamPredictor, sam_hq_model_registry
 from train_methods.groundingdino.models import build_model, GroundingDINO
@@ -258,17 +258,11 @@ def cfr_lora_training(args: Arguments):
     if args.seed is not None:
         set_seed(args.seed)
 
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    noise_scheduler: DDPMScheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+    tokenizer, text_encoder, vae, unet, _, noise_scheduler = get_models(args)
     
     unet.to(device)
     vae.requires_grad_(False)
     unet.requires_grad_(False)
-    
-    optimizer_class = torch.optim.AdamW
     
     train_dataset = MACEDataset(
         tokenizer=tokenizer,
@@ -395,7 +389,7 @@ def cfr_lora_training(args: Arguments):
         lora_layers = AttnProcsLayers(lora_attn_procs)
 
         # values from the original implementation
-        optimizer = optimizer_class(
+        optimizer = torch.optim.AdamW(
             lora_layers.parameters(),
             lr=args.mace_lr,
             weight_decay=0.01,

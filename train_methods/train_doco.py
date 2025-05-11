@@ -14,11 +14,8 @@ from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
 from tqdm.auto import tqdm
-from transformers import CLIPTextModel, CLIPTokenizer
 
 from diffusers import (
-    AutoencoderKL,
-    DDPMScheduler,
     DiffusionPipeline,
     DPMSolverMultistepScheduler,
     UNet2DConditionModel,
@@ -28,7 +25,7 @@ from diffusers.optimization import get_scheduler
 
 from train_methods.utils_doco import get_anchor_prompts, retrieve, adjust_gradient
 from train_methods.utils_doco import CustomDiffusionAttnProcessor, PatchGANDiscriminator, CustomDiffusionPipeline
-from train_methods.train_utils import collate_fn, get_devices
+from train_methods.train_utils import collate_fn, get_devices, get_models
 from train_methods.data import DocoDataset, DocoPromptDataset
 from utils import Arguments
 
@@ -204,12 +201,8 @@ def main(args: Arguments):
 
     os.makedirs(args.save_dir, exist_ok=True)
 
-    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    noise_scheduler: DDPMScheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    unet = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     shadow_unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, vae, unet, _, noise_scheduler = get_models(args)
 
     # set shadow_unet requires_grad False
     for param in shadow_unet.parameters():
