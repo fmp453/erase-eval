@@ -105,28 +105,12 @@ def main(args: Arguments):
 
     # Ti -> Attn の順で行う
     ti_component(
-        instance_data_dir=args.instance_data_dir,
-        pretrained_model_name_or_path=args.sd_version,
         output_dir=f"{args.save_dir}/{args.concepts}-ti",
-        use_template=args.fmn_concept_type,
         placeholder_tokens=placeholder_tokens,
         placeholder_token_at_data=placeholder_token_at_data,
         initializer_tokens=initializer_tokens,
-        seed=args.seed,
-        resolution=args.image_size,
         color_jitter=False,
-        train_batch_size=args.fmn_train_batch_size,
-        max_train_steps_ti=args.fmn_max_train_steps_ti,
-        save_steps=args.fmn_save_steps_ti,
-        gradient_accumulation_steps=args.fmn_gradient_accumulation_steps,
-        clip_ti_decay=args.clip_ti_decay,
-        learning_rate_ti=args.fmn_lr_ti,
-        scale_lr=args.fmn_scale_lr,
-        lr_scheduler=args.lr_scheduler,
-        lr_warmup_steps=args.fmn_lr_warmup_steps_ti,
-        weight_decay_ti=args.fmn_weight_decay_ti,
         device=device,
-        extra_args=args,
     )
 
     attn_component(

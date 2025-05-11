@@ -6,7 +6,7 @@ import os
 import re
 import math
 import itertools
-from typing import Optional, Literal, Any, Union
+from typing import Optional, Any, Union
 from pathlib import Path
 
 import torch
@@ -252,30 +252,14 @@ def train_inversion(
                 return
 
 def ti_component(
-    instance_data_dir: str,
-    pretrained_model_name_or_path: str,
+    args: Arguments,
     output_dir: str,
-    use_template: Literal[None, "object", "style", "naked"] = None,
     placeholder_tokens: str = "<s>",
     placeholder_token_at_data: Optional[str] = None,
     initializer_tokens: Optional[str] = None,
-    seed: int = 42,
-    resolution: int = 512,
-    color_jitter: bool = True,
-    train_batch_size: int = 1,
-    max_train_steps_ti: int = 1000,
-    save_steps: int = 100,
-    gradient_accumulation_steps: int = 4,
-    clip_ti_decay: bool = True,
-    learning_rate_ti: float = 5e-4,
-    scale_lr: bool = False,
-    lr_scheduler: str = "linear",
-    lr_warmup_steps: int = 0,
-    weight_decay_ti: float = 0.00,
     device="cuda:0",
-    extra_args: Optional[dict] = None,
 ):
-    torch.manual_seed(seed)
+    torch.manual_seed(args.seed)
     
     if output_dir is not None:
         output_dir = output_dir.replace(" ", "-")
@@ -301,25 +285,24 @@ def ti_component(
     print("Initializer Tokens", initializer_tokens)
 
     text_encoder, vae, unet, tokenizer, placeholder_token_ids = get_models(
-        pretrained_model_name_or_path,
+        args.sd_version,
         placeholder_tokens,
         initializer_tokens,
         device=device,
     )
-    noise_scheduler = DDPMScheduler.from_config(pretrained_model_name_or_path, subfolder="scheduler")
-    ti_lr = learning_rate_ti * gradient_accumulation_steps * train_batch_size if scale_lr else learning_rate_ti
+    noise_scheduler = DDPMScheduler.from_config(args.sd_version, subfolder="scheduler")
+    ti_lr = args.fmn_lr_ti * args.fmn_gradient_accumulation_steps * args.fmn_train_batch_size if args.fmn_scale_lr else args.fmn_lr_ti
     
     train_dataset = FMNPivotalTuningDataset(
-        instance_data_root=instance_data_dir,
+        instance_data_root=args.instance_data_dir,
         token_map=token_map,
-        use_template=use_template,
+        use_template=args.fmn_concept_type,
         tokenizer=tokenizer,
-        size=resolution,
-        color_jitter=color_jitter
+        size=args.image_size,
     )
 
     train_dataset.blur_amount = 20
-    train_dataloader = text2img_dataloader(train_dataset, train_batch_size, tokenizer)
+    train_dataloader = text2img_dataloader(train_dataset, args.fmn_train_batch_size, tokenizer)
     index_no_updates = torch.arange(len(tokenizer)) != placeholder_token_ids[0]
 
     for tok_id in placeholder_token_ids:
@@ -340,14 +323,14 @@ def ti_component(
     ti_optimizer = optim.AdamW(
         text_encoder.get_input_embeddings().parameters(),
         lr=ti_lr,
-        weight_decay=weight_decay_ti,
+        weight_decay=args.fmn_weight_decay_ti,
     )
 
     lr_scheduler = get_scheduler(
         lr_scheduler,
         optimizer=ti_optimizer,
-        num_warmup_steps=lr_warmup_steps,
-        num_training_steps=max_train_steps_ti,
+        num_warmup_steps=args.fmn_lr_warmup_steps_ti,
+        num_training_steps=args.fmn_max_train_steps_ti,
     )
 
     train_inversion(
@@ -355,17 +338,17 @@ def ti_component(
         vae=vae,
         text_encoder=text_encoder,
         dataloader=train_dataloader,
-        num_steps=max_train_steps_ti,
+        num_steps=args.fmn_max_train_steps_ti,
         scheduler=noise_scheduler,
         index_no_updates=index_no_updates,
         optimizer=ti_optimizer,
-        save_steps=save_steps,
+        save_steps=args.fmn_save_steps_ti,
         placeholder_tokens=placeholder_tokens,
         placeholder_token_ids=placeholder_token_ids,
         save_path=output_dir,
         lr_scheduler=lr_scheduler,
-        accum_iter=gradient_accumulation_steps,
-        clip_ti_decay=clip_ti_decay,
+        accum_iter=args.fmn_gradient_accumulation_steps,
+        clip_ti_decay=args.clip_ti_decay,
     )
 
     del ti_optimizer
