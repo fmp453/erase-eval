@@ -493,7 +493,6 @@ class FMNPivotalTuningDataset(Dataset):
         use_template: Optional[str]=None,
         size: int=512,
         h_flip: bool=True,
-        color_jitter: bool=False,
         resize: bool=True,
         blur_amount: int=70,
     ):
@@ -524,9 +523,7 @@ class FMNPivotalTuningDataset(Dataset):
                 transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR)
                 if resize
                 else transforms.Lambda(lambda x: x),
-                transforms.ColorJitter(0.1, 0.1)
-                if color_jitter
-                else transforms.Lambda(lambda x: x),
+                transforms.Lambda(lambda x: x),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
             ]

@@ -6,7 +6,7 @@ import os
 import re
 import math
 import itertools
-from typing import Optional, Literal, Any, Union
+from typing import Optional, Any, Union
 from pathlib import Path
 
 import torch
@@ -23,8 +23,10 @@ from accelerate.utils import set_seed
 from safetensors.torch import safe_open
 from tqdm import trange
 
+from train_methods import train_utils
 from train_methods.lora_save import save_all
 from train_methods.data import ForgetMeNotDataset, FMNPivotalTuningDataset
+from utils import Arguments
 
 EMBED_FLAG = "<embed>"
 
@@ -250,30 +252,14 @@ def train_inversion(
                 return
 
 def ti_component(
-    instance_data_dir: str,
-    pretrained_model_name_or_path: str,
+    args: Arguments,
     output_dir: str,
-    use_template: Literal[None, "object", "style", "naked"] = None,
     placeholder_tokens: str = "<s>",
     placeholder_token_at_data: Optional[str] = None,
     initializer_tokens: Optional[str] = None,
-    seed: int = 42,
-    resolution: int = 512,
-    color_jitter: bool = True,
-    train_batch_size: int = 1,
-    max_train_steps_ti: int = 1000,
-    save_steps: int = 100,
-    gradient_accumulation_steps: int = 4,
-    clip_ti_decay: bool = True,
-    learning_rate_ti: float = 5e-4,
-    scale_lr: bool = False,
-    lr_scheduler: str = "linear",
-    lr_warmup_steps: int = 0,
-    weight_decay_ti: float = 0.00,
     device="cuda:0",
-    extra_args: Optional[dict] = None,
 ):
-    torch.manual_seed(seed)
+    torch.manual_seed(args.seed)
     
     if output_dir is not None:
         output_dir = output_dir.replace(" ", "-")
@@ -299,25 +285,24 @@ def ti_component(
     print("Initializer Tokens", initializer_tokens)
 
     text_encoder, vae, unet, tokenizer, placeholder_token_ids = get_models(
-        pretrained_model_name_or_path,
+        args.sd_version,
         placeholder_tokens,
         initializer_tokens,
         device=device,
     )
-    noise_scheduler = DDPMScheduler.from_config(pretrained_model_name_or_path, subfolder="scheduler")
-    ti_lr = learning_rate_ti * gradient_accumulation_steps * train_batch_size if scale_lr else learning_rate_ti
+    noise_scheduler = DDPMScheduler.from_config(args.sd_version, subfolder="scheduler")
+    ti_lr = args.fmn_lr_ti * args.fmn_gradient_accumulation_steps * args.fmn_train_batch_size if args.fmn_scale_lr else args.fmn_lr_ti
     
     train_dataset = FMNPivotalTuningDataset(
-        instance_data_root=instance_data_dir,
+        instance_data_root=args.instance_data_dir,
         token_map=token_map,
-        use_template=use_template,
+        use_template=args.fmn_concept_type,
         tokenizer=tokenizer,
-        size=resolution,
-        color_jitter=color_jitter
+        size=args.image_size,
     )
 
     train_dataset.blur_amount = 20
-    train_dataloader = text2img_dataloader(train_dataset, train_batch_size, tokenizer)
+    train_dataloader = text2img_dataloader(train_dataset, args.fmn_train_batch_size, tokenizer)
     index_no_updates = torch.arange(len(tokenizer)) != placeholder_token_ids[0]
 
     for tok_id in placeholder_token_ids:
@@ -338,14 +323,14 @@ def ti_component(
     ti_optimizer = optim.AdamW(
         text_encoder.get_input_embeddings().parameters(),
         lr=ti_lr,
-        weight_decay=weight_decay_ti,
+        weight_decay=args.fmn_weight_decay_ti,
     )
 
     lr_scheduler = get_scheduler(
         lr_scheduler,
         optimizer=ti_optimizer,
-        num_warmup_steps=lr_warmup_steps,
-        num_training_steps=max_train_steps_ti,
+        num_warmup_steps=args.fmn_lr_warmup_steps_ti,
+        num_training_steps=args.fmn_max_train_steps_ti,
     )
 
     train_inversion(
@@ -353,17 +338,17 @@ def ti_component(
         vae=vae,
         text_encoder=text_encoder,
         dataloader=train_dataloader,
-        num_steps=max_train_steps_ti,
+        num_steps=args.fmn_max_train_steps_ti,
         scheduler=noise_scheduler,
         index_no_updates=index_no_updates,
         optimizer=ti_optimizer,
-        save_steps=save_steps,
+        save_steps=args.fmn_save_steps_ti,
         placeholder_tokens=placeholder_tokens,
         placeholder_token_ids=placeholder_token_ids,
         save_path=output_dir,
         lr_scheduler=lr_scheduler,
-        accum_iter=gradient_accumulation_steps,
-        clip_ti_decay=clip_ti_decay,
+        accum_iter=args.fmn_gradient_accumulation_steps,
+        clip_ti_decay=args.clip_ti_decay,
     )
 
     del ti_optimizer
@@ -441,40 +426,17 @@ def collate_fn(examples):
     return batch
 
 def attn_component(
-    instance_data_dir: str,
-    seed: int,
+    args: Arguments,
     output_dir: str,
-    pretrained_model_name_or_path: str,
     multi_concept: list[str],
-    scale_lr: bool,
-    learning_rate: float,
-    gradient_accumulation_steps: int,
-    train_batch_size: int,
-    only_optimize_ca: bool,
-    resolution: int,
-    center_crop: bool,
-    use_pooler: bool,
-    dataloader_num_workers: int,
-    max_train_steps: int,
-    num_train_epochs: int,
-    lr_scheduler: str,
-    lr_warmup_steps: int,
-    lr_num_cycles: int,
-    lr_power: float,
-    no_real_image: bool,
-    max_grad_norm: float,
     device: str="cuda:0"
 ):
 
     output_dir = output_dir.replace(" ", "-")
-    if seed is not None:
-        set_seed(seed)
+    if args.seed is not None:
+        set_seed(args.seed)
 
-    noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_name_or_path, subfolder="scheduler")
-    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(pretrained_model_name_or_path, subfolder="tokenizer")
-    text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(pretrained_model_name_or_path, subfolder="text_encoder")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(pretrained_model_name_or_path, subfolder="unet")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(pretrained_model_name_or_path, subfolder="vae")
+    tokenizer, text_encoder, vae, unet, _, noise_scheduler = train_utils.get_models(args)
     
     tok_idx = 1
     multi_concepts = []
@@ -561,11 +523,11 @@ def attn_component(
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     
-    if scale_lr:
-        learning_rate = learning_rate * gradient_accumulation_steps * train_batch_size
+    if args.fmn_scale_lr:
+        learning_rate = args.fmn_lr_attn * args.fmn_gradient_accumulation_steps * args.fmn_train_batch_size
 
     # Optimizer creation
-    if only_optimize_ca:
+    if args.only_optimize_ca:
         params_to_optimize = (itertools.chain([p for n, p in unet.named_parameters() if 'attn2' in n]))
         print("only optimize cross attention...")
     else:
@@ -580,24 +542,24 @@ def attn_component(
 
     train_dataset = ForgetMeNotDataset(
         tokenizer=tokenizer,
-        size=resolution,
-        center_crop=center_crop,
-        use_pooler=use_pooler,
+        size=args.image_size,
+        center_crop=args.center_crop,
+        use_pooler=args.use_pooler,
         multi_concept=multi_concept,
-        data_dir=instance_data_dir
+        data_dir=args.instance_data_dir
     )
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=train_batch_size,
+        batch_size=args.fmn_train_batch_size,
         shuffle=True,
         collate_fn=lambda examples: collate_fn(examples),
-        num_workers=dataloader_num_workers,
+        num_workers=args.fmn_dataloader_num_workers,
     )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.fmn_gradient_accumulation_steps)
     if max_train_steps is None:
         max_train_steps = num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -605,10 +567,10 @@ def attn_component(
     lr_scheduler = get_scheduler(
         lr_scheduler,
         optimizer=optimizer,
-        num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps,
-        num_training_steps=max_train_steps * gradient_accumulation_steps,
-        num_cycles=lr_num_cycles,
-        power=lr_power,
+        num_warmup_steps=args.fmn_lr_warmup_steps_attn * args.fmn_gradient_accumulation_steps,
+        num_training_steps=max_train_steps * args.fmn_gradient_accumulation_steps,
+        num_cycles=args.fmn_lr_num_cycles_attn,
+        power=args.fmn_lr_power_attn,
     )
 
     unet.to(device)
@@ -616,7 +578,7 @@ def attn_component(
     text_encoder.to(device)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.fmn_gradient_accumulation_steps)
     if overrode_max_train_steps:
         max_train_steps = num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -649,10 +611,7 @@ def attn_component(
             timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
             timesteps = timesteps.long()
 
-            if no_real_image:
-                noisy_latents = noise_scheduler.add_noise(torch.zeros_like(noise), noise, timesteps)
-            else:
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
             with torch.no_grad():
                 text_embedding = text_encoder(batch["input_ids"].to(text_encoder.device))[0]
@@ -663,7 +622,7 @@ def attn_component(
             loss = attn_controller.loss()
 
             loss.backward()
-            clip_grad_norm_(parameters=params_to_optimize, max_norm=max_grad_norm)
+            clip_grad_norm_(parameters=params_to_optimize, max_norm=args.max_grad_norm)
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad(set_to_none=False)
