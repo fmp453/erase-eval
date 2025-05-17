@@ -242,10 +242,7 @@ def main(args: Arguments):
 
     optimizer = optim.AdamW(
         params_to_optimize,
-        lr=args.doco_lr,
-        betas=(0.9, 0.999),
-        weight_decay=1e-2,
-        eps=1e-8,
+        lr=args.doco_lr
     )
 
     discriminator, criterion, optimizer_D = init_discriminator(lr=args.doco_dlr)
