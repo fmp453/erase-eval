@@ -71,8 +71,8 @@ class MACEDataset(Dataset):
                      
             erased_concept = c.replace("-", " ")
             sampled_indices = random.sample(range(0, 30), 30)
-            self.instance_prompt.append(prompt_augmentation(erased_concept, augment=True, sampled_indices=sampled_indices, concept_type=t))
-            self.target_prompt.append(prompt_augmentation(mapping_concept, augment=True, sampled_indices=sampled_indices, concept_type=t))
+            self.instance_prompt.append(prompt_augmentation(erased_concept, sampled_indices=sampled_indices, concept_type=t))
+            self.target_prompt.append(prompt_augmentation(mapping_concept, sampled_indices=sampled_indices, concept_type=t))
                 
             self.num_instance_images += len(single_concept_images_path)
             
@@ -456,11 +456,9 @@ class ForgetMeNotDataset(Dataset):
 
     def __getitem__(self, index):
         example = {}
-        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
+        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images]).convert("RGB")
         instance_prompt, target_tokens = self.instance_prompt[index % self.num_instance_images]
 
-        if not instance_image.mode == "RGB":
-            instance_image = instance_image.convert("RGB")
         example["instance_prompt"] = instance_prompt
         example["instance_images"] = self.image_transforms(instance_image)
 
@@ -492,14 +490,9 @@ class FMNPivotalTuningDataset(Dataset):
         token_map: Optional[dict]=None,
         use_template: Optional[str]=None,
         size: int=512,
-        h_flip: bool=True,
-        resize: bool=True,
-        blur_amount: int=70,
     ):
         self.size = size
         self.tokenizer = tokenizer
-        self.resize = resize
-
         self.instance_data_root = Path(instance_data_root)
         if not self.instance_data_root.exists():
             raise ValueError("Instance images root doesn't exists.")
@@ -517,28 +510,21 @@ class FMNPivotalTuningDataset(Dataset):
             self.templates = ["a photo of {}"]
 
         self._length = self.num_instance_images
-        self.h_flip = h_flip
         self.image_transforms = transforms.Compose(
             [
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR)
-                if resize
-                else transforms.Lambda(lambda x: x),
+                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
                 transforms.Lambda(lambda x: x),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
 
-        self.blur_amount = blur_amount
-
     def __len__(self):
         return self._length
 
     def __getitem__(self, index):
         example = {}
-        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
-        if not instance_image.mode == "RGB":
-            instance_image = instance_image.convert("RGB")
+        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images]).convert("RGB")
         example["instance_images"] = self.image_transforms(instance_image)
 
         if self.use_template:
@@ -551,7 +537,7 @@ class FMNPivotalTuningDataset(Dataset):
                 for token, value in self.token_map.items():
                     text = text.replace(token, value)
         
-        if self.h_flip and random.random() > 0.5:
+        if random.random() > 0.5:
             hflip = transforms.RandomHorizontalFlip(p=1)
             example["instance_images"] = hflip(example["instance_images"])
             
@@ -619,4 +605,3 @@ class SalUnDataset(Dataset):
     def __getitem__(self, idx) -> torch.Tensor:
         example = self.dataset[idx]
         return example["image"] if not self.transform else self.transform(example["image"])
-
