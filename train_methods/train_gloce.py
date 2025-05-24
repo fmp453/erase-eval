@@ -723,9 +723,7 @@ def prepare_text_embedding_token(
     n_avail_tokens=8,
     n_anchor_concepts=5
 ):
-    # Prepare for text embedding token
     prompt_scripts_path = config.scripts_file
-
 
     prompt_scripts_df = pd.read_csv(prompt_scripts_path)
     prompt_scripts_list: list[str] = prompt_scripts_df['prompt'].to_list()
@@ -744,7 +742,6 @@ def prepare_text_embedding_token(
         emb_cache = torch.load(f"{emb_cache_path}/{emb_cache_fn}", map_location=torch.device(text_encoder.device))
         
     else:
-        # Prepare for sel basis simWords
         print("compute text emb cache...")
 
         ##################### compute concept embeddings ####################
@@ -942,6 +939,108 @@ def get_module_name_type(find_module_name: str) -> tuple[str, str]:
         case _:
             return "Linear", "mlp.fc"
 
+def get_modules_list(
+    unet: UNet2DConditionModel,
+    text_encoder: CLIPTextModel,
+    find_module_name: str,
+    module_name: str,
+    module_type: str
+) -> tuple[dict[str, nn.Module], list[str]]:
+    org_modules = dict()
+    module_name_list = []
+    return_ok = False
+
+    match find_module_name:
+        case "unet_ca_out":
+            return_ok = True
+            for n, m in unet.named_modules():
+                if m.__class__.__name__ == module_type:
+                    if (module_name + ".to_out" in n):
+                        module_name_list.append(n)
+                        org_modules[n] = m
+
+        case "unet_ca_kv":
+            return_ok = True
+            for n, m in unet.named_modules():
+                if m.__class__.__name__ == module_type:
+                    if (module_name + ".to_k" in n) or (module_name + ".to_v" in n):
+                        module_name_list.append(n)
+                        org_modules[n] = m
+
+        case "unet_ca_v":
+            return_ok = True
+            for n, m in unet.named_modules():
+                if m.__class__.__name__ == module_type:
+                    if (module_name + ".to_v" in n):
+                        module_name_list.append(n)
+                        org_modules[n] = m
+                        
+
+        case "unet_sa_out":
+            return_ok = True
+            for n, m in unet.named_modules():
+                if m.__class__.__name__ == module_type:
+                    if (module_name + ".to_out" in n):
+                        module_name_list.append(n)
+                        org_modules[n] = m
+        case _:
+            pass
+
+    if "unet" in find_module_name and not return_ok:
+        for n, m in unet.named_modules():
+            if m.__class__.__name__ == module_type:
+                if module_name == "misc":
+                    if ("attn1" not in n) and ("attn2" not in n):
+                        module_name_list.append(n)
+                        org_modules[n] = m
+                elif module_name in ["attn1", "attn2"]: 
+                    if module_name in n:
+                        module_name_list.append(n)
+                        org_modules[n] = m
+                else:
+                    module_name_list.append(n)
+                    org_modules[n] = m
+    else:
+        for n, m in text_encoder.named_modules():
+            if m.__class__.__name__ == module_type:       
+                if module_name in n:
+                    module_name_list.append(n)
+                    org_modules[n] = m
+
+    return org_modules, module_name_list
+
+def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules: dict[str, nn.Module]):
+    
+    if os.path.isfile(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt"):
+        print("load precomputed svd for original models ....")
+
+        param_vh_cache_dict = torch.load(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt", map_location=torch.device(device)) 
+        param_s_cache_dict = torch.load(f"{param_cache_path}/s_cache_dict_{find_module_name}.pt", map_location=torch.device(device))
+
+    else:
+        print("compute svd for original models ....")
+
+        param_vh_cache_dict = dict()
+        param_s_cache_dict = dict()
+
+        for k, m in org_modules.items():
+            if m.__class__.__name__ == "Linear":
+                U,S,Vh = torch.linalg.svd(m.weight, full_matrices=False) 
+                param_vh_cache_dict[k] = Vh.detach().cpu()
+                param_s_cache_dict[k] = S.detach().cpu()        
+
+            elif m.__class__.__name__ == "Conv2d":
+                module_weight_flatten = m.weight.view(m.weight.size(0), -1)
+
+                U, S, Vh = torch.linalg.svd(module_weight_flatten, full_matrices=False) 
+                param_vh_cache_dict[k] = Vh.detach().cpu()
+                param_s_cache_dict[k] = S.detach().cpu()                
+
+        os.makedirs(param_cache_path, exist_ok=True)
+        torch.save(param_vh_cache_dict, f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt")
+        torch.save(param_s_cache_dict, f"{param_cache_path}/s_cache_dict_{find_module_name}.pt")
+
+    return param_vh_cache_dict, param_s_cache_dict
 
 def train(
     config: RootConfig,
@@ -950,8 +1049,7 @@ def train(
     prompts_update: list[PromptSettings],
     args,
 ):
-    
-    ########################################################   
+
     ################### Setup for GLoCE #####################
 
     n_target_concepts = args.n_target_concepts
@@ -973,7 +1071,6 @@ def train(
     surrogate = [prompts_target[0].neutral]
     updates = [prompt.target for prompt in prompts_update]
 
-
     # targets_fn = [prompt.target.replace(" ", "_") for prompt in prompts_target]
     # anchors_fn = [prompt.target.replace(" ", "_") for prompt in prompts_anchor]
 
@@ -982,12 +1079,6 @@ def train(
     emb_cache_path = f"{args.emb_cache_path}/{targets[0].replace(' ', '_')}"
     register_buffer_path = f"{args.buffer_path}/{targets[0].replace(' ', '_')}"
     emb_cache_fn = args.emb_cache_fn
-
-    if os.path.isfile(f"{save_path}/ckpt.safetensors"):
-        print(f"ckpt for {tar_concept_idx}-{targets[0]} exists")
-        return
-
-    ################### Setup for GLoCE #####################
         
     model_metadata = {
         "prompts": ",".join([prompt.target for prompt in prompts_target]),
@@ -1010,7 +1101,7 @@ def train(
     
     pipe.safety_checker = None
 
-    ############################## register org modules ################################              
+    ############# register org modules ############
     module_types = []
     module_names = []
     org_modules_all = []
@@ -1020,10 +1111,8 @@ def train(
     
     for find_module_name in args.find_module_name:
         module_name, module_type = get_module_name_type(find_module_name)            
-        org_modules, module_name_list = get_modules_list(unet, text_encoder, \
-                                                    find_module_name, module_name, module_type)
-        param_vh_cache_dict, param_s_cache_dict = load_model_sv_cache(find_module_name, \
-                                                    param_cache_path, DEVICE_CUDA, org_modules)
+        org_modules, module_name_list = get_modules_list(unet, text_encoder, find_module_name, module_name, module_type)
+        param_vh_cache_dict, param_s_cache_dict = load_model_sv_cache(find_module_name, param_cache_path, DEVICE_CUDA, org_modules)
 
         module_names.append(module_name)
         module_types.append(module_type)
@@ -1031,13 +1120,10 @@ def train(
         module_name_list_all.append(module_name_list)
         param_vh_cache_dict_all.append(param_vh_cache_dict)
         param_s_cache_dict_all.append(param_s_cache_dict)
-    ############################## register org modules ################################              
     
     ################### Prepare network ####################
-
     network = GLoCENetworkOutProp(
         unet,
-        # text_encoder,
         multiplier=1.0,
         alpha=config.network.alpha,
         module=GLoCELayerOutProp,
@@ -1071,14 +1157,21 @@ def train(
         for network_name in network_modules.keys():
             if name == network_name:
                 unet_modules[name] = module   
-    ################### Prepare network ####################
-    ############### Prepare for text embedding token ###################
-    
-    emb_cache = prepare_text_embedding_token(args, config, prompts_target, prompts_anchor, prompts_update, \
-                                        tokenizer, text_encoder,
-                                        emb_cache_path, emb_cache_fn,
-                                        n_avail_tokens=n_avail_tokens,
-                                        n_anchor_concepts=n_anchor_concepts)
+
+    ############### Prepare for text embedding token ###################    
+    emb_cache = prepare_text_embedding_token(
+        args,
+        config,
+        prompts_target,
+        prompts_anchor,
+        prompts_update,
+        tokenizer,
+        text_encoder,                                
+        emb_cache_path,
+        emb_cache_fn,
+        n_avail_tokens=n_avail_tokens,
+        n_anchor_concepts=n_anchor_concepts
+    )
 
     embeddings_surrogate_sel_base = emb_cache["embeddings_surrogate_sel_base"]
     embeddings_target_sel_base = emb_cache["embeddings_target_sel_base"]
@@ -1113,31 +1206,41 @@ def train(
         updates = prmpt_scripts_upd
 
     
-    target_selected = prmpt_scripts_tar[len_prmpts_list-1::len_prmpts_list]
+    target_selected = prmpt_scripts_tar[len_prmpts_list -1 :: len_prmpts_list]
     print("target concept:", target_selected)
     
-    anchor_selected = prmpt_scripts_anc[len_prmpts_list-1::len_prmpts_list]
+    anchor_selected = prmpt_scripts_anc[len_prmpts_list -1 :: len_prmpts_list]
     print("anchor concept:", anchor_selected)
 
-    surrogate_selected = prmpt_scripts_sur[len_prmpts_list-1::len_prmpts_list]
+    surrogate_selected = prmpt_scripts_sur[len_prmpts_list -1 :: len_prmpts_list]
     print("surrogate concept:", surrogate_selected)
         
-    neutral_selected = prmpt_scripts_upd[len_prmpts_list-1::len_prmpts_list]
+    neutral_selected = prmpt_scripts_upd[len_prmpts_list -1 :: len_prmpts_list]
     print("neutral concept:", neutral_selected)
 
     ############### Prepare for text embedding token ###################
 
     ################# Compute register buffer for surrogate concept for erasing #################
 
-    register_buffer_fn = "stacked_surrogate.pt"
-    register_func = "register_sum_buffer_avg_spatial"
+    # register_buffer_fn = "stacked_surrogate.pt"
+    # register_func = "register_sum_buffer_avg_spatial"
 
-    buffer_sel_basis_surrogate = get_registered_buffer(args, module_name_list_all, \
-                            org_modules_all, st_timestep, end_timestep, n_avail_tokens, \
-                            surrogate, embeddings_surrogate_sel_base, embedding_unconditional, \
-                            pipe, DEVICE_CUDA, register_buffer_path, register_buffer_fn, register_func)
-    
-    ################# Compute register buffer for surrogate concept for erasing #################
+    buffer_sel_basis_surrogate = get_registered_buffer(
+        args,
+        module_name_list_all,
+        org_modules_all,
+        st_timestep,
+        end_timestep,
+        n_avail_tokens,
+        surrogate,
+        embeddings_surrogate_sel_base,
+        embedding_unconditional,
+        pipe,
+        DEVICE_CUDA,
+        register_buffer_path,
+        register_buffer_fn="stacked_surrogate.pt",
+        register_func="register_sum_buffer_avg_spatial"
+    )
 
     #################### Compute principal components for surrogate concept ######################
 
@@ -1163,18 +1266,27 @@ def train(
         gloce_module.lora_degen.weight.data = Vh_sur[:degen_rank].T.contiguous()
         gloce_module.bias.weight.data = stacked_buffer_surrogate_mean.unsqueeze(0).clone().contiguous()  
 
-    #################### Compute principal components for surrogate concept ######################
     ################# Compute registder buffer for target concept for erasing #################
 
-    register_buffer_fn = "stacked_target.pt"
-    register_func = "register_sum_buffer_avg_spatial"
+    # register_buffer_fn = "stacked_target.pt"
+    # register_func = "register_sum_buffer_avg_spatial"
 
-    buffer_sel_basis_target = get_registered_buffer(args, module_name_list_all, \
-                            org_modules_all, st_timestep, end_timestep, n_avail_tokens, \
-                            targets, embeddings_target_sel_base, embedding_unconditional, \
-                            pipe, DEVICE_CUDA, register_buffer_path, register_buffer_fn, register_func)
-
-    ################# Compute registder buffer for target concept for erasing #################
+    buffer_sel_basis_target = get_registered_buffer(
+        args,
+        module_name_list_all,
+        org_modules_all,
+        st_timestep,
+        end_timestep,
+        n_avail_tokens,
+        targets,
+        embeddings_target_sel_base,
+        embedding_unconditional,
+        pipe,
+        DEVICE_CUDA,
+        register_buffer_path,
+        register_buffer_fn="stacked_target.pt",
+        register_func="register_sum_buffer_avg_spatial"
+    )
 
     #################### Compute principal components for target concept ######################
 
@@ -1209,18 +1321,27 @@ def train(
         gloce_module.lora_update.weight.data = ( Vh_sur@(torch.eye(dim_emb).to(DEVICE_CUDA)-Vh_upd.T@Vh_upd) ).T.contiguous()
         gloce_module.debias.weight.data = target_mean.unsqueeze(0).unsqueeze(0).clone().contiguous()  
     
-    #################### Compute principal components for target concept ######################
     #################### Compute register buffer for surrogate for gate #######################
 
-    register_buffer_fn = "stacked_gate.pt"
-    register_func = "register_sum_buffer_avg_spatial"
+    # register_buffer_fn = "stacked_gate.pt"
+    # register_func = "register_sum_buffer_avg_spatial"
 
-    buffer_sel_basis_gate = get_registered_buffer(args, module_name_list_all, \
-                            org_modules_all, st_timestep, end_timestep, n_avail_tokens, \
-                            updates, embeddings_update_sel_base, embedding_unconditional, \
-                            pipe, DEVICE_CUDA, register_buffer_path, register_buffer_fn, register_func)
-    
-    #################### Compute register buffer for surrogate for gate #######################
+    buffer_sel_basis_gate = get_registered_buffer(
+        args,
+        module_name_list_all,
+        org_modules_all,
+        st_timestep,
+        end_timestep,
+        n_avail_tokens,
+        updates,
+        embeddings_update_sel_base,
+        embedding_unconditional,
+        pipe,
+        DEVICE_CUDA,
+        register_buffer_path,
+        register_buffer_fn="stacked_gate.pt",
+        register_func="register_sum_buffer_avg_spatial"
+    )
     
     #################### Compute principal components of surrogate for gate ######################
 
@@ -1237,23 +1358,19 @@ def train(
         n_sum_per_forward = buffer_sel_basis_gate[gloce_module.find_name][gloce_module.gloce_org_name]['n_sum_per_forward']
         n_sum = n_forward*n_sum_per_forward
 
-        stacked_buffer_gate = buffer_sel_basis_gate[gloce_module.find_name][gloce_module.gloce_org_name]['data'] / n_sum
+        # stacked_buffer_gate = buffer_sel_basis_gate[gloce_module.find_name][gloce_module.gloce_org_name]['data'] / n_sum
         stacked_buffer_gate_mean = buffer_sel_basis_gate[gloce_module.find_name][gloce_module.gloce_org_name]["data_mean"] / n_sum
         # stacked_buffer_gate_cov = stacked_buffer_gate - stacked_buffer_gate_mean.T @ stacked_buffer_gate_mean
-        
-        
         
         stacked_buffer_rel_mean = target_mean_dict[gloce_module.find_name][gloce_module.gloce_org_name] \
                                     - stacked_buffer_gate_mean
         stacked_buffer_rel_cov = target_cov_dict[gloce_module.find_name][gloce_module.gloce_org_name] \
                                     + stacked_buffer_rel_mean.T @ stacked_buffer_rel_mean
                 
-        _,S_tar,Vh_gate = torch.linalg.svd(stacked_buffer_rel_cov, full_matrices=False)
+        _, _, Vh_gate = torch.linalg.svd(stacked_buffer_rel_cov, full_matrices=False)
         rel_gate_dict[gloce_module.find_name][gloce_module.gloce_org_name] = Vh_gate[:gate_rank]
         gate_mean_dict[gloce_module.find_name][gloce_module.gloce_org_name] = stacked_buffer_gate_mean
-        
-        
-    #################### Compute principal components of surrogate for gate ######################
+
 
     ############## Compute registder buffer for discriminative basis for erasing ##############
 
@@ -1278,7 +1395,6 @@ def train(
                             rel_gate_dict=rel_gate_dict, \
                             target_mean_dict=target_mean_dict, gate_mean_dict=gate_mean_dict)
 
-    ############## Compute registder buffer for discriminative basis for erasing ##############
     ############## Compute discriminative basis for erasing ##############
  
     for gloce_module in network.gloce_layers:        
@@ -1316,8 +1432,6 @@ def train(
 
 
         print(f"{importance_anc_stack.max().item():10.5f}, {imp_center.item():10.5f}, {importance_tgt_stack.min().item():10.5f}, {importance_tgt_stack.max().item():10.5f}")
-        ########### Determine parameters in logistic function ############
-
         
         Vh_gate = rel_gate_dict[gloce_module.find_name][gloce_module.gloce_org_name]
         gate_mean = gate_mean_dict[gloce_module.find_name][gloce_module.gloce_org_name]
@@ -1331,18 +1445,13 @@ def train(
         gloce_module.selector.imp_slope = imp_slope
 
     ############## Compute discriminative basis for erasing ##############
-    ######################################################################   
-    
 
     print("saving gloce parameters...")
     save_path = Path(f"{save_path}")            
     save_path.mkdir(parents=True, exist_ok=True)
-    network.save_weights(
-        save_path / f"ckpt.safetensors",
-        metadata=model_metadata,
-    )
-
+    network.save_weights(save_path / f"ckpt.safetensors", metadata=model_metadata)
     print("Done.")
+
 
 
 def main(args):
@@ -1390,7 +1499,6 @@ if __name__ == "__main__":
     parser.add_argument("--p_val", type=float, default=-1)
     parser.add_argument("--find_module_name", type=str, default="unet_ca")
 
-
     parser.add_argument('--n_target_concepts', type=int, default=1, help="Number of target concepts")
     parser.add_argument('--n_anchor_concepts', type=int, default=5, help="Number of anchor concepts")
     parser.add_argument('--tar_concept_idx', type=int, default=0, help="Target concept index")
@@ -1407,10 +1515,6 @@ if __name__ == "__main__":
     parser.add_argument("--last_layer", type=str, default="")
     parser.add_argument("--opposite_for_map", type=bool, default=False)
     parser.add_argument("--thresh", type=float, default=1.5)
+    args = parser.parse_args()        
 
-
-
-
-    args = parser.parse_args()
-        
     main(args)
