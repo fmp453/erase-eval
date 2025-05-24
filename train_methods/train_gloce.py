@@ -1,8 +1,6 @@
 # GLoCE: Localized Concept Erasure for Text-to-Image Diffusion Models Using Training-Free Gated Low-Rank Adaptation
 # https://github.com/Hyun1A/GLoCE/tree/main
 
-import argparse
-import gc
 import os
 import math
 import random
@@ -168,10 +166,8 @@ class InferenceConfig(BaseModel):
     num_inference_steps: int = 20
     guidance_scale: float = 7.5
     seeds: list[int] = None    
-    # precision: str = "float32"
 
-class TrainConfig(BaseModel):    
-    precision: str = "float32"
+class TrainConfig(BaseModel):
     noise_scheduler: Literal["ddim", "ddpm", "lms", "euler_a"] = "ddim"
 
     iterations: int = 3000
@@ -203,7 +199,6 @@ class TrainConfig(BaseModel):
     swap_iteration: int = 1500
     erase_scale: float = 1.
     
-    #########################################
     ########### For adv memory ##############
     num_stages: int = 10
     iterations_adv: int = 1000
@@ -222,7 +217,6 @@ class TrainConfig(BaseModel):
     factor_init_lr_cycle: int = 1
     do_adv_learn: bool = False
     ########### For adv memory ##############
-    #########################################
     
     st_prompt_idx: int = 0
     end_prompt_idx: int = 100000000
@@ -238,34 +232,12 @@ class SaveConfig(BaseModel):
     precision: str = "float32"
     stage_interval: int = 1
 
-class LoggingConfig(BaseModel):
-    use_wandb: bool = False
-    project_name: str = "proposed_method"
-    run_name: str = None
-    verbose: bool = False
-    
-    interval: int = 50
-    prompts: list[str] = []
-    negative_prompt: str = "bad anatomy,watermark,extra digit,signature,worst quality,jpeg artifacts,normal quality,low quality,long neck,lowres,error,blurry,missing fingers,fewer digits,missing arms,text,cropped,Humpbacked,bad hands,username"
-    # negative_prompt: str = ""    
-    anchor_prompt: str = ""
-    width: int = 512
-    height: int = 512
-    num_inference_steps: int = 50
-    guidance_scale: float = 7.5
-    seed: int = None
-    generate_num: int = 1
-    eval_num: int = 10
-    stage_interval: int = 1
-    gen_init_img: bool = False
-
 class PretrainedModelConfig(BaseModel):
     name_or_path: str
     safetensor: Optional[list[str] | str] = None
     v2: bool = False
     v_pred: bool = False
     clip_skip: Optional[int] = None
-
 
 class NetworkConfig(BaseModel):
     rank: int = 1
@@ -276,20 +248,11 @@ class NetworkConfig(BaseModel):
     hidden_size: int = 128
     init_size: int = 16
 
-
 class RootConfig(BaseModel):
-    prompts_file: Optional[str] = None
-    scripts_file: Optional[str] = None
-    replace_word: Optional[str] = None
-    prompts_file_target: Optional[str] = None   
-    prompts_file_anchor: Optional[str] = None   
-    prompts_file_update: Optional[str] = None
-
     pretrained_model: PretrainedModelConfig
     network: Optional[NetworkConfig] = None
     train: Optional[TrainConfig] = None
     save: Optional[SaveConfig] = None
-    logging: Optional[LoggingConfig] = None
     inference: Optional[InferenceConfig] = None
 
 def seed_everything(seed: int):
@@ -606,7 +569,7 @@ class GLoCENetworkOutProp(nn.Module):
 
 @torch.no_grad()
 def get_registered_buffer(
-    args,
+    args: Arguments,
     module_name_list_all,
     org_modules_all,
     st_timestep,
@@ -664,15 +627,15 @@ def get_registered_buffer(
             if step % 10 == 0:
                 print(f"{step}/{len(embs_batch)}")
 
-            for seed in range(args.n_generation_per_concept):
-                for find_module_name, module_name_list, org_modules in zip(args.gloce_method, module_name_list_all, org_modules_all):
+            for seed in range(args.num_images_per_prompt):
+                for find_module_name, module_name_list in zip(args.gloce_method, module_name_list_all):
                     for n in module_name_list:
                         if "seed" in registered_buffer[find_module_name][n].keys():
                             registered_buffer[find_module_name][n]["seed"] = seed
 
-                if len(embs.size())==4:
-                    B,C,T,D = embs.size()
-                    embs = embs.reshape(B*C,T,D)
+                if len(embs.size()) == 4:
+                    B, C, T, D = embs.size()
+                    embs = embs.reshape(B * C, T, D)
 
                 if "save_path" in kwargs.keys():
                     save_path = f"{kwargs['save_path']}/seed_{seed}"
@@ -692,11 +655,11 @@ def get_registered_buffer(
                     save_path=save_path
                 )
 
-                for find_module_name, module_name_list, org_modules in zip(args.gloce_method, module_name_list_all, org_modules_all):
+                for find_module_name, module_name_list in zip(args.gloce_method, module_name_list_all):
                     for n in module_name_list:
                         registered_buffer[find_module_name][n]["t"] = 0
 
-        for find_module_name, module_name_list, org_modules in zip(args.gloce_method, module_name_list_all, org_modules_all):
+        for find_module_name, module_name_list in zip(args.gloce_method, module_name_list_all):
             for n in module_name_list:
                 registered_buffer[find_module_name][n]["t"] = 0
 
@@ -710,18 +673,16 @@ def get_registered_buffer(
 
 @torch.no_grad()
 def prepare_text_embedding_token(
-    args,
-    config,
+    args: Arguments,
     prompts_target: list[PromptSettings],
     prompts_surround: list[PromptSettings],
     prompts_update: list[PromptSettings],
     tokenizer: CLIPTokenizer,
     text_encoder: CLIPTextModel,
     emb_cache_path,
-    emb_cache_fn,
     n_avail_tokens=8,
     n_anchor_concepts=5
-):
+) -> dict[str, torch.Tensor]:
     prompt_scripts_path = config.scripts_file
 
     prompt_scripts_df = pd.read_csv(prompt_scripts_path)
@@ -736,9 +697,9 @@ def prepare_text_embedding_token(
         prmpt_temp_sel_base = replace_word
 
     prompt_scripts_list.append(prmpt_temp_sel_base)
-    if args.use_emb_cache and os.path.isfile(f"{emb_cache_path}/{emb_cache_fn}"):
+    if args.gloce_use_emb_cache and os.path.isfile(f"{emb_cache_path}/{args.gloce_emb_cache_fn}"):
         print("load pre-computed text emb cache...")
-        emb_cache = torch.load(f"{emb_cache_path}/{emb_cache_fn}", map_location=torch.device(text_encoder.device))
+        emb_cache = torch.load(f"{emb_cache_path}/{args.gloce_emb_cache_fn}", map_location=torch.device(text_encoder.device))
         
     else:
         print("compute text emb cache...")
@@ -784,7 +745,7 @@ def prepare_text_embedding_token(
         ).mean(dim=2)
 
         similarity = similarity.mean(dim=0)
-        val_sorted, ind_sorted = similarity.sort()
+        _, ind_sorted = similarity.sort()
         ind_sorted_list = ind_sorted.cpu().numpy().tolist()
         
         simWords_anchor = [simWords_surround[sim_idx] for sim_idx in ind_sorted_list[-n_anchor_concepts:]]
@@ -908,7 +869,7 @@ def prepare_text_embedding_token(
         }
 
         os.makedirs(emb_cache_path, exist_ok=True)
-        torch.save(emb_cache, f"{emb_cache_path}/{emb_cache_fn}")
+        torch.save(emb_cache, f"{emb_cache_path}/{args.gloce_emb_cache_fn}")
 
     return emb_cache
 
@@ -1040,32 +1001,26 @@ def train(
     args: Arguments,
 ):
 
-    ################### Setup for GLoCE #####################
-
-    n_target_concepts = args.n_target_concepts
-    tar_concept_idx = args.tar_concept_idx
-    n_anchor_concepts = args.n_anchor_concepts
+    n_target_concepts = args.gloce_n_target_concepts
+    tar_concept_idx = args.gloce_tar_concept_idx
+    n_anchor_concepts = args.gloce_n_anchor_concepts
     st_timestep = args.gloce_start_timestep
     end_timestep = args.gloce_end_timestep
-    n_avail_tokens = args.n_tokens
-    # eta = args.eta
-    # lamb = args.lamb
-    update_rank = args.update_rank
-    gate_rank = args.gate_rank
-    degen_rank = args.degen_rank
+    n_avail_tokens = args.gloce_n_tokens
+    update_rank = args.gloce_update_rank
+    gate_rank = args.gloce_gate_rank
+    degen_rank = args.gloce_degen_rank
 
-    prompts_target = prompts_target[tar_concept_idx:tar_concept_idx+n_target_concepts]
+    prompts_target = prompts_target[tar_concept_idx:tar_concept_idx + n_target_concepts]
 
     targets = [prompt.target for prompt in prompts_target]
     anchors = [prompt.target for prompt in prompts_anchor]
     surrogate = [prompts_target[0].neutral]
     updates = [prompt.target for prompt in prompts_update]
 
-    save_path = f"{args.save_path}/{targets[0].replace(' ', '_')}"     
-    param_cache_path = args.param_cache_path 
-    emb_cache_path = f"{args.emb_cache_path}/{targets[0].replace(' ', '_')}"
-    register_buffer_path = f"{args.buffer_path}/{targets[0].replace(' ', '_')}"
-    emb_cache_fn = args.emb_cache_fn
+    save_path = f"{args.save_dir}/{targets[0].replace(' ', '_')}"
+    emb_cache_path = f"{args.gloce_emb_cache_path}/{targets[0].replace(' ', '_')}"
+    register_buffer_path = f"{args.gloce_buffer_path}/{targets[0].replace(' ', '_')}"
         
     model_metadata = {
         "prompts": ",".join([prompt.target for prompt in prompts_target]),
@@ -1081,14 +1036,12 @@ def train(
     text_encoder.to(DEVICE_CUDA)
     text_encoder.requires_grad_(False)
     text_encoder.eval()
-
     unet.to(DEVICE_CUDA)
     unet.requires_grad_(False)
     unet.eval()
-    
     pipe.safety_checker = None
 
-    ############# register org modules ############
+    # register org modules
     module_types = []
     module_names = []
     org_modules_all = []
@@ -1099,7 +1052,7 @@ def train(
     for find_module_name in args.gloce_method:
         module_name, module_type = get_module_name_type(find_module_name)            
         org_modules, module_name_list = get_modules_list(unet, text_encoder, find_module_name, module_name, module_type)
-        param_vh_cache_dict, param_s_cache_dict = load_model_sv_cache(find_module_name, param_cache_path, DEVICE_CUDA, org_modules)
+        param_vh_cache_dict, param_s_cache_dict = load_model_sv_cache(find_module_name, args.gloce_param_cache_path, DEVICE_CUDA, org_modules)
 
         module_names.append(module_name)
         module_types.append(module_type)
@@ -1120,7 +1073,7 @@ def train(
         org_modules_all=org_modules_all,
         module_name_list_all=module_name_list_all,
         find_module_names = args.gloce_method,
-        last_layer=args.last_layer,
+        last_layer=args.gloce_last_layer,
     ).to(DEVICE_CUDA)
 
     print("gate rank of netowrk:" , config.network.init_size)
@@ -1143,17 +1096,15 @@ def train(
             if name == network_name:
                 unet_modules[name] = module   
 
-    ############### Prepare for text embedding token ###################    
+    # Prepare for text embedding token
     emb_cache = prepare_text_embedding_token(
         args,
-        config,
         prompts_target,
         prompts_anchor,
         prompts_update,
         tokenizer,
-        text_encoder,                                
+        text_encoder,
         emb_cache_path,
-        emb_cache_fn,
         n_avail_tokens=n_avail_tokens,
         n_anchor_concepts=n_anchor_concepts
     )
@@ -1204,7 +1155,7 @@ def train(
         register_func="register_sum_buffer_avg_spatial"
     )
 
-    #################### Compute principal components for surrogate concept ######################
+    # Compute principal components for surrogate concept
 
     Vh_sur_dict = dict()
     surrogate_mean_dict = dict()
@@ -1228,7 +1179,7 @@ def train(
         gloce_module.lora_degen.weight.data = Vh_sur[:degen_rank].T.contiguous()
         gloce_module.bias.weight.data = stacked_buffer_surrogate_mean.unsqueeze(0).clone().contiguous()  
 
-    ################# Compute registder buffer for target concept for erasing #################
+    # Compute registder buffer for target concept for erasing
 
     buffer_sel_basis_target = get_registered_buffer(
         args,
@@ -1247,7 +1198,7 @@ def train(
         register_func="register_sum_buffer_avg_spatial"
     )
 
-    #################### Compute principal components for target concept ######################
+    # Compute principal components for target concept
 
     target_mean_dict: dict[str, dict[str, nn.Module]] = dict()
     target_cov_dict = dict()
@@ -1280,7 +1231,7 @@ def train(
         gloce_module.lora_update.weight.data = (Vh_sur @ (torch.eye(dim_emb).to(DEVICE_CUDA)- Vh_upd.T @ Vh_upd)).T.contiguous()
         gloce_module.debias.weight.data = target_mean.unsqueeze(0).unsqueeze(0).clone().contiguous()  
     
-    #################### Compute register buffer for surrogate for gate #######################
+    # Compute register buffer for surrogate for gate
 
     buffer_sel_basis_gate = get_registered_buffer(
         args,
@@ -1299,7 +1250,7 @@ def train(
         register_func="register_sum_buffer_avg_spatial"
     )
     
-    #################### Compute principal components of surrogate for gate ######################
+    # Compute principal components of surrogate for gate
 
     Vh_gate_dict: dict[str, dict[str, dict[str, nn.Module]]] = dict()
     gate_mean_dict = dict()
@@ -1322,7 +1273,7 @@ def train(
         rel_gate_dict[gloce_module.find_name][gloce_module.gloce_org_name] = Vh_gate[:gate_rank]
         gate_mean_dict[gloce_module.find_name][gloce_module.gloce_org_name] = stacked_buffer_gate_mean
 
-    ############## Compute registder buffer for discriminative basis for erasing ##############
+    # Compute registder buffer for discriminative basis for erasing
     buffer_norm_basis_target = get_registered_buffer(
         args,
         module_name_list_all,
@@ -1363,26 +1314,17 @@ def train(
         gate_mean_dict=gate_mean_dict
     )
 
-    ############## Compute discriminative basis for erasing ##############
+    # Compute discriminative basis for erasing
  
-    for gloce_module in network.gloce_layers:        
-        n_forward_tar = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['n_forward']
-        n_forward_anc = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['n_forward']
-        n_sum_tar = n_forward_tar
-        n_sum_anc = n_forward_anc
-
-        # importance_tgt = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['data_max'] / n_sum_tar
-        # importance_anc = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['data_max'] / n_sum_anc
-
+    for gloce_module in network.gloce_layers:
         importance_tgt_stack = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['data_stack']
         importance_anc_stack = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['data_stack']
         importance_tgt_stack = torch.cat([imp.unsqueeze(0) for imp in importance_tgt_stack], dim=0)
         importance_anc_stack = torch.cat([imp.unsqueeze(0) for imp in importance_anc_stack], dim=0)
 
-        ########### Determine parameters in logistic function ############
+        # Determine parameters in logistic function
 
-        tol1 = args.thresh
-
+        tol1 = args.gloce_thresh
         x_center = importance_anc_stack.mean() + tol1 * importance_anc_stack.std()     
         tol2 = 0.001 * tol1
 
@@ -1390,7 +1332,7 @@ def train(
         C_right = torch.log(1 / (1 / c_right - 1))
 
         imp_center = x_center
-        imp_slope = C_right/tol2
+        imp_slope = C_right / tol2
 
         print(f"{importance_anc_stack.max().item():10.5f}, {imp_center.item():10.5f}, {importance_tgt_stack.min().item():10.5f}, {importance_tgt_stack.max().item():10.5f}")
         
@@ -1430,37 +1372,5 @@ def main(args: Arguments):
     args.gloce_method = args.gloce_method.split(",")
 
     seed_everything(args.seed)
-    train(prompts_target, prompts_anchor, prompts_update, args)
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--config_file", required=True, help="Config file for training.")
-    parser.add_argument("--st_prompt_idx", type=int, default=-1)
-    parser.add_argument("--end_prompt_idx", type=int, default=-1)
-    parser.add_argument("--update_rank", type=int, default=-1)
-    parser.add_argument("--degen_rank", type=int, default=-1)
-    parser.add_argument("--gate_rank", type=int, default=-1)
-    parser.add_argument("--n_tokens", type=int, default=-1)
-    parser.add_argument("--eta", type=float, default=-1)
-    parser.add_argument("--lamb", type=float, default=-1)
-    parser.add_argument("--lamb2", type=float, default=-1)
-    parser.add_argument("--p_val", type=float, default=-1)
-
-    parser.add_argument('--n_target_concepts', type=int, default=1, help="Number of target concepts")
-    parser.add_argument('--n_anchor_concepts', type=int, default=5, help="Number of anchor concepts")
-    parser.add_argument('--tar_concept_idx', type=int, default=0, help="Target concept index")
-    parser.add_argument('--n_generation_per_concept', type=int, default=3, help="End timestep")
-    parser.add_argument('--sel_basis_buffer_fn', action='store_true', help="Select basis buffer function")
-    parser.add_argument('--param_cache_path', type=str, default="./importance_cache/org_comps/sd_v1.4", help="Path to parameter cache")
-    parser.add_argument('--emb_cache_path', type=str, default="./importance_cache/text_embs/sd_v1.4", help="Path to embedding cache")
-    parser.add_argument('--emb_cache_fn', type=str, default="text_emb_cache_w_sel_base_chris_evans_anchor5.pt", help="Embedding cache file name")
-    parser.add_argument("--buffer_path", type=str, default="./importance_cache/buffers")
-    parser.add_argument("--use_emb_cache", type=bool, default=True)
-    parser.add_argument("--save_path", type=str, default="./output")
-    parser.add_argument("--last_layer", type=str, default="")
-    parser.add_argument("--opposite_for_map", type=bool, default=False)
-    parser.add_argument("--thresh", type=float, default=1.5)
-    args = parser.parse_args()        
-
-    main(args)
+    train(args=args)
+    # train(prompts_target, prompts_anchor, prompts_update, args)
