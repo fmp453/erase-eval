@@ -19,6 +19,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import StableDiffusionPipeline, UNet2DConditionModel
 from safetensors.torch import save_file
 
+from utils import Arguments
 from train_methods.train_utils import get_condition
 
 ACTION_TYPES = Literal["erase", "erase_with_la"]
@@ -603,7 +604,6 @@ class GLoCENetworkOutProp(nn.Module):
             gloce_layer.multiplier = 0
             gloce_layer.use_prompt_tuning = False
 
-
 @torch.no_grad()
 def get_registered_buffer(
     args,
@@ -665,7 +665,7 @@ def get_registered_buffer(
                 print(f"{step}/{len(embs_batch)}")
 
             for seed in range(args.n_generation_per_concept):
-                for find_module_name, module_name_list, org_modules in zip(args.find_module_name, module_name_list_all, org_modules_all):
+                for find_module_name, module_name_list, org_modules in zip(args.gloce_method, module_name_list_all, org_modules_all):
                     for n in module_name_list:
                         if "seed" in registered_buffer[find_module_name][n].keys():
                             registered_buffer[find_module_name][n]["seed"] = seed
@@ -692,11 +692,11 @@ def get_registered_buffer(
                     save_path=save_path
                 )
 
-                for find_module_name, module_name_list, org_modules in zip(args.find_module_name, module_name_list_all, org_modules_all):
+                for find_module_name, module_name_list, org_modules in zip(args.gloce_method, module_name_list_all, org_modules_all):
                     for n in module_name_list:
                         registered_buffer[find_module_name][n]["t"] = 0
 
-        for find_module_name, module_name_list, org_modules in zip(args.find_module_name, module_name_list_all, org_modules_all):
+        for find_module_name, module_name_list, org_modules in zip(args.gloce_method, module_name_list_all, org_modules_all):
             for n in module_name_list:
                 registered_buffer[find_module_name][n]["t"] = 0
 
@@ -707,7 +707,6 @@ def get_registered_buffer(
         hook.remove()
 
     return registered_buffer
-
 
 @torch.no_grad()
 def prepare_text_embedding_token(
@@ -913,7 +912,6 @@ def prepare_text_embedding_token(
 
     return emb_cache
 
-
 def get_module_name_type(find_module_name: str) -> tuple[str, str]:
     match find_module_name:
         case  "unet_ca":
@@ -929,10 +927,10 @@ def get_module_name_type(find_module_name: str) -> tuple[str, str]:
         case "unet_sa":
             return "Linear", "attn1"
         case "unet_conv2d":
-            return "Conv2d", "conv2d"           
+            return "Conv2d", "conv2d"
         case "unet_misc":
             return "Linear", "misc"
-        case "te_attn":        
+        case "te_attn":
             return "Linear", "self_attn"
         case _:
             return "Linear", "mlp.fc"
@@ -953,7 +951,7 @@ def get_modules_list(
             return_ok = True
             for n, m in unet.named_modules():
                 if m.__class__.__name__ == module_type:
-                    if (module_name + ".to_out" in n):
+                    if f"{module_name}.to_out" in n:
                         module_name_list.append(n)
                         org_modules[n] = m
 
@@ -961,7 +959,7 @@ def get_modules_list(
             return_ok = True
             for n, m in unet.named_modules():
                 if m.__class__.__name__ == module_type:
-                    if (module_name + ".to_k" in n) or (module_name + ".to_v" in n):
+                    if f"{module_name}.to_k" in n or f"{module_name}.to_v" in n:
                         module_name_list.append(n)
                         org_modules[n] = m
 
@@ -969,7 +967,7 @@ def get_modules_list(
             return_ok = True
             for n, m in unet.named_modules():
                 if m.__class__.__name__ == module_type:
-                    if (module_name + ".to_v" in n):
+                    if f"{module_name}.to_v" in n:
                         module_name_list.append(n)
                         org_modules[n] = m
                         
@@ -978,7 +976,7 @@ def get_modules_list(
             return_ok = True
             for n, m in unet.named_modules():
                 if m.__class__.__name__ == module_type:
-                    if (module_name + ".to_out" in n):
+                    if f"{module_name}.to_out" in n:
                         module_name_list.append(n)
                         org_modules[n] = m
         case _:
@@ -1008,16 +1006,10 @@ def get_modules_list(
     return org_modules, module_name_list
 
 def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules: dict[str, nn.Module]):
-    
     if os.path.isfile(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt"):
-        print("load precomputed svd for original models ....")
-
         param_vh_cache_dict = torch.load(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt", map_location=torch.device(device)) 
         param_s_cache_dict = torch.load(f"{param_cache_path}/s_cache_dict_{find_module_name}.pt", map_location=torch.device(device))
-
     else:
-        print("compute svd for original models ....")
-
         param_vh_cache_dict = dict()
         param_s_cache_dict = dict()
 
@@ -1041,11 +1033,11 @@ def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules:
     return param_vh_cache_dict, param_s_cache_dict
 
 def train(
-    config: RootConfig,
+    # config: RootConfig,
     prompts_target: list[PromptSettings],
     prompts_anchor: list[PromptSettings],
     prompts_update: list[PromptSettings],
-    args,
+    args: Arguments,
 ):
 
     ################### Setup for GLoCE #####################
@@ -1053,8 +1045,8 @@ def train(
     n_target_concepts = args.n_target_concepts
     tar_concept_idx = args.tar_concept_idx
     n_anchor_concepts = args.n_anchor_concepts
-    st_timestep = args.st_timestep
-    end_timestep = args.end_timestep
+    st_timestep = args.gloce_start_timestep
+    end_timestep = args.gloce_end_timestep
     n_avail_tokens = args.n_tokens
     # eta = args.eta
     # lamb = args.lamb
@@ -1068,9 +1060,6 @@ def train(
     anchors = [prompt.target for prompt in prompts_anchor]
     surrogate = [prompts_target[0].neutral]
     updates = [prompt.target for prompt in prompts_update]
-
-    # targets_fn = [prompt.target.replace(" ", "_") for prompt in prompts_target]
-    # anchors_fn = [prompt.target.replace(" ", "_") for prompt in prompts_anchor]
 
     save_path = f"{args.save_path}/{targets[0].replace(' ', '_')}"     
     param_cache_path = args.param_cache_path 
@@ -1107,7 +1096,7 @@ def train(
     param_vh_cache_dict_all = []
     param_s_cache_dict_all = []
     
-    for find_module_name in args.find_module_name:
+    for find_module_name in args.gloce_method:
         module_name, module_type = get_module_name_type(find_module_name)            
         org_modules, module_name_list = get_modules_list(unet, text_encoder, find_module_name, module_name, module_type)
         param_vh_cache_dict, param_s_cache_dict = load_model_sv_cache(find_module_name, param_cache_path, DEVICE_CUDA, org_modules)
@@ -1118,8 +1107,7 @@ def train(
         module_name_list_all.append(module_name_list)
         param_vh_cache_dict_all.append(param_vh_cache_dict)
         param_s_cache_dict_all.append(param_s_cache_dict)
-    
-    ################### Prepare network ####################
+
     network = GLoCENetworkOutProp(
         unet,
         multiplier=1.0,
@@ -1131,7 +1119,7 @@ def train(
         n_concepts=1,
         org_modules_all=org_modules_all,
         module_name_list_all=module_name_list_all,
-        find_module_names = args.find_module_name,
+        find_module_names = args.gloce_method,
         last_layer=args.last_layer,
     ).to(DEVICE_CUDA)
 
@@ -1185,12 +1173,7 @@ def train(
     prmpt_scripts_anc = emb_cache["prmpt_scripts_anc"]
     prmpt_scripts_upd = emb_cache["prmpt_scripts_upd"]    
     
-    prompt_scripts_path = config.scripts_file
-    prompt_scripts_df = pd.read_csv(prompt_scripts_path)
-    prompt_scripts_list = prompt_scripts_df['prompt'].to_list()
-    len_prmpts_list = len(prompt_scripts_list) + 1
-
-    use_prompt = args.find_module_name in ["unet_ca_v", "unet_ca_out"]
+    use_prompt = args.gloce_method in ["unet_ca_v", "unet_ca_out"]
     if config.replace_word == "artist" and use_prompt:
         embeddings_surrogate_sel_base = embeddings_surrogate_cache
         embeddings_target_sel_base = embeddings_target_cache
@@ -1225,7 +1208,7 @@ def train(
 
     Vh_sur_dict = dict()
     surrogate_mean_dict = dict()
-    for find_name in args.find_module_name:
+    for find_name in args.gloce_method:
         Vh_sur_dict[find_name] = dict()
         surrogate_mean_dict[find_name] = dict()
 
@@ -1269,7 +1252,7 @@ def train(
     target_mean_dict: dict[str, dict[str, nn.Module]] = dict()
     target_cov_dict = dict()
     Vh_tar_dict = dict()
-    for find_name in args.find_module_name:
+    for find_name in args.gloce_method:
         target_mean_dict[find_name] = dict()
         Vh_tar_dict[find_name] = dict()
         target_cov_dict[find_name] = dict()
@@ -1321,7 +1304,7 @@ def train(
     Vh_gate_dict: dict[str, dict[str, dict[str, nn.Module]]] = dict()
     gate_mean_dict = dict()
     rel_gate_dict = dict()
-    for find_name in args.find_module_name:
+    for find_name in args.gloce_method:
         Vh_gate_dict[find_name] = dict()
         gate_mean_dict[find_name] = dict()
         rel_gate_dict[find_name] = dict()
@@ -1388,8 +1371,8 @@ def train(
         n_sum_tar = n_forward_tar
         n_sum_anc = n_forward_anc
 
-        importance_tgt = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['data_max'] / n_sum_tar
-        importance_anc = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['data_max'] / n_sum_anc
+        # importance_tgt = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['data_max'] / n_sum_tar
+        # importance_anc = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['data_max'] / n_sum_anc
 
         importance_tgt_stack = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['data_stack']
         importance_anc_stack = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['data_stack']
@@ -1430,34 +1413,24 @@ def train(
     print("Done.")
 
 
-def main(args):
-    config_file = args.config_file
-
-    config = config_pkg.load_config_from_yaml(config_file)
+def main(args: Arguments):
         
-    prompts_target = prompt_pkg.load_prompts_from_yaml(config.prompts_file_target)
-    prompts_anchor = prompt_pkg.load_prompts_from_yaml(config.prompts_file_anchor)
-    prompts_update = prompt_pkg.load_prompts_from_yaml(config.prompts_file_update)
+    # prompts_target = prompt_pkg.load_prompts_from_yaml(config.prompts_file_target)
+    # prompts_anchor = prompt_pkg.load_prompts_from_yaml(config.prompts_file_anchor)
+    # prompts_update = prompt_pkg.load_prompts_from_yaml(config.prompts_file_update)
     
-    if args.gate_rank != -1:
-        config.network.init_size = args.gate_rank
-        config.network.hidden_size = args.gate_rank
-        config.network.continual_rank = args.gate_rank
+    # if args.gate_rank != -1:
+    #     config.network.init_size = args.gate_rank
+    #     config.network.hidden_size = args.gate_rank
+    #     config.network.continual_rank = args.gate_rank
             
-    if args.update_rank != -1:
-        config.network.rank = args.update_rank     
-
-    base_logging_prompts = config.logging.prompts
+    # if args.update_rank != -1:
+    #     config.network.rank = args.update_rank
     
-    for p_idx, p in enumerate(prompts_target):
-        config.logging.prompts = [prompt.replace('[target]', p.target) if '[target]' in prompt else prompt for prompt in base_logging_prompts]
-    
-    args.find_module_name = args.find_module_name.split(",")
-    if args.find_module_name.__class__ == str:
-        args.find_module_name = [args.find_module_name]
+    args.gloce_method = args.gloce_method.split(",")
 
-    seed_everything(config.train.train_seed)        
-    train(config, prompts_target, prompts_anchor, prompts_update, args)
+    seed_everything(args.seed)
+    train(prompts_target, prompts_anchor, prompts_update, args)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -1473,13 +1446,10 @@ if __name__ == "__main__":
     parser.add_argument("--lamb", type=float, default=-1)
     parser.add_argument("--lamb2", type=float, default=-1)
     parser.add_argument("--p_val", type=float, default=-1)
-    parser.add_argument("--find_module_name", type=str, default="unet_ca")
 
     parser.add_argument('--n_target_concepts', type=int, default=1, help="Number of target concepts")
     parser.add_argument('--n_anchor_concepts', type=int, default=5, help="Number of anchor concepts")
     parser.add_argument('--tar_concept_idx', type=int, default=0, help="Target concept index")
-    parser.add_argument('--st_timestep', type=int, default=10, help="Start timestep")
-    parser.add_argument('--end_timestep', type=int, default=20, help="End timestep")
     parser.add_argument('--n_generation_per_concept', type=int, default=3, help="End timestep")
     parser.add_argument('--sel_basis_buffer_fn', action='store_true', help="Select basis buffer function")
     parser.add_argument('--param_cache_path', type=str, default="./importance_cache/org_comps/sd_v1.4", help="Path to parameter cache")

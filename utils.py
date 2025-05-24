@@ -25,7 +25,7 @@ def get_args():
 class Arguments(BaseModel):
     
     mode: Literal["train", "infer"] = Field("train", description="train or infer")
-    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "original"] = Field("esd")
+    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "original"] = Field("esd")
     sd_version: Optional[str] = Field("compvis/stable-diffusion-v1-4")
     device: Optional[str] = Field("0", description="gpu id. when using two gpus, separated by comma")
     seed: Optional[int] = Field(0)
@@ -227,6 +227,11 @@ class Arguments(BaseModel):
     age_lamda: Optional[float] = Field(1.0)
     gumbel_topk: Optional[int] = Field(5, description="number of top-k values in the soft gumbel softmax to be considered")
 
+    # configs for GLoCE
+    gloce_method: Literal["unet_ca", "unet_ca_kv", "unet_ca_v", "unet_ca_ou,", "unet_sa_out","unet_sa", "unet_conv2d", "unet_misc", "te_attn"] = Field("unet_ca")
+    gloce_start_timestep: Optional[int] = Field(10, description="Start timestep")
+    gloce_end_timestep: Optional[int] = Field(20, description="End timestep")
+    
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
     images_dir: Optional[str] = Field("gen-images")
