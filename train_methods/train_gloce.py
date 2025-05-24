@@ -300,10 +300,6 @@ def seed_everything(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
 
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
-
 class ParamModule(nn.Module):
     def __init__(self, size):
         super(ParamModule, self).__init__()
@@ -656,13 +652,13 @@ def get_registered_buffer(
     else:
         print(f"compute registered_buffer for original models ... {register_buffer_path}/{register_buffer_fn}")
         for batch_idx in range(int(math.ceil(float(len_embs_batch)/embs_batchsize))):
-            if embs_batchsize*(batch_idx+1) <= len_embs_batch:
-                embs_batch.append(embeddings[embs_batchsize*batch_idx:embs_batchsize*(batch_idx+1)])
-                prompts_batch.append(prompts[embs_batchsize*batch_idx:embs_batchsize*(batch_idx+1)])
+            if embs_batchsize * (batch_idx + 1) <= len_embs_batch:
+                embs_batch.append(embeddings[embs_batchsize * batch_idx : embs_batchsize * (batch_idx + 1)])
+                prompts_batch.append(prompts[embs_batchsize * batch_idx : embs_batchsize * (batch_idx + 1)])
             
             else:
-                embs_batch.append(embeddings[embs_batchsize*batch_idx:])
-                prompts_batch.append(prompts[embs_batchsize*batch_idx:])
+                embs_batch.append(embeddings[embs_batchsize * batch_idx:])
+                prompts_batch.append(prompts[embs_batchsize * batch_idx:])
 
         for step, (embs, prompts) in enumerate(zip(embs_batch, prompts_batch)):
             if step % 10 == 0:
@@ -923,6 +919,30 @@ def prepare_text_embedding_token(
     return emb_cache
 
 
+def get_module_name_type(find_module_name: str) -> tuple[str, str]:
+    match find_module_name:
+        case  "unet_ca":
+            return "Linear", "attn2"
+        case "unet_ca_kv":
+            return "Linear", "attn2"
+        case "unet_ca_v":
+            return "Linear", "attn2"
+        case "unet_ca_out":
+            return "Linear", "attn2"
+        case "unet_sa_out":
+            return "Linear", "attn1"
+        case "unet_sa":
+            return "Linear", "attn1"
+        case "unet_conv2d":
+            return "Conv2d", "conv2d"           
+        case "unet_misc":
+            return "Linear", "misc"
+        case "te_attn":        
+            return "Linear", "self_attn"
+        case _:
+            return "Linear", "mlp.fc"
+
+
 def train(
     config: RootConfig,
     prompts_target: list[PromptSettings],
@@ -969,10 +989,6 @@ def train(
 
     ################### Setup for GLoCE #####################
         
-    metadata = {
-        "prompts": ",".join([prompt.model_dump_json() for prompt in prompts_target]),
-        "config": config.model_dump_json(),
-    }
     model_metadata = {
         "prompts": ",".join([prompt.target for prompt in prompts_target]),
         "rank": str(config.network.rank),
@@ -1314,8 +1330,6 @@ def train(
         gloce_module.selector.imp_center = imp_center
         gloce_module.selector.imp_slope = imp_slope
 
-        print()
-
     ############## Compute discriminative basis for erasing ##############
     ######################################################################   
     
@@ -1327,8 +1341,6 @@ def train(
         save_path / f"ckpt.safetensors",
         metadata=model_metadata,
     )
-
-    flush()
 
     print("Done.")
 
