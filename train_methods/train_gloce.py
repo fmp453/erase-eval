@@ -7,7 +7,7 @@ import os
 import math
 import random
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional, Literal, Any
 
 import numpy as np
 import pandas as pd
@@ -621,7 +621,7 @@ def get_registered_buffer(
     register_buffer_fn,
     register_func,
     **kwargs
-):
+) -> dict[str, Any]:
 
     registered_buffer = dict()
     hooks = []
@@ -778,13 +778,15 @@ def prepare_text_embedding_token(
         embeddings_target_norm = embeddings_target_sel_base / embeddings_target_sel_base.norm(2, dim=-1, keepdim=True)
         embeddings_surround_norm = embeddings_surround_sel_base / embeddings_surround_sel_base.norm(2, dim=-1, keepdim=True)
 
-        similarity = torch.einsum("ijk,njk->inj", embeddings_target_norm[:, 1:(1 + n_avail_tokens), :],
-                                    embeddings_surround_norm[:, 1:(1 + n_avail_tokens), :]).mean(dim=2)
+        similarity = torch.einsum(
+            "ijk,njk->inj", 
+            embeddings_target_norm[:, 1:(1 + n_avail_tokens), :],
+            embeddings_surround_norm[:, 1:(1 + n_avail_tokens), :]
+        ).mean(dim=2)
 
         similarity = similarity.mean(dim=0)
         val_sorted, ind_sorted = similarity.sort()
         ind_sorted_list = ind_sorted.cpu().numpy().tolist()
-        
         
         simWords_anchor = [simWords_surround[sim_idx] for sim_idx in ind_sorted_list[-n_anchor_concepts:]]
         embeddings_anchor_sel_base = embeddings_surround_sel_base[ind_sorted_list[-n_anchor_concepts:]]
@@ -811,7 +813,6 @@ def prepare_text_embedding_token(
                 pr_in_script_sur = pr_in_script_sur.replace(replace_word.lower(), simWord)
                 prmpt_scripts_sur.append(pr_in_script_sur)
                 
-                
         len_surrogate = len(prmpt_scripts_sur)
         text_encode_batch = 100
         prmpt_scripts_sur_batch = [
@@ -819,14 +820,12 @@ def prepare_text_embedding_token(
             for batch_idx in range(int(math.ceil(float(len_surrogate) / text_encode_batch)))
         ]
 
-        
         for prmpt_batch in prmpt_scripts_sur_batch:
             embeddings_sur = get_condition(prmpt_batch, tokenizer, text_encoder)
             embeddings_surrogate_cache.append(embeddings_sur)
 
         embeddings_surrogate_cache = torch.cat(embeddings_surrogate_cache, dim=0)        
-        
-                                              
+
         # Prepare for target token cache
         embeddings_target_cache = []
         prmpt_scripts_tar = []
@@ -880,7 +879,6 @@ def prepare_text_embedding_token(
                 pr_in_script_upd = prompt_script.replace(replace_word, simWord)
                 prmpt_scripts_upd.append(pr_in_script_upd)
 
-                
         len_update = len(prmpt_scripts_upd)
         text_encode_batch = 100
         prmpt_scripts_upd_batch = [
@@ -1140,10 +1138,9 @@ def train(
     print("gate rank of netowrk:" , config.network.init_size)
 
     network.eval()    
-    
-    with torch.no_grad():
-        embedding_unconditional = get_condition([""], tokenizer, text_encoder)
-    
+
+    embedding_unconditional = get_condition([""], tokenizer, text_encoder)
+
     network_modules = dict()
     for name, module in network.named_modules():
         if "GLoCELayer" in module.__class__.__name__:
@@ -1193,8 +1190,8 @@ def train(
     prompt_scripts_list = prompt_scripts_df['prompt'].to_list()
     len_prmpts_list = len(prompt_scripts_list) + 1
 
-    use_prompt = ("unet_ca_v" in args.find_module_name) or ("unet_ca_outv" in args.find_module_name)
-    if config.replace_word == "artist" and use_prompt : 
+    use_prompt = args.find_module_name in ["unet_ca_v", "unet_ca_out"]
+    if config.replace_word == "artist" and use_prompt:
         embeddings_surrogate_sel_base = embeddings_surrogate_cache
         embeddings_target_sel_base = embeddings_target_cache
         embeddings_anchor_sel_base = embeddings_anchor_cache
@@ -1205,25 +1202,7 @@ def train(
         anchors = prmpt_scripts_anc
         updates = prmpt_scripts_upd
 
-    
-    target_selected = prmpt_scripts_tar[len_prmpts_list -1 :: len_prmpts_list]
-    print("target concept:", target_selected)
-    
-    anchor_selected = prmpt_scripts_anc[len_prmpts_list -1 :: len_prmpts_list]
-    print("anchor concept:", anchor_selected)
-
-    surrogate_selected = prmpt_scripts_sur[len_prmpts_list -1 :: len_prmpts_list]
-    print("surrogate concept:", surrogate_selected)
-        
-    neutral_selected = prmpt_scripts_upd[len_prmpts_list -1 :: len_prmpts_list]
-    print("neutral concept:", neutral_selected)
-
-    ############### Prepare for text embedding token ###################
-
     ################# Compute register buffer for surrogate concept for erasing #################
-
-    # register_buffer_fn = "stacked_surrogate.pt"
-    # register_func = "register_sum_buffer_avg_spatial"
 
     buffer_sel_basis_surrogate = get_registered_buffer(
         args,
@@ -1268,9 +1247,6 @@ def train(
 
     ################# Compute registder buffer for target concept for erasing #################
 
-    # register_buffer_fn = "stacked_target.pt"
-    # register_func = "register_sum_buffer_avg_spatial"
-
     buffer_sel_basis_target = get_registered_buffer(
         args,
         module_name_list_all,
@@ -1290,7 +1266,7 @@ def train(
 
     #################### Compute principal components for target concept ######################
 
-    target_mean_dict: dict[str, torch.Tensor] = dict()
+    target_mean_dict: dict[str, dict[str, nn.Module]] = dict()
     target_cov_dict = dict()
     Vh_tar_dict = dict()
     for find_name in args.find_module_name:
@@ -1318,13 +1294,10 @@ def train(
         dim_emb = Vh_upd.size(1)
 
         Vh_sur = Vh_sur_dict[gloce_module.find_name][gloce_module.gloce_org_name][:degen_rank] # hxd        
-        gloce_module.lora_update.weight.data = ( Vh_sur@(torch.eye(dim_emb).to(DEVICE_CUDA)-Vh_upd.T@Vh_upd) ).T.contiguous()
+        gloce_module.lora_update.weight.data = (Vh_sur @ (torch.eye(dim_emb).to(DEVICE_CUDA)- Vh_upd.T @ Vh_upd)).T.contiguous()
         gloce_module.debias.weight.data = target_mean.unsqueeze(0).unsqueeze(0).clone().contiguous()  
     
     #################### Compute register buffer for surrogate for gate #######################
-
-    # register_buffer_fn = "stacked_gate.pt"
-    # register_func = "register_sum_buffer_avg_spatial"
 
     buffer_sel_basis_gate = get_registered_buffer(
         args,
@@ -1345,7 +1318,7 @@ def train(
     
     #################### Compute principal components of surrogate for gate ######################
 
-    Vh_gate_dict = dict()
+    Vh_gate_dict: dict[str, dict[str, dict[str, nn.Module]]] = dict()
     gate_mean_dict = dict()
     rel_gate_dict = dict()
     for find_name in args.find_module_name:
@@ -1358,42 +1331,54 @@ def train(
         n_sum_per_forward = buffer_sel_basis_gate[gloce_module.find_name][gloce_module.gloce_org_name]['n_sum_per_forward']
         n_sum = n_forward*n_sum_per_forward
 
-        # stacked_buffer_gate = buffer_sel_basis_gate[gloce_module.find_name][gloce_module.gloce_org_name]['data'] / n_sum
-        stacked_buffer_gate_mean = buffer_sel_basis_gate[gloce_module.find_name][gloce_module.gloce_org_name]["data_mean"] / n_sum
-        # stacked_buffer_gate_cov = stacked_buffer_gate - stacked_buffer_gate_mean.T @ stacked_buffer_gate_mean
-        
-        stacked_buffer_rel_mean = target_mean_dict[gloce_module.find_name][gloce_module.gloce_org_name] \
-                                    - stacked_buffer_gate_mean
-        stacked_buffer_rel_cov = target_cov_dict[gloce_module.find_name][gloce_module.gloce_org_name] \
-                                    + stacked_buffer_rel_mean.T @ stacked_buffer_rel_mean
+        stacked_buffer_gate_mean = buffer_sel_basis_gate[gloce_module.find_name][gloce_module.gloce_org_name]["data_mean"] / n_sum        
+        stacked_buffer_rel_mean = target_mean_dict[gloce_module.find_name][gloce_module.gloce_org_name] - stacked_buffer_gate_mean
+        stacked_buffer_rel_cov = target_cov_dict[gloce_module.find_name][gloce_module.gloce_org_name] + stacked_buffer_rel_mean.T @ stacked_buffer_rel_mean
                 
         _, _, Vh_gate = torch.linalg.svd(stacked_buffer_rel_cov, full_matrices=False)
         rel_gate_dict[gloce_module.find_name][gloce_module.gloce_org_name] = Vh_gate[:gate_rank]
         gate_mean_dict[gloce_module.find_name][gloce_module.gloce_org_name] = stacked_buffer_gate_mean
 
-
     ############## Compute registder buffer for discriminative basis for erasing ##############
+    buffer_norm_basis_target = get_registered_buffer(
+        args,
+        module_name_list_all,
+        org_modules_all,
+        st_timestep,
+        end_timestep,
+        n_avail_tokens,
+        targets,
+        embeddings_target_sel_base,
+        embedding_unconditional,
+        pipe,
+        DEVICE_CUDA,
+        register_buffer_path,
+        register_buffer_fn="norm_target.pt",
+        register_func="register_norm_buffer_avg_spatial",
+        rel_gate_dict=rel_gate_dict,
+        target_mean_dict=target_mean_dict,
+        gate_mean_dict=gate_mean_dict
+    )
 
-    register_buffer_fn = "norm_target.pt"
-    register_func = "register_norm_buffer_avg_spatial"
-    
-    buffer_norm_basis_target = get_registered_buffer(args, module_name_list_all, \
-                            org_modules_all, st_timestep, end_timestep, n_avail_tokens, \
-                            targets, embeddings_target_sel_base, embedding_unconditional, \
-                            pipe, DEVICE_CUDA, register_buffer_path, register_buffer_fn, register_func, \
-                            rel_gate_dict=rel_gate_dict, \
-                            target_mean_dict=target_mean_dict, gate_mean_dict=gate_mean_dict)
-
-
-    register_buffer_fn = "norm_anchor.pt"
-    register_func = "register_norm_buffer_avg_spatial"
-
-    buffer_norm_basis_anchor = get_registered_buffer(args, module_name_list_all, \
-                            org_modules_all, st_timestep, end_timestep, n_avail_tokens, \
-                            anchors, embeddings_anchor_sel_base, embedding_unconditional, \
-                            pipe, DEVICE_CUDA, register_buffer_path, register_buffer_fn, register_func, \
-                            rel_gate_dict=rel_gate_dict, \
-                            target_mean_dict=target_mean_dict, gate_mean_dict=gate_mean_dict)
+    buffer_norm_basis_anchor = get_registered_buffer(
+        args,
+        module_name_list_all,
+        org_modules_all,
+        st_timestep,
+        end_timestep,
+        n_avail_tokens,
+        anchors,
+        embeddings_anchor_sel_base,
+        embedding_unconditional,
+        pipe,
+        DEVICE_CUDA,
+        register_buffer_path,
+        register_buffer_fn="norm_anchor.pt",
+        register_func="register_norm_buffer_avg_spatial",
+        rel_gate_dict=rel_gate_dict,
+        target_mean_dict=target_mean_dict,
+        gate_mean_dict=gate_mean_dict
+    )
 
     ############## Compute discriminative basis for erasing ##############
  
@@ -1406,36 +1391,28 @@ def train(
         importance_tgt = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['data_max'] / n_sum_tar
         importance_anc = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['data_max'] / n_sum_anc
 
-
-
         importance_tgt_stack = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['data_stack']
         importance_anc_stack = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['data_stack']
         importance_tgt_stack = torch.cat([imp.unsqueeze(0) for imp in importance_tgt_stack], dim=0)
         importance_anc_stack = torch.cat([imp.unsqueeze(0) for imp in importance_anc_stack], dim=0)
 
-
-        print(gloce_module.gloce_org_name)
-        print(f"Relative importance", ( importance_tgt / importance_anc ).item())
-
         ########### Determine parameters in logistic function ############
 
         tol1 = args.thresh
 
-        x_center = importance_anc_stack.mean() + tol1*importance_anc_stack.std()     
-        tol2 = 0.001*tol1
+        x_center = importance_anc_stack.mean() + tol1 * importance_anc_stack.std()     
+        tol2 = 0.001 * tol1
 
         c_right = torch.tensor([0.99]).to(DEVICE_CUDA)
-        C_right = torch.log(1/(1/c_right - 1))
+        C_right = torch.log(1 / (1 / c_right - 1))
 
         imp_center = x_center
         imp_slope = C_right/tol2
-
 
         print(f"{importance_anc_stack.max().item():10.5f}, {imp_center.item():10.5f}, {importance_tgt_stack.min().item():10.5f}, {importance_tgt_stack.max().item():10.5f}")
         
         Vh_gate = rel_gate_dict[gloce_module.find_name][gloce_module.gloce_org_name]
         gate_mean = gate_mean_dict[gloce_module.find_name][gloce_module.gloce_org_name]
-
 
         # NxD
         gloce_module.selector.select_weight.weight.data = Vh_gate.T.unsqueeze(0).clone().contiguous()
@@ -1451,7 +1428,6 @@ def train(
     save_path.mkdir(parents=True, exist_ok=True)
     network.save_weights(save_path / f"ckpt.safetensors", metadata=model_metadata)
     print("Done.")
-
 
 
 def main(args):
