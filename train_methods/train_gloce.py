@@ -704,7 +704,7 @@ def prepare_text_embedding_token(
     else:
         print("compute text emb cache...")
 
-        ##################### compute concept embeddings ####################
+        # compute concept embeddings
         
         # compute target and update concept embeddings
         simWords_target = [prompt.target for prompt in prompts_target]
@@ -760,7 +760,7 @@ def prepare_text_embedding_token(
             prmpt_sel_base_surrogate = [prmpt_temp_sel_base.replace(replace_word, word) for word in simWords_surrogate] 
             embeddings_surrogate_sel_base = get_condition(prmpt_sel_base_surrogate, tokenizer, text_encoder)
         
-        ##################### compute concept embeddings ####################
+        # compute concept embeddings
         # Prepare for surrogate token cache
         print("compute emb cache...")
         
