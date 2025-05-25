@@ -351,7 +351,7 @@ class GroundingDINO(nn.Module):
 
 
 @MODULE_BUILD_FUNCS.registe_with_name(module_name="groundingdino")
-def build_groundingdino(args):
+def build_groundingdino(args) -> GroundingDINO:
 
     backbone = build_backbone(args)
     transformer = build_transformer(args)

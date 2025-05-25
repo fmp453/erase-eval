@@ -11,11 +11,11 @@ import torch.optim as optim
 from tqdm import tqdm
 
 from torch.autograd import Variable
-from diffusers import UNet2DConditionModel, AutoencoderKL, DDIMScheduler
+from diffusers import UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils import Arguments
-from train_methods.train_utils import apply_model, sample_until, get_vocab, save_embedding_matrix, get_condition, learn_k_means_from_input_embedding, search_closest_tokens
+from train_methods.train_utils import apply_model, sample_until, get_vocab, save_embedding_matrix, get_condition, learn_k_means_from_input_embedding, search_closest_tokens, get_devices, get_models, gather_parameters
 from train_methods.consts import ddim_alphas, LEN_TOKENIZER_VOCAB
 
 
@@ -124,18 +124,10 @@ def train(args: Arguments):
     print('to be preserved:', preserved_words)
     preserved_words.append('')
 
-    devices = args.device.split(",")
-    if len(devices) > 1:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
-    else:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
+    devices = get_devices(args)
 
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
     unet_orig: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, vae, unet, scheduler, _ = get_models(args)
 
     vae.eval()
     text_encoder.eval()
@@ -145,41 +137,7 @@ def train(args: Arguments):
     unet.to(devices[0])
 
     # choose parameters to train based on train_method
-    parameters = []
-    for name, param in unet.named_parameters():
-        # train all layers except x-attns and time_embed layers
-        if args.eap_method == 'noxattn':
-            if not (name.startswith('out.') or 'attn2' in name or 'time_embed' in name):
-                parameters.append(param)
-        # train only self attention layers
-        if args.eap_method == 'selfattn':
-            if 'attn1' in name:
-                parameters.append(param)
-        # train only x attention layers
-        if args.eap_method == 'xattn':
-            if 'attn2' in name:
-                parameters.append(param)
-        # train only qkv layers in x attention layers
-        if args.eap_method == 'xattn_matching':
-            if 'attn2' in name and ('to_q' in name or 'to_k' in name or 'to_v' in name):
-                parameters.append(param)
-                # return_nodes[name] = name
-        # train all layers
-        if args.eap_method == 'full':
-            parameters.append(param)
-        # train all layers except time embed layers
-        if args.eap_method == 'notime':
-            if not (name.startswith('out.') or 'time_embed' in name):
-                parameters.append(param)
-        if args.eap_method == 'xlayer':
-            if 'attn2' in name:
-                if 'output_blocks.6.' in name or 'output_blocks.8.' in name:
-                    parameters.append(param)
-        if args.eap_method == 'selflayer':
-            if 'attn1' in name:
-                if 'input_blocks.4.' in name or 'input_blocks.7.' in name:
-                    parameters.append(param)
-    
+    _, parameters = gather_parameters(args.eap_method, unet=unet)
     unet.train()
     # create a lambda function for cleaner use of sampling code (only denoising till time step t)
     quick_sample_till_t = lambda cond, s, code, t: sample_until(

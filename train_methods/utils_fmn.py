@@ -5,9 +5,8 @@
 import os
 import re
 import math
-import random
 import itertools
-from typing import Optional, Literal, Any, Union
+from typing import Optional, Any, Union
 from pathlib import Path
 
 import torch
@@ -16,145 +15,21 @@ import torch.optim as optim
 
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.nn.utils import clip_grad_norm_
-from torchvision import transforms
-from PIL import Image
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from accelerate.utils import set_seed
 from safetensors.torch import safe_open
 from tqdm import trange
 
+from train_methods import train_utils
 from train_methods.lora_save import save_all
+from train_methods.data import ForgetMeNotDataset, FMNPivotalTuningDataset
+from utils import Arguments
 
-OBJECT_TEMPLATE = ["a photo of {}"]
-STYLE_TEMPLATE = ["a photo in the style of {}"]
-NAKED_TEMPLATE = ["a photo of naked"]
 EMBED_FLAG = "<embed>"
 
-
-class PivotalTuningDatasetCapation(Dataset):
-    """
-    A dataset to prepare the instance and class images with the prompts for fine-tuning the model.
-    It pre-processes the images and the tokenizes prompts.
-    """
-
-    def __init__(
-        self,
-        instance_data_root,
-        tokenizer,
-        token_map: Optional[dict] = None,
-        use_template: Optional[str] = None,
-        class_data_root=None,
-        class_prompt=None,
-        size=512,
-        h_flip=True,
-        color_jitter=False,
-        resize=True,
-        blur_amount: int = 70,
-    ):
-        self.size = size
-        self.tokenizer = tokenizer
-        self.resize = resize
-
-        self.instance_data_root = Path(instance_data_root)
-        if not self.instance_data_root.exists():
-            raise ValueError("Instance images root doesn't exists.")
-
-        self.instance_images_path = list(Path(instance_data_root).iterdir())
-        self.num_instance_images = len(self.instance_images_path)
-        self.token_map = token_map
-
-        self.use_template = use_template
-
-        if use_template == "naked":
-            self.templates = NAKED_TEMPLATE
-        elif use_template == "style":
-            self.templates = STYLE_TEMPLATE
-        else:
-            self.templates = OBJECT_TEMPLATE
-
-        self._length = self.num_instance_images
-
-        if class_data_root is not None:
-            self.class_data_root = Path(class_data_root)
-            self.class_data_root.mkdir(parents=True, exist_ok=True)
-            self.class_images_path = list(self.class_data_root.iterdir())
-            self.num_class_images = len(self.class_images_path)
-            self._length = max(self.num_class_images, self.num_instance_images)
-            self.class_prompt = class_prompt
-        else:
-            self.class_data_root = None
-        self.h_flip = h_flip
-        self.image_transforms = transforms.Compose(
-            [
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR)
-                if resize
-                else transforms.Lambda(lambda x: x),
-                transforms.ColorJitter(0.1, 0.1)
-                if color_jitter
-                else transforms.Lambda(lambda x: x),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-
-        self.blur_amount = blur_amount
-
-    def __len__(self):
-        return self._length
-
-    def __getitem__(self, index):
-        example = {}
-        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
-        if not instance_image.mode == "RGB":
-            instance_image = instance_image.convert("RGB")
-        example["instance_images"] = self.image_transforms(instance_image)
-
-        if self.use_template:
-            assert self.token_map is not None
-            input_tok = list(self.token_map.values())[0]
-
-            text = random.choice(self.templates).format(input_tok)
-        else:
-            text = self.instance_images_path[index % self.num_instance_images].stem
-            if self.token_map is not None:
-                for token, value in self.token_map.items():
-                    text = text.replace(token, value)
-        
-        if self.h_flip and random.random() > 0.5:
-            hflip = transforms.RandomHorizontalFlip(p=1)
-
-            example["instance_images"] = hflip(example["instance_images"])
-            
-        example["instance_prompt_ids"] = self.tokenizer(
-            text,
-            padding="do_not_pad",
-            truncation=True,
-            max_length=self.tokenizer.model_max_length,
-        ).input_ids
-        
-        example["uncond_prompt_ids"] = self.tokenizer(
-            "",
-            padding="do_not_pad",
-            truncation=True,
-            max_length=self.tokenizer.model_max_length,
-        ).input_ids        
-
-        if self.class_data_root:
-            class_image = Image.open(self.class_images_path[index % self.num_class_images])
-            if not class_image.mode == "RGB":
-                class_image = class_image.convert("RGB")
-            example["class_images"] = self.image_transforms(class_image)
-            example["class_prompt_ids"] = self.tokenizer(
-                self.class_prompt,
-                padding="do_not_pad",
-                truncation=True,
-                max_length=self.tokenizer.model_max_length,
-            ).input_ids
-
-        return example
 
 def get_models(pretrained_model_name_or_path: str, placeholder_tokens: list[str], initializer_tokens: list[str], device="cuda:0"):
 
@@ -262,9 +137,8 @@ def text2img_dataloader(train_dataset, train_batch_size: int, tokenizer: CLIPTok
 
 
 def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encoder: CLIPTextModel, scheduler: DDPMScheduler, t_mutliplier=1.0):
-    weight_dtype = torch.float32
 
-    latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype).to(unet.device)).latent_dist.sample()
+    latents = vae.encode(batch["pixel_values"].to(unet.device)).latent_dist.sample()
     latents = latents * 0.18215
 
     noise = torch.randn_like(latents)
@@ -290,11 +164,8 @@ def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encode
     
         # resize to match model_pred
         mask = F.interpolate(mask.float(), size=model_pred.shape[-2:], mode="nearest") + 0.05
-        
         mask = mask / mask.mean()
-
         model_pred = model_pred * mask
-
         target = target * mask
 
     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -353,13 +224,10 @@ def train_inversion(
                         
                             lambda_ = min(1.0, 100 * lr_scheduler.get_last_lr()[0])
                             text_encoder.get_input_embeddings().weight[index_updates] = F.normalize(text_encoder.get_input_embeddings().weight[index_updates, :], dim=-1) * (pre_norm + lambda_ * (0.4 - pre_norm))
-                            # print(pre_norm)
 
                         current_norm = text_encoder.get_input_embeddings().weight[index_updates, :].norm(dim=-1)
                         
                         text_encoder.get_input_embeddings().weight[index_no_updates] = orig_embeds_params[index_no_updates]
-
-                        # print(f"Current Norm : {current_norm}")
 
                 global_step += 1
                 progress_bar.update(1)
@@ -384,31 +252,14 @@ def train_inversion(
                 return
 
 def ti_component(
-    instance_data_dir: str,
-    pretrained_model_name_or_path: str,
+    args: Arguments,
     output_dir: str,
-    use_template: Literal[None, "object", "style", "naked"] = None,
     placeholder_tokens: str = "<s>",
     placeholder_token_at_data: Optional[str] = None,
     initializer_tokens: Optional[str] = None,
-    class_prompt: Optional[str] = None,
-    seed: int = 42,
-    resolution: int = 512,
-    color_jitter: bool = True,
-    train_batch_size: int = 1,
-    max_train_steps_ti: int = 1000,
-    save_steps: int = 100,
-    gradient_accumulation_steps: int = 4,
-    clip_ti_decay: bool = True,
-    learning_rate_ti: float = 5e-4,
-    scale_lr: bool = False,
-    lr_scheduler: str = "linear",
-    lr_warmup_steps: int = 0,
-    weight_decay_ti: float = 0.00,
     device="cuda:0",
-    extra_args: Optional[dict] = None,
 ):
-    torch.manual_seed(seed)
+    torch.manual_seed(args.seed)
     
     if output_dir is not None:
         output_dir = output_dir.replace(" ", "-")
@@ -433,33 +284,25 @@ def ti_component(
     print("Placeholder Tokens", placeholder_tokens)
     print("Initializer Tokens", initializer_tokens)
 
-    # get the models
     text_encoder, vae, unet, tokenizer, placeholder_token_ids = get_models(
-        pretrained_model_name_or_path,
+        args.sd_version,
         placeholder_tokens,
         initializer_tokens,
         device=device,
     )
-
-    noise_scheduler = DDPMScheduler.from_config(pretrained_model_name_or_path, subfolder="scheduler")
-
-    ti_lr = learning_rate_ti * gradient_accumulation_steps * train_batch_size if scale_lr else learning_rate_ti
+    noise_scheduler = DDPMScheduler.from_config(args.sd_version, subfolder="scheduler")
+    ti_lr = args.fmn_lr_ti * args.fmn_gradient_accumulation_steps * args.fmn_train_batch_size if args.fmn_scale_lr else args.fmn_lr_ti
     
-    train_dataset = PivotalTuningDatasetCapation(
-        instance_data_root=instance_data_dir,
+    train_dataset = FMNPivotalTuningDataset(
+        instance_data_root=args.instance_data_dir,
         token_map=token_map,
-        use_template=use_template,
-        class_data_root=None,
-        class_prompt=class_prompt,
+        use_template=args.fmn_concept_type,
         tokenizer=tokenizer,
-        size=resolution,
-        color_jitter=color_jitter
+        size=args.image_size,
     )
 
     train_dataset.blur_amount = 20
-
-    train_dataloader = text2img_dataloader(train_dataset, train_batch_size, tokenizer)
-
+    train_dataloader = text2img_dataloader(train_dataset, args.fmn_train_batch_size, tokenizer)
     index_no_updates = torch.arange(len(tokenizer)) != placeholder_token_ids[0]
 
     for tok_id in placeholder_token_ids:
@@ -480,16 +323,14 @@ def ti_component(
     ti_optimizer = optim.AdamW(
         text_encoder.get_input_embeddings().parameters(),
         lr=ti_lr,
-        betas=(0.9, 0.999),
-        eps=1e-08,
-        weight_decay=weight_decay_ti,
+        weight_decay=args.fmn_weight_decay_ti,
     )
 
     lr_scheduler = get_scheduler(
         lr_scheduler,
         optimizer=ti_optimizer,
-        num_warmup_steps=lr_warmup_steps,
-        num_training_steps=max_train_steps_ti,
+        num_warmup_steps=args.fmn_lr_warmup_steps_ti,
+        num_training_steps=args.fmn_max_train_steps_ti,
     )
 
     train_inversion(
@@ -497,26 +338,22 @@ def ti_component(
         vae=vae,
         text_encoder=text_encoder,
         dataloader=train_dataloader,
-        num_steps=max_train_steps_ti,
+        num_steps=args.fmn_max_train_steps_ti,
         scheduler=noise_scheduler,
         index_no_updates=index_no_updates,
         optimizer=ti_optimizer,
-        save_steps=save_steps,
+        save_steps=args.fmn_save_steps_ti,
         placeholder_tokens=placeholder_tokens,
         placeholder_token_ids=placeholder_token_ids,
         save_path=output_dir,
         lr_scheduler=lr_scheduler,
-        accum_iter=gradient_accumulation_steps,
-        clip_ti_decay=clip_ti_decay,
+        accum_iter=args.fmn_gradient_accumulation_steps,
+        clip_ti_decay=args.clip_ti_decay,
     )
 
     del ti_optimizer
 
 def parse_safeloras_embeds(safeloras) -> dict[str, torch.Tensor]:
-    """
-    Converts a loaded safetensor file that contains Textual Inversion embeds into
-    a dictionary of embed_token: Tensor
-    """
     embeds = {}
     metadata = safeloras.metadata()
     for key in safeloras.keys():
@@ -530,18 +367,16 @@ def parse_safeloras_embeds(safeloras) -> dict[str, torch.Tensor]:
     return embeds
 
 def apply_learned_embed_in_clip(
-    learned_embeds,
+    learned_embeds: dict[str, torch.Tensor],
     text_encoder: CLIPTextModel,
     tokenizer: CLIPTokenizer,
-    token: Optional[Union[str, list[str]]] = None,
-    idempotent=False,
+    token: Optional[Union[str, list[str]]]=None,
+    idempotent: bool=False,
 ):
     if isinstance(token, str):
         trained_tokens = [token]
     elif isinstance(token, list):
-        assert len(learned_embeds.keys()) == len(
-            token
-        ), "The number of tokens and the number of embeds should be the same"
+        assert len(learned_embeds.keys()) == len(token), "The number of tokens and the number of embeds should be the same"
         trained_tokens = token
     else:
         trained_tokens = list(learned_embeds.keys())
@@ -563,115 +398,12 @@ def apply_learned_embed_in_clip(
             print(f"The tokenizer already contains the token {token}.")
             print(f"Replacing {token} embedding.")
 
-        # resize the token embeddings
         text_encoder.resize_token_embeddings(len(tokenizer))
 
         # get the id for the token and assign the embeds
         token_id = tokenizer.convert_tokens_to_ids(token)
         text_encoder.get_input_embeddings().weight.data[token_id] = embeds
     return token
-
-class ForgetMeNotDataset(Dataset):
-    """
-    A dataset to prepare the instance and class images with the prompts for fine-tuning the model.
-    It pre-processes the images and the tokenizes prompts.
-    """
-
-    def __init__(
-        self,
-        tokenizer: CLIPTokenizer,
-        size=512,
-        center_crop=False,
-        use_added_token= False,
-        use_pooler=False,
-        multi_concept=None,
-        data_dir="fmn-data"
-    ):  
-        self.use_added_token = use_added_token
-        self.use_pooler = use_pooler
-        self.size = size
-        self.center_crop = center_crop
-        self.tokenizer = tokenizer
-
-        self.instance_images_path  = []
-        self.instance_prompt  = []
-
-        token_idx = 1
-        for c, t, num_tok in multi_concept:
-            p = Path(data_dir)
-            if not p.exists():
-                raise ValueError(f"Instance {p} images root doesn't exists.")                   
-            
-            image_paths = list(p.iterdir())
-            self.instance_images_path += image_paths
-
-            target_snippet = f"{''.join([ f'<s{token_idx + i}>' for i in range(num_tok)])}" if use_added_token else c.replace("-", " ")
-            if t == "object":
-                self.instance_prompt += [(f"a photo of {target_snippet}", target_snippet)] * len(image_paths)
-            elif t == "style":
-                self.instance_prompt += [(f"a photo in the style of {target_snippet}", target_snippet)] * len(image_paths)
-            else:
-                raise ValueError("unknown concept type!")
-            if use_added_token:
-                token_idx += num_tok
-        self.num_instance_images = len(self.instance_images_path)
-        self._length = self.num_instance_images
-
-        self.image_transforms = transforms.Compose(
-            [
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-
-    def __len__(self):
-        return self._length
-
-    def __getitem__(self, index):
-        example = {}
-        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
-        instance_prompt, target_tokens = self.instance_prompt[index % self.num_instance_images]
-
-        if not instance_image.mode == "RGB":
-            instance_image = instance_image.convert("RGB")
-        example["instance_prompt"] = instance_prompt
-        example["instance_images"] = self.image_transforms(instance_image)
-
-        example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-        prompt_ids = self.tokenizer(
-            instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length
-        ).input_ids
-
-        concept_ids = self.tokenizer(
-            target_tokens,
-            add_special_tokens=False
-        ).input_ids             
-
-        pooler_token_id = self.tokenizer(
-            "<|endoftext|>",
-            add_special_tokens=False
-        ).input_ids[0]
-
-        concept_positions = [0] * self.tokenizer.model_max_length
-        for i, tok_id in enumerate(prompt_ids):
-            if tok_id == concept_ids[0] and prompt_ids[i:i + len(concept_ids)] == concept_ids:
-                concept_positions[i:i + len(concept_ids)] = [1]*len(concept_ids)
-            if self.use_pooler and tok_id == pooler_token_id:
-                concept_positions[i] = 1
-        example["concept_positions"] = torch.tensor(concept_positions)[None]               
-
-        return example
 
 def collate_fn(examples):
     input_ids = [example["instance_prompt_ids"] for example in examples]
@@ -694,42 +426,17 @@ def collate_fn(examples):
     return batch
 
 def attn_component(
-    instance_data_dir: str,
-    seed: int,
+    args: Arguments,
     output_dir: str,
-    pretrained_model_name_or_path: str,
     multi_concept: list[str],
-    scale_lr: bool,
-    learning_rate: float,
-    gradient_accumulation_steps: int,
-    train_batch_size: int,
-    only_optimize_ca: bool,
-    resolution: int,
-    center_crop: bool,
-    use_pooler: bool,
-    dataloader_num_workers: int,
-    max_train_steps: int,
-    num_train_epochs: int,
-    lr_scheduler: str,
-    lr_warmup_steps: int,
-    lr_num_cycles: int,
-    lr_power: float,
-    no_real_image: bool,
-    max_grad_norm: float,
     device: str="cuda:0"
 ):
 
     output_dir = output_dir.replace(" ", "-")
-    
-    if seed is not None:
-        set_seed(seed)
+    if args.seed is not None:
+        set_seed(args.seed)
 
-    # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_name_or_path, subfolder="scheduler")
-    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(pretrained_model_name_or_path, subfolder="tokenizer")
-    text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(pretrained_model_name_or_path, subfolder="text_encoder")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(pretrained_model_name_or_path, subfolder="unet")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(pretrained_model_name_or_path, subfolder="vae")
+    tokenizer, text_encoder, vae, unet, _, noise_scheduler = train_utils.get_models(args)
     
     tok_idx = 1
     multi_concepts = []
@@ -816,11 +523,11 @@ def attn_component(
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     
-    if scale_lr:
-        learning_rate = learning_rate * gradient_accumulation_steps * train_batch_size
+    if args.fmn_scale_lr:
+        learning_rate = args.fmn_lr_attn * args.fmn_gradient_accumulation_steps * args.fmn_train_batch_size
 
     # Optimizer creation
-    if only_optimize_ca:
+    if args.only_optimize_ca:
         params_to_optimize = (itertools.chain([p for n, p in unet.named_parameters() if 'attn2' in n]))
         print("only optimize cross attention...")
     else:
@@ -831,32 +538,28 @@ def attn_component(
     optimizer = optim.AdamW(
         params_to_optimize,
         lr=learning_rate,
-        betas=(0.9, 0.999),
-        weight_decay=0.01,
-        eps=1e-8,
     )
 
     train_dataset = ForgetMeNotDataset(
         tokenizer=tokenizer,
-        size=resolution,
-        center_crop=center_crop,
-        use_pooler=use_pooler,
-        use_added_token=True,
+        size=args.image_size,
+        center_crop=args.center_crop,
+        use_pooler=args.use_pooler,
         multi_concept=multi_concept,
-        data_dir=instance_data_dir
+        data_dir=args.instance_data_dir
     )
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=train_batch_size,
+        batch_size=args.fmn_train_batch_size,
         shuffle=True,
         collate_fn=lambda examples: collate_fn(examples),
-        num_workers=dataloader_num_workers,
+        num_workers=args.fmn_dataloader_num_workers,
     )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.fmn_gradient_accumulation_steps)
     if max_train_steps is None:
         max_train_steps = num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
@@ -864,10 +567,10 @@ def attn_component(
     lr_scheduler = get_scheduler(
         lr_scheduler,
         optimizer=optimizer,
-        num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps,
-        num_training_steps=max_train_steps * gradient_accumulation_steps,
-        num_cycles=lr_num_cycles,
-        power=lr_power,
+        num_warmup_steps=args.fmn_lr_warmup_steps_attn * args.fmn_gradient_accumulation_steps,
+        num_training_steps=max_train_steps * args.fmn_gradient_accumulation_steps,
+        num_cycles=args.fmn_lr_num_cycles_attn,
+        power=args.fmn_lr_power_attn,
     )
 
     unet.to(device)
@@ -875,23 +578,13 @@ def attn_component(
     text_encoder.to(device)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / gradient_accumulation_steps)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.fmn_gradient_accumulation_steps)
     if overrode_max_train_steps:
         max_train_steps = num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
     num_train_epochs = math.ceil(max_train_steps / num_update_steps_per_epoch)
 
-    # Train!
-    total_batch_size = train_batch_size * gradient_accumulation_steps
-
     print("***** Running training *****")
-    print(f"{len(train_dataset)=}")
-    print(f"{len(train_dataloader)=}")
-    print(f"{num_train_epochs=}")
-    print(f"{train_batch_size=}")
-    print(f"{total_batch_size=}")
-    print(f"{gradient_accumulation_steps=}")
-    print(f"{max_train_steps=}")
     global_step = 0
     first_epoch = 0
 
@@ -909,7 +602,7 @@ def attn_component(
                 debug_once = False
             
             with torch.no_grad():
-                latents = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
+                latents: torch.Tensor = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
             noise = torch.randn_like(latents)
@@ -918,10 +611,7 @@ def attn_component(
             timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
             timesteps = timesteps.long()
 
-            if no_real_image:
-                noisy_latents = noise_scheduler.add_noise(torch.zeros_like(noise), noise, timesteps)
-            else:
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
             with torch.no_grad():
                 text_embedding = text_encoder(batch["input_ids"].to(text_encoder.device))[0]
@@ -932,7 +622,7 @@ def attn_component(
             loss = attn_controller.loss()
 
             loss.backward()
-            clip_grad_norm_(parameters=params_to_optimize, max_norm=max_grad_norm)
+            clip_grad_norm_(parameters=params_to_optimize, max_norm=args.max_grad_norm)
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad(set_to_none=False)
@@ -946,4 +636,3 @@ def attn_component(
 
     # output_dir: models/CONCEPT_NAME/fmn/CONCEPT_NAME-attn
     unet.save_pretrained(Path(output_dir).parent)
-

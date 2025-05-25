@@ -9,7 +9,7 @@ import gc
 import random
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, model_validator
 
 import torch
@@ -18,16 +18,12 @@ from tqdm import tqdm
 
 from train_methods.utils_spm import SPMNetwork, SPMLayer
 
-from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel, PNDMScheduler
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
+from train_methods.train_utils import tokenize, get_devices, get_models
 from utils import Arguments
 
-UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも同じ。
-VAE_SCALE_FACTOR = 8  # 2 ** (len(vae.config.block_out_channels) - 1) = 8
-
-ACTION_TYPES = Literal["erase", "erase_with_la"]
 
 class PromptEmbedsCache:
     prompts: dict[str, torch.FloatTensor] = {}
@@ -46,7 +42,7 @@ class PromptSettings(BaseModel):  # yaml
     positive: str = None  # if None, target will be used
     unconditional: str = ""  # default is ""
     neutral: str = None  # if None, unconditional will be used
-    action: ACTION_TYPES = "erase"  # default is "erase"
+    action: Literal["erase", "erase_with_la"] = "erase"  # default is "erase"
     guidance_scale: float = 1.0  # default is 1.0
     resolution: int = 512  # default is 512
     dynamic_resolution: bool = False  # default is False
@@ -87,7 +83,7 @@ class PromptEmbedsPair:
     dynamic_crops: bool
 
     loss_fn: torch.nn.Module
-    action: ACTION_TYPES
+    action: Literal["erase", "erase_with_la"]
 
     def __init__(
         self,
@@ -96,7 +92,7 @@ class PromptEmbedsPair:
         positive: torch.FloatTensor,
         unconditional: torch.FloatTensor,
         neutral: torch.FloatTensor,
-        settings=None #: PromptSettings,
+        settings: Optional[PromptSettings]=None
     ) -> None:
         self.loss_fn = loss_fn
         self.target = target
@@ -182,34 +178,12 @@ def get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_
     schedule_func = TYPE_TO_SCHEDULER_FUNCTION[SchedulerType("cosine_with_restarts")]
     return schedule_func(optimizer, num_warmup_steps=lr_warmup_steps, num_training_steps=num_training_steps, num_cycles=lr_scheduler_num_cycles)
 
-def text_tokenize(tokenizer: CLIPTokenizer, prompts: list[str]) -> torch.Tensor:
-    return tokenizer(
-        prompts,
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-        return_tensors="pt",
-    ).input_ids
-
-def encode_prompts(tokenizer, text_encoder: CLIPTextModel, prompts: list[str], return_tokens: bool = False) -> torch.Tensor:
-    text_tokens = text_tokenize(tokenizer, prompts)
-    text_embeddings = text_encoder(text_tokens.to(text_encoder.device))[0]
-
-    if return_tokens:
-        return text_embeddings, torch.unique(text_tokens, dim=1)
-    return text_embeddings
-
 def get_random_noise(batch_size: int, height: int, width: int, generator: torch.Generator=None) -> torch.Tensor:
     return torch.randn(
-        (batch_size, UNET_IN_CHANNELS, height // VAE_SCALE_FACTOR, width // VAE_SCALE_FACTOR),
+        (batch_size, 4, height // 8, width // 8),
         generator=generator,
         device="cpu",
     )
-
-def get_initial_latents(scheduler: PNDMScheduler, n_imgs: int, height: int, width: int, n_prompts: int, generator=None):
-    noise = get_random_noise(n_imgs, height, width, generator=generator).repeat(n_prompts, 1, 1, 1)
-    latents = noise * scheduler.init_noise_sigma
-    return latents
 
 def predict_noise(
     unet: UNet2DConditionModel,
@@ -217,7 +191,7 @@ def predict_noise(
     timestep: int,
     latents: torch.FloatTensor,
     text_embeddings: torch.FloatTensor,
-    guidance_scale=7.5,
+    guidance_scale=1,
 ) -> torch.FloatTensor:
     # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
     latent_model_input = torch.cat([latents] * 2)
@@ -240,12 +214,11 @@ def diffusion(
     text_embeddings: torch.FloatTensor,
     total_timesteps: int = 1000,
     start_timesteps=0,
-    guidance_scale = 7.5
-):
+    guidance_scale=3
+) -> torch.Tensor:
 
     for timestep in tqdm(scheduler.timesteps[start_timesteps:total_timesteps]):
         noise_pred = predict_noise(unet, scheduler, timestep, latents, text_embeddings, guidance_scale=guidance_scale)
-        # compute the previous noisy sample x_t -> x_t-1
         latents = scheduler.step(noise_pred, timestep, latents).prev_sample
 
     return latents
@@ -257,11 +230,9 @@ def sample(prompt_pair: PromptEmbedsPair):
     samples = []
     while len(samples) < prompt_pair.sampling_batch_size:
         while True:
-            # sample from gaussian distribution
             noise = torch.randn_like(prompt_pair.target)
             # normalize the noise
             noise = noise / noise.view(-1).norm(dim=-1)
-            # compute the similarity
             sim = torch.cosine_similarity(prompt_pair.target.view(-1), noise.view(-1), dim=-1)
             # the possibility of accepting the sample = 1 - sim
             if random.random() < 1 - sim:
@@ -299,10 +270,8 @@ def train(
     save_path = Path(save_path)
 
     noise_scheduler: PNDMScheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    tokenizer, text_encoder, vae, unet, _, _ = get_models(args)
+    device = get_devices(args)[0]
     
     text_encoder.to(device)
     text_encoder.eval()
@@ -320,18 +289,12 @@ def train(
     ).to(device)
 
     trainable_params = network.prepare_optimizer_params(text_encoder_lr, unet_lr, lr)
-    
     optimizer = bnb.optim.AdamW8bit(trainable_params, lr=lr)
-    
     lr_scheduler = get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_steps)
     criteria = torch.nn.MSELoss()
 
-    print("Prompts")
-    for settings in prompts:
-        print(settings)
-
     cache = PromptEmbedsCache()
-    prompt_pairs = [] # list[PromptEmbedsPair]
+    prompt_pairs: list[PromptEmbedsPair] = []
 
     with torch.no_grad():
         for settings in prompts:
@@ -342,7 +305,8 @@ def train(
                 settings.unconditional,
             ]:
                 if cache[prompt] == None:
-                    cache[prompt] = encode_prompts(tokenizer, text_encoder, [prompt])
+                    input_ids = tokenize([prompt], tokenizer).input_ids
+                    cache[prompt] = text_encoder(input_ids.to(text_encoder.device))[0]
 
             prompt_pair = PromptEmbedsPair(
                 criteria,
@@ -366,11 +330,10 @@ def train(
             optimizer.zero_grad()
 
             prompt_pair: PromptEmbedsPair = prompt_pairs[torch.randint(0, len(prompt_pairs), (1,)).item()]
-
             timesteps_to = torch.randint(1, max_denoising_steps, (1,)).item()
 
-            height, width = (resolution, resolution)
-            latents = get_initial_latents(noise_scheduler, prompt_pair.batch_size, height, width, 1).to(device)
+            noise = get_random_noise(prompt_pair.batch_size, resolution, resolution).repeat(1, 1, 1, 1).to(device)
+            latents = noise * noise_scheduler.init_noise_sigma
 
             with network:
                 denoised_latents = diffusion(
@@ -380,7 +343,6 @@ def train(
                     concat_embeddings(prompt_pair.unconditional, prompt_pair.target, prompt_pair.batch_size,),
                     start_timesteps=0,
                     total_timesteps=timesteps_to,
-                    guidance_scale=3,
                 )
 
             noise_scheduler.set_timesteps(1000)
@@ -392,20 +354,14 @@ def train(
                 noise_scheduler,
                 current_timestep,
                 denoised_latents,
-                concat_embeddings(
-                    prompt_pair.unconditional,
-                    prompt_pair.positive,
-                    prompt_pair.batch_size,
-                ),
-                guidance_scale=1,
+                concat_embeddings(prompt_pair.unconditional, prompt_pair.positive, prompt_pair.batch_size)
             ).to("cpu")
             neutral_latents = predict_noise(
                 unet,
                 noise_scheduler,
                 current_timestep,
                 denoised_latents,
-                concat_embeddings(prompt_pair.unconditional, prompt_pair.neutral, prompt_pair.batch_size),
-                guidance_scale=1,
+                concat_embeddings(prompt_pair.unconditional, prompt_pair.neutral, prompt_pair.batch_size)
             ).to("cpu")
 
         with network:
@@ -414,17 +370,14 @@ def train(
                 noise_scheduler,
                 current_timestep,
                 denoised_latents,
-                concat_embeddings(prompt_pair.unconditional, prompt_pair.target, prompt_pair.batch_size,),
-                guidance_scale=1,
+                concat_embeddings(prompt_pair.unconditional, prompt_pair.target, prompt_pair.batch_size)
             ).to("cpu")
 
         # ------------------------- latent anchoring part -----------------------------
 
         if prompt_pair.action == "erase_with_la":
-            # noise sampling
             anchors = sample(prompt_pair)
 
-            # get latents
             repeat = prompt_pair.sampling_batch_size // prompt_pair.batch_size
             with network:
                 anchor_latents = predict_noise(
@@ -432,8 +385,7 @@ def train(
                     noise_scheduler,
                     current_timestep,
                     denoised_latents.repeat(repeat, 1, 1, 1),
-                    anchors,
-                    guidance_scale=1,
+                    anchors
                 ).to("cpu")
 
             with torch.no_grad():
@@ -442,16 +394,13 @@ def train(
                     noise_scheduler,
                     current_timestep,
                     denoised_latents.repeat(repeat, 1, 1, 1),
-                    anchors,
-                    guidance_scale=1,
+                    anchors
                 ).to("cpu")
             anchor_latents_ori.requires_grad_ = False
 
         else:
             anchor_latents = None
             anchor_latents_ori = None
-
-        # --------------------------------------------------------------
 
         positive_latents.requires_grad = False
         neutral_latents.requires_grad = False

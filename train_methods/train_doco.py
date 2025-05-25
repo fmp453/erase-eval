@@ -14,11 +14,8 @@ from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
 from tqdm.auto import tqdm
-from transformers import CLIPTextModel, CLIPTokenizer
 
 from diffusers import (
-    AutoencoderKL,
-    DDPMScheduler,
     DiffusionPipeline,
     DPMSolverMultistepScheduler,
     UNet2DConditionModel,
@@ -27,8 +24,9 @@ from diffusers.models.attention_processor import Attention
 from diffusers.optimization import get_scheduler
 
 from train_methods.utils_doco import get_anchor_prompts, retrieve, adjust_gradient
-from train_methods.utils_doco import CustomDiffusionAttnProcessor, PatchGANDiscriminator, CustomDiffusionDataset, PromptDataset, CustomDiffusionPipeline
-from train_methods.train_utils import collate_fn
+from train_methods.utils_doco import CustomDiffusionAttnProcessor, PatchGANDiscriminator, CustomDiffusionPipeline
+from train_methods.train_utils import collate_fn, get_devices, get_models
+from train_methods.data import DocoDataset, DocoPromptDataset
 from utils import Arguments
 
 def init_discriminator(lr=0.0001, b1=0.5, b2=0.999) -> tuple[PatchGANDiscriminator, nn.BCEWithLogitsLoss, optim.Optimizer]:
@@ -96,8 +94,7 @@ def seed_everything(seed: int=42) -> None:
 def main(args: Arguments):
     
     seed_everything(args.seed)
-    device = args.device.split(",")[0]
-    device = f"cuda:{device}"
+    device = get_devices(args)[0]
     
     concepts_list = [
         {
@@ -112,10 +109,7 @@ def main(args: Arguments):
     # Generate class images if prior preservation is enabled.
     for i, concept in enumerate(concepts_list):
         # directly path to ablation images and its corresponding prompts is provided.
-        if (
-            concept["instance_prompt"] is not None
-            and concept["instance_data_dir"] is not None
-        ):
+        if (concept["instance_prompt"] is not None and concept["instance_data_dir"] is not None):
             break
 
         class_images_dir = Path(concept["class_data_dir"])
@@ -169,7 +163,7 @@ def main(args: Arguments):
 
             num_new_images = args.doco_num_class_images
 
-            sample_dataset = PromptDataset(class_prompt_collection, num_new_images)
+            sample_dataset = DocoPromptDataset(class_prompt_collection, num_new_images)
             sample_dataloader = DataLoader(sample_dataset, batch_size=4)
 
             if Path(f"{class_images_dir}/caption.txt").exists():
@@ -207,12 +201,8 @@ def main(args: Arguments):
 
     os.makedirs(args.save_dir, exist_ok=True)
 
-    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    noise_scheduler: DDPMScheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    unet = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     shadow_unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, vae, unet, _, noise_scheduler = get_models(args)
 
     # set shadow_unet requires_grad False
     for param in shadow_unet.parameters():
@@ -252,20 +242,16 @@ def main(args: Arguments):
 
     optimizer = optim.AdamW(
         params_to_optimize,
-        lr=args.doco_lr,
-        betas=(0.9, 0.999),
-        weight_decay=1e-2,
-        eps=1e-8,
+        lr=args.doco_lr
     )
 
     discriminator, criterion, optimizer_D = init_discriminator(lr=args.doco_dlr)
 
     # Dataset and DataLoaders creation:
-    train_dataset = CustomDiffusionDataset(
+    train_dataset = DocoDataset(
         concepts_list=concepts_list,
         concept_type=args.doco_concept_type,
         tokenizer=tokenizer,
-        size=512,
         center_crop=args.doco_center_crop,
         hflip=args.doco_hflip,
         aug=not args.doco_noaug,

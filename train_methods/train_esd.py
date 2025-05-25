@@ -17,77 +17,9 @@ from diffusers import UNet2DConditionModel, DDIMScheduler, DDPMScheduler
 from diffusers.optimization import get_scheduler
 
 from utils import Arguments
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices, get_models
 
 warnings.filterwarnings("ignore")
-
-@torch.no_grad()
-def encode_prompt(
-    prompt: str | list[str]=None,
-    negative_prompt: str | list[str]=None,
-    removing_prompt: str | list[str]=None,
-    num_images_per_prompt: int=1,
-    text_encoder: CLIPTextModel=None,
-    tokenizer: CLIPTokenizer=None,
-    device: torch.device=None,
-):
-    """Encode a prompt into a text embedding. Prompt can be None."""
-    # Get text embeddings for unconditional and conditional prompts.
-    if isinstance(prompt, str):
-        prompt = [prompt]
-    
-    if removing_prompt is not None and isinstance(removing_prompt, str):
-        removing_prompt = [removing_prompt]
-        assert len(prompt) == len(removing_prompt), f"Safety concept must be the same length as prompt of length {len(prompt)}."
-    
-    if negative_prompt is not None and isinstance(negative_prompt, str):
-        negative_prompt = [negative_prompt]
-        assert len(prompt) == len(negative_prompt), f"Negative prompt must be the same length as prompt of length {len(prompt)}."
-
-    batch_size = len(prompt) if prompt is not None else 1
-
-    use_attention_mask = hasattr(text_encoder.config, "use_attention_mask") and text_encoder.config.use_attention_mask
-    device = device if device is not None else text_encoder.device
-
-    # Tokenization
-    uncond_input = tokenizer([""] * batch_size if negative_prompt is None else negative_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-
-    if prompt is not None:
-        prompt_input = tokenizer(prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-    else:
-        prompt_input = None
-    
-    if removing_prompt is not None:
-        removing_input = tokenizer(removing_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt")
-    else:
-        removing_input = None
-
-    # Encoding
-    prompt_embeds = text_encoder(
-        input_ids=uncond_input["input_ids"].to(device),
-        attention_mask=uncond_input["attention_mask"].to(device) if use_attention_mask else None,
-    )[0]
-    if prompt_input is not None:
-        prompt_emb = text_encoder(
-            input_ids=prompt_input["input_ids"].to(device),
-            attention_mask=prompt_input["attention_mask"].to(device) if use_attention_mask else None,
-        )[0]
-        prompt_embeds = torch.cat([prompt_embeds, prompt_emb], dim=0)
-    
-    if removing_input is not None:
-        removing_emb = text_encoder(
-            input_ids=removing_input["input_ids"].to(device),
-            attention_mask=removing_input["attention_mask"].to(device) if use_attention_mask else None,
-        )[0]
-        prompt_embeds = torch.cat([prompt_embeds, removing_emb], dim=0)
-
-    # Duplicate the embeddings for each image.
-    if num_images_per_prompt > 1:
-        seq_len = prompt_embeds.shape[1]
-        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.reshape(batch_size * num_images_per_prompt, seq_len, -1)
-    
-    return prompt_embeds
 
 def train_step(
     args: Arguments,
@@ -132,7 +64,6 @@ def train_step(
     t_ddpm_start = round((1 - (int(t_ddim) + 1) / args.ddim_steps) * args.ddpm_steps)
     t_ddpm_end   = round((1 - int(t_ddim)       / args.ddim_steps) * args.ddpm_steps)
     t_ddpm = torch.randint(t_ddpm_start, t_ddpm_end, (batch_size,),)
-    # print(f"t_ddim: {t_ddim}, t_ddpm: {t_ddpm}")
 
     # Prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
     extra_step_kwargs = prepare_extra_step_kwargs(noise_scheduler, generator, args.esd_eta)
@@ -179,22 +110,11 @@ def main(args: Arguments):
 
     # This script requires two CUDA devices
     # Sample latents on the first device, and train the unet on the second device
-    devices = args.device.split(",")
-    if len(devices) > 1:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
-    else:
-        devices = [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
+    devices = get_devices(args)
 
-    # Load pretrained models
-    noise_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    ddim_scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-
-    unet_teacher: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     unet_student: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, _, unet_teacher, ddim_scheduler, noise_scheduler = get_models(args)
 
-    # Freeze vae and text_encoder
     unet_teacher.requires_grad_(False)
     text_encoder.requires_grad_(False)
 

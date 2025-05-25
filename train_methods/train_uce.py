@@ -9,23 +9,24 @@ import torch
 from diffusers import UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTokenizer
 
+from train_methods.train_utils import get_devices, get_models, tokenize
 from utils import Arguments
 
 
 def edit_model(
-        unet: UNet2DConditionModel,
-        text_encoder: CLIPTextModel,
-        tokenizer: CLIPTokenizer,
-        old_text_,
-        new_text_,
-        retain_text_,
-        layers_to_edit=None,
-        lamb=0.1,
-        erase_scale = 0.1,
-        preserve_scale = 0.1,
-        with_to_k=True,
-        technique='tensor'
-    ):
+    unet: UNet2DConditionModel,
+    text_encoder: CLIPTextModel,
+    tokenizer: CLIPTokenizer,
+    old_text_,
+    new_text_,
+    retain_text_,
+    layers_to_edit=None,
+    lamb=0.1,
+    erase_scale = 0.1,
+    preserve_scale = 0.1,
+    with_to_k=True,
+    technique='tensor'
+):
     
     ### collect all the cross attns modules
     sub_nets = unet.named_children()
@@ -95,13 +96,7 @@ def edit_model(
                 old_text = t[0]
                 new_text = t[1]
                 texts = [old_text, new_text]
-                text_input = tokenizer(
-                    texts,
-                    padding="max_length",
-                    max_length=tokenizer.model_max_length,
-                    truncation=True,
-                    return_tensors="pt",
-                )
+                text_input = tokenize(texts, tokenizer)
                 with torch.no_grad():
                     text_embeddings = text_encoder(text_input.input_ids.to(text_encoder.device))[0]
                   
@@ -143,13 +138,7 @@ def edit_model(
                 mat2 += erase_scale*for_mat2
 
             for old_text, new_text in zip(ret_texts, ret_texts):
-                text_input = tokenizer(
-                    [old_text, new_text],
-                    padding="max_length",
-                    max_length=tokenizer.model_max_length,
-                    truncation=True,
-                    return_tensors="pt",
-                )
+                text_input = tokenize([old_text, new_text], tokenizer)
                 with torch.no_grad():
                     text_embeddings = text_encoder(text_input.input_ids.to(text_encoder.device))[0]
                 old_emb, new_emb = text_embeddings
@@ -177,7 +166,7 @@ def edit_model(
 def train(args: Arguments):    
     
     technique = args.technique
-    device = torch.device(f'cuda:{args.device.split(",")[0]}')
+    device = get_devices(args)[0]
     erase_scale = args.erase_scale
     anchor_concepts = args.anchor_concept
 
@@ -205,9 +194,7 @@ def train(args: Arguments):
 
     retain_texts = ['']
 
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
+    tokenizer, text_encoder, _, unet, _, _ = get_models(args)
     text_encoder.to(device)
     unet.to(device)
 

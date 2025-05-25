@@ -119,6 +119,8 @@ ddim_alphas = torch.tensor([0.9991, 0.9983, 0.9974, 0.9966, 0.9957, 0.9948, 0.99
         0.0052, 0.0051, 0.0051, 0.0050, 0.0049, 0.0049, 0.0048, 0.0048, 0.0047,
         0.0047])
 
+imagenette_labels = ["tench", "English springer", "cassette player", "chainsaw", "church", "French horn", "garbage truck", "gas pump", "golf ball", "parachute"]
+
 IMAGENET_1K = {0: 'tench, Tinca tinca',
  1: 'goldfish, Carassius auratus',
  2: 'great white shark, white shark, man-eater, man-eating shark, Carcharodon carcharias',

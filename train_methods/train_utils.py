@@ -12,12 +12,166 @@ import torch.nn.functional as F
 
 from tqdm.auto import tqdm
 from transformers import CLIPTokenizer, CLIPTextModel
-from diffusers import UNet2DConditionModel, DDIMScheduler
+from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, DDPMScheduler
 from diffusers.models.lora import LoRALinearLayer
 from diffusers.models.attention_processor import Attention
 
+from custom_text_encoder import CustomCLIPTextModel
+from utils import Arguments
 from train_methods.consts import LEN_EN_3K_VOCAB, LEN_TOKENIZER_VOCAB
 
+def get_models(args: Arguments) -> tuple[CLIPTokenizer, CLIPTextModel, AutoencoderKL, UNet2DConditionModel, DDIMScheduler, DDPMScheduler]:
+    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
+    vae = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
+    unet = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    ddim_scheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+    ddpm_scheduler = DDPMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
+
+    return tokenizer, text_encoder, vae, unet, ddim_scheduler, ddpm_scheduler
+
+
+def get_devices(args: Arguments) -> list[torch.device]:
+    devices = args.device.split(",")
+    if len(devices) > 1:
+        return [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[1]}")]
+    return [torch.device(f"cuda:{devices[0]}"), torch.device(f"cuda:{devices[0]}")]
+
+def tokenize(prompt: list[str], tokenizer: CLIPTokenizer) -> dict[str, torch.Tensor]:
+    return tokenizer(
+        prompt,
+        padding="max_length",
+        max_length=tokenizer.model_max_length, 
+        truncation=True, 
+        return_tensors="pt"
+    )
+
+def prompt_augmentation(content, sampled_indices=None, concept_type='object') -> list[str]:
+    if concept_type == 'object':
+        prompts = [
+            ("{} in a photo".format(content), content),
+            ("{} in a snapshot".format(content), content),
+            ("A snapshot of {}".format(content), content),
+            ("A photograph showcasing {}".format(content), content),
+            ("An illustration of {}".format(content), content),
+            ("A digital rendering of {}".format(content), content),
+            ("A visual representation of {}".format(content), content),
+            ("A graphic of {}".format(content), content),
+            ("A shot of {}".format(content), content),
+            ("A photo of {}".format(content), content),
+            ("A black and white image of {}".format(content), content),
+            ("A depiction in portrait form of {}".format(content), content),
+            ("A scene depicting {} during a public gathering".format(content), content),
+            ("{} captured in an image".format(content), content),
+            ("A depiction created with oil paints capturing {}".format(content), content),
+            ("An image of {}".format(content), content),
+            ("A drawing capturing the essence of {}".format(content), content),
+            ("An official photograph featuring {}".format(content), content),
+            ("A detailed sketch of {}".format(content), content),
+            ("{} during sunset/sunrise".format(content), content),
+            ("{} in a detailed portrait".format(content), content),
+            ("An official photo of {}".format(content), content),
+            ("Historic photo of {}".format(content), content),
+            ("Detailed portrait of {}".format(content), content),
+            ("A painting of {}".format(content), content),
+            ("HD picture of {}".format(content), content),
+            ("Magazine cover capturing {}".format(content), content),
+            ("Painting-like image of {}".format(content), content),
+            ("Hand-drawn art of {}".format(content), content),
+            ("An oil portrait of {}".format(content), content),
+            ("{} in a sketch painting".format(content), content),
+        ]
+    elif concept_type == 'style':
+        prompts = [
+            ("An artwork by {}".format(content), content),
+            ("Art piece by {}".format(content), content),
+            ("A recent creation by {}".format(content), content),
+            ("{}'s renowned art".format(content), content),
+            ("Latest masterpiece by {}".format(content), content),
+            ("A stunning image by {}".format(content), content),
+            ("An art in {}'s style".format(content), content),
+            ("Exhibition artwork of {}".format(content), content),
+            ("Art display by {}".format(content), content),
+            ("a beautiful painting by {}".format(content), content),
+            ("An image inspired by {}'s style".format(content), content),
+            ("A sketch by {}".format(content), content),
+            ("Art piece representing {}".format(content), content),
+            ("A drawing by {}".format(content), content),
+            ("Artistry showcasing {}".format(content), content),
+            ("An illustration by {}".format(content), content),
+            ("A digital art by {}".format(content), content),
+            ("A visual art by {}".format(content), content),
+            ("A reproduction inspired by {}'s colorful, expressive style".format(content), content),
+            ("Famous painting of {}".format(content), content),
+            ("A famous art by {}".format(content), content),
+            ("Artistic style of {}".format(content), content),
+            ("{}'s famous piece".format(content), content),
+            ("Abstract work of {}".format(content), content),
+            ("{}'s famous drawing".format(content), content),
+            ("Art from {}'s early period".format(content), content),
+            ("A portrait by {}".format(content), content),
+            ("An imitation reflecting the style of {}".format(content), content),
+            ("An painting from {}'s collection".format(content), content),
+            ("Vibrant reproduction of artwork by {}".format(content), content),
+            ("Artistic image influenced by {}".format(content), content),
+        ] 
+    else:
+        raise ValueError("unknown concept type.")
+    
+    if sampled_indices is not None:
+        return [prompts[i] for i in sampled_indices if i < len(prompts)]
+    return prompts
+   
+@torch.no_grad()
+def encode_prompt(
+    prompt: str | list[str]=None,
+    negative_prompt: str | list[str]=None,
+    removing_prompt: str | list[str]=None,
+    num_images_per_prompt: int=1,
+    text_encoder: CLIPTextModel=None,
+    tokenizer: CLIPTokenizer=None,
+    device: torch.device=None,
+):
+    """Encode a prompt into a text embedding. Prompt can be None."""
+    # Get text embeddings for unconditional and conditional prompts.
+    if isinstance(prompt, str):
+        prompt = [prompt]
+    
+    if removing_prompt is not None and isinstance(removing_prompt, str):
+        removing_prompt = [removing_prompt]
+        assert len(prompt) == len(removing_prompt), f"Safety concept must be the same length as prompt of length {len(prompt)}."
+    
+    if negative_prompt is not None and isinstance(negative_prompt, str):
+        negative_prompt = [negative_prompt]
+        assert len(prompt) == len(negative_prompt), f"Negative prompt must be the same length as prompt of length {len(prompt)}."
+
+    batch_size = len(prompt) if prompt is not None else 1
+
+    use_attention_mask = hasattr(text_encoder.config, "use_attention_mask") and text_encoder.config.use_attention_mask
+    device = device if device is not None else text_encoder.device
+
+    # Tokenization
+    uncond_input = tokenize([""] * batch_size if negative_prompt is None else negative_prompt, tokenizer)
+    prompt_input = tokenize(prompt, tokenizer) if prompt is not None else None    
+    removing_input = tokenize(removing_prompt, tokenizer) if removing_prompt is not None else None
+    
+    # Encoding
+    prompt_embeds = text_encoder(input_ids=uncond_input["input_ids"].to(device), attention_mask=uncond_input["attention_mask"].to(device) if use_attention_mask else None)[0]
+    if prompt_input is not None:
+        prompt_emb = text_encoder(input_ids=prompt_input["input_ids"].to(device), attention_mask=prompt_input["attention_mask"].to(device) if use_attention_mask else None)[0]
+        prompt_embeds = torch.cat([prompt_embeds, prompt_emb], dim=0)
+    
+    if removing_input is not None:
+        removing_emb = text_encoder(input_ids=removing_input["input_ids"].to(device), attention_mask=removing_input["attention_mask"].to(device) if use_attention_mask else None)[0]
+        prompt_embeds = torch.cat([prompt_embeds, removing_emb], dim=0)
+
+    # Duplicate the embeddings for each image.
+    if num_images_per_prompt > 1:
+        seq_len = prompt_embeds.shape[1]
+        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
+        prompt_embeds = prompt_embeds.reshape(batch_size * num_images_per_prompt, seq_len, -1)
+    
+    return prompt_embeds
 
 def gather_parameters(method: str, unet: UNet2DConditionModel) -> tuple[list[str], list[torch.nn.Parameter]]:
     """Gather the parameters to be optimized by the optimizer (U-Net)."""
@@ -53,6 +207,15 @@ def gather_parameters(method: str, unet: UNet2DConditionModel) -> tuple[list[str
                 continue
             names.append(name)
             parameters.append(param)
+        # for Adaptive-Guided-Erasure: layerの名前が合ってるかはチェックが必要
+        elif method == "xlayer":
+            if "attn2" in name:
+                if "output_blocks.6." in name or "output_blocks.8." in name:
+                    parameters.append(name)
+        elif method == "selflayer":
+            if "attn1" in name:
+                if "input_blocks.4." in name or "input_blocks.7." in name:
+                    parameters.append(param)
         else:
             raise ValueError(f"Unknown finetuning method: {method}")
 
@@ -106,18 +269,8 @@ def get_vocab(tokenizer: CLIPTokenizer, model_name, vocab='EN3K'):
     return tokenizer_vocab
 
 @torch.no_grad()
-def get_condition(
-    prompt: str |list[str],
-    tokenizer: CLIPTokenizer,
-    text_encoder: CLIPTextModel
-) -> torch.Tensor:
-    token_ids = tokenizer.encode(
-        [prompt] if isinstance(prompt, str) else prompt, 
-        truncation=True,
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        return_tensors="pt",
-    ).input_ids
+def get_condition(prompt: str | list[str], tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel) -> torch.Tensor:
+    token_ids = tokenize([prompt] if isinstance(prompt, str) else prompt, tokenizer).input_ids
     return text_encoder(token_ids.to(text_encoder.device))[0]
 
 @torch.no_grad()
@@ -166,28 +319,20 @@ def create_embedding_matrix(
 
 @torch.no_grad()
 def save_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, model_name='SD-v1-4', save_mode='array', vocab='EN3K'):
+    model_suffix = "" if model_name == 'SD-v1-4' else "_v2-1"
     if vocab == 'CLIP':
         for start in range(0, LEN_TOKENIZER_VOCAB, 5000):
             end = min(LEN_TOKENIZER_VOCAB, start + 5000)
             embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=start, end=end, model_name=model_name, save_mode=save_mode)
-            if model_name == 'SD-v1-4':
-                torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}.pt')
-            elif model_name == 'SD-v2-1':
-                torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}_v2-1.pt')
+            torch.save(embedding_matrix, f'models/embedding_matrix_{start}_{end}_{save_mode}{model_suffix}.pt')
     
     elif vocab == 'EN3K':
         embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=0, end=LEN_EN_3K_VOCAB, model_name=model_name, save_mode=save_mode, vocab='EN3K')
-        if model_name == 'SD-v1-4':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_EN3K.pt')
-        elif model_name == 'SD-v2-1':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_EN3K_v2-1.pt')
+        torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_EN3K{model_suffix}.pt')
     
     elif vocab == 'Imagenet':
         embedding_matrix = create_embedding_matrix(tokenizer, text_encoder, start=0, end=1000, model_name=model_name, save_mode=save_mode, vocab='Imagenet')
-        if model_name == 'SD-v1-4':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_Imagenet.pt')
-        elif model_name == 'SD-v2-1':
-            torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_Imagenet_v2-1.pt')
+        torch.save(embedding_matrix, f'models/embedding_matrix_{save_mode}_Imagenet{model_suffix}.pt')
 
     else:
         raise ValueError("vocab should be either 'CLIP' or 'EN3K'")
@@ -246,7 +391,6 @@ def detect_special_tokens(text: str) -> bool:
             return True
     return False
 
-
 @torch.no_grad()
 def search_closest_tokens(
     concept: str, 
@@ -267,34 +411,26 @@ def search_closest_tokens(
     # inverse the dictionary
     tokenizer_vocab_indexing = {v: k for k, v in tokenizer_vocab.items()}
 
-    concept_embedding: torch.Tensor = get_condition(concept, tokenizer, text_encoder)
+    concept_embedding = get_condition(concept, tokenizer, text_encoder)
 
     # Calculate the cosine similarity between the concept and all tokens
     # load the embedding matrix 
     all_similarities = []
+    model_suffix = "" if model_name == 'SD-v1-4' else "_v2-1"
+    if model_name not in ['SD-v1-4' or 'SD-v2-1']:
+        raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
     
     if vocab == 'CLIP':
         for start in range(0, LEN_TOKENIZER_VOCAB, 5000):
             end = min(LEN_TOKENIZER_VOCAB, start+5000)
-            if model_name == 'SD-v1-4':
-                embedding_matrix: torch.Tensor = torch.load(f'models/embedding_matrix_{start}_{end}_array.pt')
-            elif model_name == 'SD-v2-1':
-                embedding_matrix: torch.Tensor = torch.load(f'models/embedding_matrix_{start}_{end}_array_v2-1.pt')
-            else:
-                raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
-            
+            embedding_matrix: torch.Tensor = torch.load(f'models/embedding_matrix_{start}_{end}_array{model_suffix}.pt')
             if reshape:
                 concept_embedding = concept_embedding.view(concept_embedding.size(0), -1)
                 embedding_matrix = embedding_matrix.view(embedding_matrix.size(0), -1)
             similarities = get_similarities(sim, concept_embedding, embedding_matrix)
             all_similarities.append(similarities)
     elif vocab == 'EN3K':
-        if model_name == 'SD-v1-4':
-            embedding_matrix = torch.load(f'models/embedding_matrix_array_EN3K.pt')
-        elif model_name == 'SD-v2-1':
-            embedding_matrix = torch.load(f'models/embedding_matrix_array_EN3K_v2-1.pt')
-        else:
-            raise ValueError("model_name should be either 'SD-v1-4' or 'SD-v2-1'")
+        embedding_matrix = torch.load(f'models/embedding_matrix_array_EN3K{model_suffix}.pt')
         if reshape:
             concept_embedding = concept_embedding.view(concept_embedding.size(0), -1)
             embedding_matrix = embedding_matrix.view(embedding_matrix.size(0), -1)
@@ -398,21 +534,13 @@ def sample_until(
     return latents
 
 def apply_model(unet: UNet2DConditionModel, z: torch.Tensor, t_enc_ddpm: torch.Tensor, emb_0: torch.Tensor) -> torch.Tensor:
-    # get conditional and unconditional scores from frozen model at time step t and image z
-
     device = unet.device
-    z = z.to(device)
-    t_enc_ddpm = t_enc_ddpm.to(device)
-    emb_0 = emb_0.to(device)
-
-    noise_pred = unet(z, t_enc_ddpm, encoder_hidden_states=emb_0).sample
-    return noise_pred
+    return unet(z.to(device), t_enc_ddpm.to(device), encoder_hidden_states=emb_0.to(device)).sample
 
 def id2embedding(tokenizer: CLIPTokenizer, all_embeddings: torch.Tensor, input_ids: torch.Tensor, device) -> torch.Tensor:
     input_one_hot = F.one_hot(input_ids.view(-1), num_classes = len(tokenizer.get_vocab())).float()
     input_one_hot = torch.unsqueeze(input_one_hot,0).to(device)
-    input_embeds = input_one_hot @ all_embeddings
-    return input_embeds
+    return input_one_hot @ all_embeddings
 
 def init_adv(k, tokenizer, all_embeddings, device, batch = 1, attack_init_embd = None):
     # Different attack types have different initializations (Attack types: add, insert)
@@ -427,30 +555,27 @@ def init_adv(k, tokenizer, all_embeddings, device, batch = 1, attack_init_embd =
         tmp_embeddings = id2embedding(tokenizer, all_embeddings, tmp_ids, device)
         tmp_embeddings = tmp_embeddings.reshape(batch, k, 768)
         adv_embedding.data = tmp_embeddings.data
-    adv_embedding = adv_embedding.detach().requires_grad_(True)
+    return adv_embedding.detach().requires_grad_(True)
     
-    return adv_embedding
-
-def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler, emb_0, emb_p, start_guidance, devices, ddim_steps, criteria, k, all_embeddings, attack_type, attack_embd_type, attack_step, attack_lr, attack_init=None, attack_init_embd = None, attack_method='pgd'):
+def soft_prompt_attack(
+    word: str,
+    unet: UNet2DConditionModel,
+    unet_orig: UNet2DConditionModel,
+    tokenizer: CLIPTokenizer,
+    text_encoder: CustomCLIPTextModel,
+    scheduler: DDIMScheduler,
+    emb_0: torch.Tensor,
+    emb_p: torch.Tensor,
+    devices: list[torch.device],
+    criteria,
+    all_embeddings: torch.Tensor,
+    args: Arguments,
+    attack_init_embd: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     
-    '''
-    Perform soft prompt attack on the ESD model
-    Args:
-        attack_type: str
-            The type of attack (add or insert)
-        attack_embd_type: str
-            The type of adversarial embedding (condition_embd or word_embd)
-        attack_step: int
-            The number of steps for the attack
-        attack_lr: float
-            The learning rate for the attack
-        attack_init: str
-            The initialization method for the attack (latest or random)
-        attack_init_embd: torch.Tensor
-            The initial adversarial embedding
-    '''
+    k = args.adv_prompt_num
     orig_prompt_len = len(word.split())
-    if attack_type == 'add':
+    if args.adv_attack_type == 'add':
         k = orig_prompt_len
         
     quick_sample_till_t = lambda x, s, code, t: sample_until(
@@ -460,49 +585,48 @@ def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler
         scheduler=scheduler,
         prompt_embeds=x,
         guidance_scale=s,
-        # extra_step_kwargs: Optional[dict[str, Any]]=None,
     )
     
     # Word Tokenization
-    text_input = tokenizer(word, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt", truncation=True)
+    text_input = tokenize(word, tokenizer)
     sot_id, mid_id, replace_id, eot_id = split_id(text_input.input_ids.to(devices[0]), k, orig_prompt_len)
     
     # Word embedding for the prompt
     text_embeddings = id2embedding(tokenizer, all_embeddings, text_input.input_ids.to(devices[0]), devices[0])
     sot_embd, mid_embd, _, eot_embd = split_embd(text_embeddings, k, orig_prompt_len)
     
-    if attack_init == 'latest':
+    if args.adv_attack_init == 'latest':
         adv_embedding = init_adv(k, tokenizer, all_embeddings, devices[0], 1, attack_init_embd)
-    elif attack_init == 'random':
+    elif args.adv_attack_init == 'random':
         adv_embedding = init_adv(k, tokenizer, all_embeddings, devices[0], 1)
     
     adv_embedding.requires_grad = True
-    attack_opt = optim.Adam([adv_embedding], lr=attack_lr)
+    attack_opt = optim.Adam([adv_embedding], lr=args.adv_attack_lr)
     
-    if attack_embd_type == 'condition_embd':
-        input_adv_condition_embedding = construct_embd(k, adv_embedding, attack_type, sot_embd, mid_embd, eot_embd)
-        adv_input_ids = construct_id(k, replace_id, attack_type, sot_id, eot_id, mid_id)
+    if args.adv_attack_embd_type == 'condition_embd':
+        input_adv_condition_embedding = construct_embd(k, adv_embedding, args.adv_attack_type, sot_embd, mid_embd, eot_embd)
+        adv_input_ids = construct_id(k, replace_id, args.adv_attack_type, sot_id, eot_id, mid_id)
     
-    print(f'[{attack_type}] Starting {attack_method} attack on "{word}"')
-    for i in range(attack_step):
+    print(f'[{args.adv_attack_type}] Starting {args.adv_attack_method} attack on "{word}"')
+    for i in range(args.adv_attack_step):
         # ===== Randomly sample a time step from 0 to 1000 =====
-        t_enc = torch.randint(ddim_steps, (1,), device=devices[0]) # time step from 1000 to 0 (0 being good)
-        og_num = round((int(t_enc)/ddim_steps)*1000)
-        og_num_lim = round((int(t_enc+1)/ddim_steps)*1000)
+        t_enc = torch.randint(args.ddim_steps, (1,), device=devices[0]) # time step from 1000 to 0 (0 being good)
+        og_num = round((int(t_enc)/args.ddim_steps)*1000)
+        og_num_lim = round((int(t_enc+1)/args.ddim_steps)*1000)
         t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=devices[0])
         start_code = torch.randn((1, 4, 64, 64)).to(devices[0]) # random inital noise            
     
         with torch.no_grad():
             # generate an image with the concept from ESD model
             z = quick_sample_till_t(
-                torch.cat([emb_0, emb_p], dim=0) if start_guidance > 1 else emb_p,
-                start_guidance, start_code, int(t_enc)) # emb_p seems to work better instead of emb_0
+                torch.cat([emb_0, emb_p], dim=0) if args.start_guidance > 1 else emb_p,
+                args.start_guidance, start_code, int(t_enc)) # emb_p seems to work better instead of emb_0
             e_p = apply_model(unet_orig, z, t_enc_ddpm, emb_p)
         
         # Construct input_ids and input_embeds for the ESD model
-        if attack_embd_type == 'word_embd':
-            input_adv_word_embedding = construct_embd(k, adv_embedding, attack_type, sot_embd, mid_embd, eot_embd)
-            adv_input_ids = construct_id(k, replace_id, attack_type, sot_id, eot_id, mid_id)
+        if args.adv_attack_embd_type == 'word_embd':
+            input_adv_word_embedding = construct_embd(k, adv_embedding, args.adv_attack_type, sot_embd, mid_embd, eot_embd)
+            adv_input_ids = construct_id(k, replace_id, args.adv_attack_type, sot_id, eot_id, mid_id)
             input_adv_condition_embedding = text_encoder(input_ids = adv_input_ids.to(devices[0]), inputs_embeds=input_adv_word_embedding)[0]
         
         # get conditional score from ESD model with adversarial condition embedding
@@ -512,9 +636,9 @@ def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler
         loss: torch.Tensor = criteria(e_n.to(devices[0]), e_p.to(devices[0]))
         loss.backward(retain_graph=True)
         
-        if attack_method == 'pgd':
+        if args.adv_attack_method == 'pgd':
             attack_opt.step()
-        elif attack_method == 'fast_at':
+        elif args.adv_attack_method == 'fast_at':
             adv_embedding.grad.sign_()
             attack_opt.step()
         else:
@@ -522,9 +646,9 @@ def soft_prompt_attack(word, unet, unet_orig, tokenizer, text_encoder, scheduler
         
         print(f'Attack_Loss: {loss.item()}')
     
-    if attack_embd_type == 'condition_embd':
+    if args.adv_attack_embd_type == 'condition_embd':
         return input_adv_condition_embedding, adv_input_ids 
-    elif attack_embd_type == 'word_embd':
+    elif args.adv_attack_embd_type == 'word_embd':
         return input_adv_word_embedding, adv_input_ids 
     else:
         raise ValueError('attack_embd_type must be either condition_embd or word_embd')
@@ -539,15 +663,15 @@ def split_id(input_ids, k, orig_prompt_len):
 
 def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd: torch.Tensor, mid_embd: torch.Tensor, eot_embd: torch.Tensor):
     if insertion_location == 'prefix_k':     # Prepend k words before the original prompt
-        embedding = torch.cat([sot_embd,adv_embedding,mid_embd,eot_embd],dim=1)
+        embedding = torch.cat([sot_embd,adv_embedding, mid_embd,eot_embd], dim=1)
     elif insertion_location == 'replace_k':  # Replace k words in the original prompt
         replace_embd = eot_embd[:,0,:].repeat(1,mid_embd.shape[1],1)
-        embedding = torch.cat([sot_embd,adv_embedding,replace_embd,eot_embd],dim=1)
+        embedding = torch.cat([sot_embd,adv_embedding, replace_embd,eot_embd], dim=1)
     elif insertion_location == 'add':      # Add perturbation to the original prompt
         replace_embd = eot_embd[:,0,:].repeat(1,k,1)
-        embedding = torch.cat([sot_embd,adv_embedding+mid_embd,replace_embd,eot_embd],dim=1)
+        embedding = torch.cat([sot_embd ,adv_embedding + mid_embd, replace_embd,eot_embd], dim=1)
     elif insertion_location == 'suffix_k':   # Append k words after the original prompt
-        embedding = torch.cat([sot_embd,mid_embd,adv_embedding,eot_embd],dim=1)
+        embedding = torch.cat([sot_embd, mid_embd, adv_embedding, eot_embd], dim=1)
     elif insertion_location == 'mid_k':      # Insert k words in the middle of the original prompt
         embedding = [sot_embd,]
         total_num = mid_embd.size(1)
@@ -555,7 +679,7 @@ def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd:
         embedding.append(adv_embedding)
         embedding.append(mid_embd[:,total_num//2:,:])
         embedding.append(eot_embd)
-        embedding = torch.cat(embedding,dim=1)
+        embedding = torch.cat(embedding, dim=1)
     elif insertion_location == 'insert_k':   # seperate k words into the original prompt with equal intervals
         embedding = [sot_embd,]
         total_num = mid_embd.size(1)
@@ -565,8 +689,7 @@ def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd:
             embedding.append(adv_embedding[:,i,:].unsqueeze(1))
         embedding.append(mid_embd[:,internals*(i+1):,:])
         embedding.append(eot_embd)
-        embedding = torch.cat(embedding,dim=1)
-        
+        embedding = torch.cat(embedding, dim=1)
     elif insertion_location == 'per_k_words':
         embedding = [sot_embd,]
         for i in range(adv_embedding.size(1) - 1):
@@ -575,7 +698,7 @@ def construct_embd(k, adv_embedding: torch.Tensor, insertion_location, sot_embd:
         embedding.append(adv_embedding[:,-1,:].unsqueeze(1))
         embedding.append(mid_embd[:,3*(i+1):,:])
         embedding.append(eot_embd)
-        embedding = torch.cat(embedding,dim=1)
+        embedding = torch.cat(embedding, dim=1)
     return embedding
 
 def construct_id(k, adv_id: torch.Tensor, insertion_location, sot_id, eot_id: torch.Tensor, mid_id: torch.Tensor):
@@ -624,36 +747,32 @@ def construct_id(k, adv_id: torch.Tensor, insertion_location, sot_id, eot_id: to
         input_ids = torch.cat(input_ids,dim=1)
     return input_ids
 
-def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_orig, text_encoder, scheduler, emb_0, emb_p, retain_emb_p,  emb_n, retain_emb_n, start_guidance, negative_guidance, devices, ddim_steps, criteria, adv_input_ids, attack_embd_type, adv_embd=None) -> torch.Tensor:
-    """_summary_
-
-    Args:
-        unet: ESD model
-        unet_orig: frozen DDPM model
-        scheduler: DDIMSampler for DDPM model
-        
+def get_train_loss_retain(
+    args: Arguments,
+    unet: UNet2DConditionModel,
+    unet_orig: UNet2DConditionModel,
+    text_encoder: CustomCLIPTextModel,
+    scheduler: DDIMScheduler,
+    emb_0: torch.Tensor,
+    emb_p: torch.Tensor,
+    retain_emb_p: torch.Tensor,
+    emb_n: Optional[torch.Tensor],
+    retain_emb_n: torch.Tensor,
+    devices: list[torch.device],
+    criteria,
+    adv_input_ids,
+    adv_embd: Optional[torch.Tensor]
+) -> torch.Tensor:
+    """
         emb_0: unconditional embedding
         emb_p: conditional embedding (for ground truth concept)
         emb_n: conditional embedding (for modified concept)
         
-        start_guidance: unconditional guidance for ESD model
-        negative_guidance: negative guidance for ESD model
-        
-        devices: list of devices for ESD and DDPM models 
-        ddim_steps: number of steps for DDIMSampler
-        ddim_eta: eta for DDIMSampler
-        image_size: image size for DDIMSampler
-        
-        criteria: loss function for ESD model
-        
         adv_input_ids: input_ids for adversarial word embedding
         adv_emb_n: adversarial conditional embedding
         adv_word_emb_n: adversarial word embedding
-
-    Returns:
-        loss: training loss for ESD model
     """
-    # quick_sample_till_t = lambda x, s, code, batch, t: sample_model(model, sampler, x, image_size, image_size, ddim_steps, s, ddim_eta, start_code=code, n_samples=batch, till_T=t, verbose=False)
+
     quick_sample_till_t = lambda x, s, code, batch, t: sample_until(
         until=t,
         latents=code,
@@ -661,45 +780,41 @@ def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_
         scheduler=scheduler,
         prompt_embeds=x,
         guidance_scale=s,
-        # extra_step_kwargs: Optional[dict[str, Any]]=None,
     )
     
-    t_enc = torch.randint(ddim_steps, (1,), device=devices[0])
+    t_enc = torch.randint(args.ddim_steps, (1,), device=devices[0])
     # time step from 1000 to 0 (0 being good)
-    og_num = round((int(t_enc) / ddim_steps) * 1000)
-    og_num_lim = round((int(t_enc + 1) / ddim_steps) * 1000)
-
+    og_num = round((int(t_enc) / args.ddim_steps) * 1000)
+    og_num_lim = round((int(t_enc + 1) / args.ddim_steps) * 1000)
     t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=devices[0])
-
     start_code = torch.randn((1, 4, 64, 64)).to(devices[0])
-    if retain_train == 'reg':
-        retain_start_code = torch.randn((retain_batch, 4, 64, 64)).to(devices[0])
+    if args.adv_retain_train == 'reg':
+        retain_start_code = torch.randn((args.adv_retain_batch, 4, 64, 64)).to(devices[0])
     
     with torch.no_grad():
         # generate an image with the concept from ESD model
         z = quick_sample_till_t(
-            torch.cat([emb_0, emb_p], dim=0) if start_guidance > 1 else emb_p, 
-            start_guidance, start_code, 1, int(t_enc)) # emb_p seems to work better instead of emb_0
+            torch.cat([emb_0, emb_p], dim=0) if args.start_guidance > 1 else emb_p, 
+            args.start_guidance, start_code, 1, int(t_enc)) # emb_p seems to work better instead of emb_0
         # get conditional and unconditional scores from frozen model at time step t and image z
         e_0 = apply_model(unet_orig, z, t_enc_ddpm, emb_0)
         e_p = apply_model(unet_orig, z, t_enc_ddpm, emb_p)
         
-        if retain_train == 'reg':
+        if args.adv_retain_train == 'reg':
             retain_z = quick_sample_till_t(
-                torch.cat([emb_0, retain_emb_p], dim=0) if start_guidance > 1 else retain_emb_p,
-                start_guidance, retain_start_code, retain_batch, int(t_enc)) # emb_p seems to work better instead of emb_0
+                torch.cat([emb_0, retain_emb_p], dim=0) if args.start_guidance > 1 else retain_emb_p,
+                args.start_guidance, retain_start_code, args.adv_retain_batch, int(t_enc)) # emb_p seems to work better instead of emb_0
             retain_e_p = apply_model(unet_orig, retain_z, t_enc_ddpm, retain_emb_p)
     
     if adv_embd is None:
         e_n = apply_model(unet, z, t_enc_ddpm, emb_n)
     else:
-        if attack_embd_type == 'condition_embd':
+        if args.adv_attack_embd_type == 'condition_embd':
             # Train with adversarial conditional embedding
             e_n = apply_model(unet, z, t_enc_ddpm, adv_embd)
-        elif attack_embd_type == 'word_embd':
+        elif args.adv_attack_embd_type == 'word_embd':
             # Train with adversarial word embedding
-            print('====== Training with adversarial word embedding =====')
-            adv_emb_n = text_encoder(input_ids = adv_input_ids.to(devices[0]), inputs_embeds=adv_embd.to(devices[0]))[0]
+            adv_emb_n = text_encoder(input_ids=adv_input_ids.to(devices[0]), inputs_embeds=adv_embd.to(devices[0]))[0]
             e_n = apply_model(unet, z, t_enc_ddpm, adv_emb_n)
         else:
             raise ValueError('attack_embd_type must be either condition_embd or word_embd')
@@ -708,31 +823,20 @@ def get_train_loss_retain(retain_batch, retain_train, retain_loss_w, unet, unet_
     e_p.requires_grad = False
     
     # reconstruction loss for ESD objective from frozen model and conditional score of ESD model
-    if retain_train == 'reg':
-        # reconstruction loss for ESD objective from frozen model and conditional score of ESD model
-        print('====== Training with retain batch =====')
-        unlearn_loss = criteria(e_n.to(devices[0]), e_0.to(devices[0]) - (negative_guidance*(e_p.to(devices[0]) - e_0.to(devices[0])))) 
-        
+    unlearn_loss = criteria(e_n.to(devices[0]), e_0.to(devices[0]) - (args.negative_guidance*(e_p.to(devices[0]) - e_0.to(devices[0])))) 
+    if args.adv_retain_train == 'reg':
         retain_e_n = apply_model(unet, retain_z, t_enc_ddpm, retain_emb_n)
-        
         retain_e_p.requires_grad = False
         retain_loss = criteria(retain_e_n.to(devices[0]), retain_e_p.to(devices[0]))
-        
-        loss = unlearn_loss + retain_loss_w * retain_loss
-        return loss
-        
-    else:
-        # reconstruction loss for ESD objective from frozen model and conditional score of ESD model
-        unlearn_loss = criteria(e_n.to(devices[0]), e_0.to(devices[0]) - (negative_guidance*(e_p.to(devices[0]) - e_0.to(devices[0])))) 
-        return unlearn_loss
+        return unlearn_loss + args.adv_retain_loss_w * retain_loss
+
+    return unlearn_loss
 
 
-##########################################
 """
 utils for MACE
 
 """
-##########################################
 
 def importance_sampling_fn(t, temperature=0.05):
     """Importance Sampling Function f(t)"""
@@ -932,7 +1036,17 @@ def get_ca_layers(unet: UNet2DConditionModel, with_to_k=True):
     return projection_matrices, ca_layers, og_matrices
 
 @torch.no_grad()
-def prepare_k_v(text_encoder, projection_matrices, ca_layers, og_matrices, test_set, tokenizer, with_to_k=True, all_words=False, prepare_k_v_for_lora=False):
+def prepare_k_v(
+    text_encoder: CLIPTextModel, 
+    projection_matrices, 
+    ca_layers,
+    og_matrices,
+    test_set,
+    tokenizer: CLIPTokenizer,
+    with_to_k=True,
+    all_words=False,
+    prepare_k_v_for_lora=False
+):
     
     all_contexts, all_valuess = [], []
     
@@ -958,13 +1072,7 @@ def prepare_k_v(text_encoder, projection_matrices, ca_layers, og_matrices, test_
         texts_new = [item[0] for item in curr_item["new"]]
         texts_combined = texts_old + texts_new
 
-        tokenized_inputs = tokenizer(
-            texts_combined,
-            padding="max_length",
-            max_length=tokenizer.model_max_length,
-            truncation=True,
-            return_tensors="pt"
-        )
+        tokenized_inputs = tokenize(texts_combined, tokenizer)
         
         # Text embeddings
         text_embeddings = text_encoder(tokenized_inputs.input_ids.to(text_encoder.device))[0]

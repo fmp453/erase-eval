@@ -1,27 +1,22 @@
 # Ablating Concepts in Text-to-Image Diffusion Models (AC)
 
 import os
-import random
 import warnings
 
-import numpy as np
 import pandas as pd
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
 
 from collections import OrderedDict
-from itertools import product
 
-from PIL import Image
 from tqdm import trange
-from torchvision import transforms
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
-from transformers import CLIPTextModel, CLIPTokenizer
-from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline
 
-from train_methods.train_utils import collate_fn
+from train_methods.data import AblatingConceptDataset
+from train_methods.train_utils import collate_fn, get_devices, get_models
 from utils import Arguments
 
 warnings.filterwarnings("ignore")
@@ -29,138 +24,11 @@ warnings.filterwarnings("ignore")
 # model-based concept ablation
 # ref: https://huggingface.co/spaces/nupurkmr9/concept-ablation/blob/main/concept-ablation-diffusers/train.py
 
-class CustomDataset(Dataset):
-    # ref: https://huggingface.co/spaces/nupurkmr9/concept-ablation/blob/main/concept-ablation-diffusers/utils.py
-    """
-    A dataset to prepare the instance and class images with the prompts for fine-tuning the model.
-    It pre-processes the images and the tokenizes prompts.
-    """
-
-    def __init__(self, concept_type, image_dir, prompt_path, tokenizer, concept, anchor_concept=None, size=512, hflip=False, aug=True):
-        
-        self.size = size
-        self.tokenizer = tokenizer
-        self.interpolation = Image.Resampling.BILINEAR
-        self.aug = aug
-        self.concept_type = concept_type
-        self.concept = concept
-        self.anchor_concept = anchor_concept
-
-        self.instance_images_path = []
-        self.class_images_path = []
-        inst_images_path = []
-        for i, j in product(range(200), range(5)):
-            inst_images_path.append(f"{image_dir}/{i:03}-{j}.png")
-        inst_prompt = pd.read_csv(prompt_path)["prompt"].to_list()
-        inst_prompt = [x.lower() for x in inst_prompt]
-        
-        # caption_target : prompt
-        # class_prompt or instance prompt: anchor prompt
-        for i in range(200):
-            for j in range(5):
-                self.instance_images_path.append((inst_images_path[i * 5 + j], inst_prompt[i], self.concept))
-
-        random.shuffle(self.instance_images_path)
-        self.num_instance_images = len(self.instance_images_path)
-        self.num_class_images = len(self.class_images_path)
-        self._length = max(self.num_class_images, self.num_instance_images)
-        self.flip = transforms.RandomHorizontalFlip(0.5 * hflip)
-
-        self.image_transforms = transforms.Compose([
-            self.flip,
-            transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.RandomCrop(size),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5]),
-        ])
-
-    def __len__(self):
-        return self._length
-
-    def preprocess(self, image, scale, resample):
-        outer, inner = self.size, scale
-        if scale > self.size:
-            outer, inner = scale, self.size
-        top, left = np.random.randint(0, outer - inner + 1), np.random.randint(0, outer - inner + 1)
-        image = image.resize((scale, scale), resample=resample)
-        image = np.array(image).astype(np.uint8)
-        image = (image / 127.5 - 1.0).astype(np.float32)
-        instance_image = np.zeros((self.size, self.size, 3), dtype=np.float32)
-        mask = np.zeros((self.size // 8, self.size // 8))
-        if scale > self.size:
-            instance_image = image[top: top + inner, left: left + inner, :]
-            mask = np.ones((self.size // 8, self.size // 8))
-        else:
-            instance_image[top: top + inner, left: left + inner, :] = image
-            mask[top // 8 + 1: (top + scale) // 8 - 1, left // 8 + 1: (left + scale) // 8 - 1] = 1.
-        return instance_image, mask
-
-    def __getprompt__(self, instance_prompt: str, instance_target):
-        if self.concept_type == 'style':
-            r = np.random.choice([0, 1, 2])
-            instance_prompt = f'{instance_prompt}, in the style of {instance_target}' if r == 0 else f'in {instance_target}\'s style, {instance_prompt}' if r == 1 else f'in {instance_target}\'s style, {instance_prompt}'
-        elif self.concept_type == 'object':
-            # cat+grumpy cat
-            # anchor, target = instance_target.split('+')
-            instance_prompt = instance_prompt.replace(self.anchor_concept, self.concept)
-        return instance_prompt
-
-    def __getitem__(self, index):
-        instance_image, instance_prompt, instance_target = self.instance_images_path[index % self.num_instance_images]
-        instance_image = Image.open(instance_image)
-        if not instance_image.mode == "RGB":
-            instance_image = instance_image.convert("RGB")
-        instance_image = self.flip(instance_image)
-        # modify instance prompt according to the concept_type to include target concept
-        # multiple style/object fine-tuning
-        if ';' in instance_target:
-            instance_target = instance_target.split(';')
-            instance_target = instance_target[index % len(instance_target)]
-
-        instance_anchor_prompt = instance_prompt
-        instance_prompt = self.__getprompt__(instance_prompt, instance_target)
-        # apply resize augmentation and create a valid image region mask
-        random_scale = self.size
-        if self.aug:
-            random_scale = np.random.randint(self.size // 3, self.size + 1) if np.random.uniform() < 0.66 else np.random.randint(int(1.2 * self.size), int(1.4 * self.size))
-        instance_image, mask = self.preprocess(instance_image, random_scale, self.interpolation)
-
-        if random_scale < 0.6 * self.size:
-            instance_prompt = np.random.choice(["a far away ", "very small "]) + instance_prompt
-        elif random_scale > self.size:
-            instance_prompt = np.random.choice(["zoomed in ", "close up "]) + instance_prompt
-
-        example = {}
-        example["instance_images"] = torch.from_numpy(instance_image).permute(2, 0, 1)
-        example["mask"] = torch.from_numpy(mask)
-
-        example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-        example["instance_anchor_prompt_ids"] = self.tokenizer(
-            instance_anchor_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-
-        return example
-
 def train(args: Arguments):
     
-    tokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
-    scheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
+    tokenizer, text_encoder, vae, unet, scheduler, _ = get_models(args)
     
-    device = args.device.split(",")[0]
-    device = f"cuda:{device}"
+    device = get_devices(args)[0]
 
     text_encoder.eval()
     vae.eval()
@@ -189,15 +57,13 @@ def train(args: Arguments):
     print(f"{cnt / tot * 100}% parameters are updated.")
 
     optimizer = optim.Adam(unet.parameters(), lr=args.ac_lr, weight_decay=1e-2)
-    dataset = CustomDataset(
+    dataset = AblatingConceptDataset(
         concept_type=args.ac_concept_type,
         image_dir=args.ac_img_dir,
         prompt_path=args.ac_prompt_path,
         tokenizer=tokenizer,
         concept=args.concepts,
         anchor_concept=args.anchor_concept,
-        size=512,
-        hflip=True,
         aug=(args.ac_concept_type != "style")
     )
 

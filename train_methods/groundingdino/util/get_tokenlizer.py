@@ -1,7 +1,7 @@
 from transformers import AutoTokenizer, BertModel, BertTokenizer, RobertaModel, RobertaTokenizerFast
 
 
-def get_tokenlizer(text_encoder_type, bert_base_uncased_path):
+def get_tokenlizer(text_encoder_type, bert_base_uncased_path) -> AutoTokenizer:
     if not isinstance(text_encoder_type, str):
         # print("text_encoder_type is not a str")
         if hasattr(text_encoder_type, "text_encoder_type"):
@@ -20,8 +20,7 @@ def get_tokenlizer(text_encoder_type, bert_base_uncased_path):
 
     print("final text_encoder_type: {}".format(text_encoder_type))
 
-    tokenizer = AutoTokenizer.from_pretrained(text_encoder_type)
-    return tokenizer
+    return AutoTokenizer.from_pretrained(text_encoder_type)
 
 
 def get_pretrained_language_model(text_encoder_type, bert_base_uncased_path):
