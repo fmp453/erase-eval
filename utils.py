@@ -251,7 +251,13 @@ class Arguments(BaseModel):
     gloce_buffer_path: Optional[str] = Field("./importance_cache/buffers")
     gloce_n_target_concepts: Optional[int] = Field(1, description="Number of target concepts")
     gloce_n_anchor_concepts: Optional[int] = Field(5, description="Number of anchor concepts")
-    gloce_tar_concept_idx: Optional[int] = Field(0, description="Target concept index")    
+    gloce_tar_concept_idx: Optional[int] = Field(0, description="Target concept index")
+    gloce_delta: Optional[float] = Field(1e-5)
+    gloce_alpha: Optional[float] = Field(1.0)
+    gloce_replace_word: Literal["celeb", "artist", "explicit"] = Field("artist")
+    gloce_prompts_file_target: Optional[str] = Field("captions/prompt_train_gloce_target.yaml")
+    gloce_prompts_file_anchor: Optional[str] = Field("captions/prompt_train_gloce_anchor.yaml")
+    gloce_prompts_file_update: Optional[str] = Field("captions/prompt_train_gloce_update.yaml")
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")

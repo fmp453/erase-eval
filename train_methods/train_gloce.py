@@ -4,8 +4,9 @@
 import os
 import math
 import random
+import yaml
 from pathlib import Path
-from typing import Optional, Literal, Any
+from typing import Optional, Any
 
 import numpy as np
 import pandas as pd
@@ -14,135 +15,17 @@ import torch.nn as nn
 
 from pydantic import BaseModel, model_validator
 from transformers import CLIPTextModel, CLIPTokenizer
-from diffusers import StableDiffusionPipeline, UNet2DConditionModel
+from diffusers import UNet2DConditionModel
 from safetensors.torch import save_file
 
 from utils import Arguments
-from train_methods.train_utils import get_condition
-
-ACTION_TYPES = Literal["erase", "erase_with_la"]
-
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]= "0"
-DEVICE_CUDA = torch.device("cuda")
-
-class PromptEmbedsPair:
-    target: torch.FloatTensor  # the concept that do not want to generate 
-    positive: torch.FloatTensor  # generate the concept
-    unconditional: torch.FloatTensor  # uncondition (default should be empty)
-    neutral: torch.FloatTensor  # base condition (default should be empty)
-    use_template: bool = False  # use clip template or not
-
-    guidance_scale: float
-    resolution: int
-    batch_size: int
-    dynamic_crops: bool
-
-    loss_fn: torch.nn.Module
-    action: ACTION_TYPES
-
-    def __init__(
-        self,
-        loss_fn: torch.nn.Module,
-        target: torch.FloatTensor,
-        positive: torch.FloatTensor,
-        unconditional: torch.FloatTensor,
-        neutral: torch.FloatTensor,
-        settings=None #: PromptSettings,
-    ) -> None:
-        self.loss_fn = loss_fn
-        self.target = target
-        self.positive = positive
-        self.unconditional = unconditional
-        self.neutral = neutral
-
-        if settings is None:
-            # applying the default values of PromptSetting
-            self.use_template = False
-            self.guidance_scale = 1.0
-            self.resolution = 512
-            self.batch_size = 1
-            self.dynamic_crops = False
-            self.action = "erase_with_la"
-            self.la_strength = 1000.0
-            self.sampling_batch_size = 4        
-        else:
-            self.use_template = settings.use_template
-            self.guidance_scale = settings.guidance_scale
-            self.resolution = settings.resolution
-            self.dynamic_resolution = settings.dynamic_resolution
-            self.batch_size = settings.batch_size
-            self.dynamic_crops = settings.dynamic_crops
-            self.action = settings.action
-            self.la_strength = settings.la_strength
-            self.sampling_batch_size = settings.sampling_batch_size
-    
-    def _erase(
-        self,
-        target_latents: torch.FloatTensor,  # "van gogh"
-        positive_latents: torch.FloatTensor,  # "van gogh"
-        neutral_latents: torch.FloatTensor,  # ""
-        **kwargs,
-    ) -> torch.FloatTensor:
-        """Target latents are going not to have the positive concept."""
-
-        erase_loss = self.loss_fn(
-            target_latents,
-            neutral_latents
-            - self.guidance_scale * (positive_latents - neutral_latents),
-        )
-        losses = {
-            "loss": erase_loss,
-            "loss/erase": erase_loss,
-        }
-        return losses
-    
-    def _erase_with_la(
-        self,
-        target_latents: torch.FloatTensor,  # "van gogh"
-        positive_latents: torch.FloatTensor,  # "van gogh"
-        neutral_latents: torch.FloatTensor,  # ""
-        anchor_latents: torch.FloatTensor, 
-        anchor_latents_ori: torch.FloatTensor, 
-        **kwargs,
-    ):
-        anchoring_loss = self.loss_fn(anchor_latents, anchor_latents_ori)
-        erase_loss = self._erase(
-            target_latents=target_latents,
-            positive_latents=positive_latents,
-            neutral_latents=neutral_latents,
-        )["loss/erase"]
-        losses = {
-            "loss": erase_loss + self.la_strength * anchoring_loss,
-            "loss/erase": erase_loss,
-            "loss/anchoring": anchoring_loss
-        }
-        return losses
-
-    def loss(self, **kwargs,):
-        if self.action == "erase":
-            return self._erase(**kwargs)
-        else:
-            return self._erase_with_la(**kwargs)
+from train_methods.train_utils import get_condition, get_devices
 
 class PromptSettings(BaseModel):  # yaml
     target: str
     positive: str = None  # if None, target will be used
     unconditional: str = ""  # default is ""
     neutral: str = None  # if None, unconditional will be used
-    action: ACTION_TYPES = "erase"  # default is "erase"
-    guidance_scale: float = 1.0  # default is 1.0
-    resolution: int = 512  # default is 512
-    dynamic_resolution: bool = False  # default is False
-    batch_size: int = 1  # default is 1
-    dynamic_crops: bool = False  # default is False. only used when model is XL
-    use_template: bool = False  # default is False
-    
-    la_strength: float = 1000.0
-    sampling_batch_size: int = 4
-
-    seed: int = None
-    case_number: int = 0
 
     @model_validator(mode='before')
     def fill_prompts(cls, values: dict[str, str]):
@@ -157,103 +40,16 @@ class PromptSettings(BaseModel):  # yaml
             values["neutral"] = values["unconditional"]
 
         return values
-
-class InferenceConfig(BaseModel):
-    use_wandb: bool = False
-    negative_prompt: str = "bad anatomy,watermark,extra digit,signature,worst quality,jpeg artifacts,normal quality,low quality,long neck,lowres,error,blurry,missing fingers,fewer digits,missing arms,text,cropped,Humpbacked,bad hands,username"
-    width: int = 512
-    height: int = 512
-    num_inference_steps: int = 20
-    guidance_scale: float = 7.5
-    seeds: list[int] = None    
-
-class TrainConfig(BaseModel):
-    noise_scheduler: Literal["ddim", "ddpm", "lms", "euler_a"] = "ddim"
-
-    iterations: int = 3000
-    batch_size: int = 1
-
-    lr: float = 1e-4
-    unet_lr: float = 1e-4
-    text_encoder_lr: float = 5e-5
-
-    optimizer_type: str = "AdamW8bit"
-    optimizer_args: list[str] = None
-
-    lr_scheduler: str = "cosine_with_restarts"
-    lr_warmup_steps: int = 500
-    lr_scheduler_num_cycles: int = 3
-    lr_scheduler_power: float = 1.0
-    lr_scheduler_args: str = ""
-
-    max_grad_norm: float = 0.0
-
-    max_denoising_steps: int = 30
-    importance_path: str="./"
-    portion: float=1.0
-    push_strength: float=1.0
-    norm_strength: float=1.0
     
-    pal: float=0.01
-    value_weight: float=0.1
-    swap_iteration: int = 1500
-    erase_scale: float = 1.
-    
-    ########### For adv memory ##############
-    num_stages: int = 10
-    iterations_adv: int = 1000
-    lr_scheduler_adv: str = "cosine_with_restarts"
-    lr_warmup_steps_adv: int = 500
-    lr_scheduler_num_cycles_adv: int = 3
-    lr_scheduler_power_adv: float = 1.0
-    lr_scheduler_args_adv: str = ""    
-    lr_adv: float = 1e-4
-    adv_coef: float = 0.1
-    num_add_prompts: int = 10
-    num_multi_concepts: int = 1
-    train_seed: int = 0
-    factor_init_iter: int = 1
-    factor_init_lr: float = 1
-    factor_init_lr_cycle: int = 1
-    do_adv_learn: bool = False
-    ########### For adv memory ##############
-    
-    st_prompt_idx: int = 0
-    end_prompt_idx: int = 100000000
-    resume_stage: int = 0
-    skip_learned: bool = False
-    noise_scale: float = 0.001
-    mixup: bool = True
-   
-class SaveConfig(BaseModel):
-    name: str = "untitled"
-    path: str = "./output"
-    per_steps: int = 500
-    precision: str = "float32"
-    stage_interval: int = 1
+def load_prompts_from_yaml(path) -> list[PromptSettings]:
+    with open(path, "r") as f:
+        prompts = yaml.safe_load(f)
 
-class PretrainedModelConfig(BaseModel):
-    name_or_path: str
-    safetensor: Optional[list[str] | str] = None
-    v2: bool = False
-    v_pred: bool = False
-    clip_skip: Optional[int] = None
+    if len(prompts) == 0:
+        raise ValueError("prompts file is empty")
 
-class NetworkConfig(BaseModel):
-    rank: int = 1
-    continual_rank: int = 4
-    alpha: float = 1.0
-    delta: float = 1e-5
-    num_embeddings: int = 3
-    hidden_size: int = 128
-    init_size: int = 16
+    return [PromptSettings(**prompt) for prompt in prompts]
 
-class RootConfig(BaseModel):
-    pretrained_model: PretrainedModelConfig
-    network: Optional[NetworkConfig] = None
-    train: Optional[TrainConfig] = None
-    save: Optional[SaveConfig] = None
-    inference: Optional[InferenceConfig] = None
 
 def seed_everything(seed: int):
     random.seed(seed)
@@ -450,7 +246,6 @@ class GLoCENetworkOutProp(nn.Module):
     def __init__(
         self,
         diffusion_model,
-        # text_encoder: CLIPTextModel,
         multiplier: float = 1.0,
         alpha: float = 1.0,
         module = GLoCELayerOutProp,
@@ -503,7 +298,7 @@ class GLoCENetworkOutProp(nn.Module):
             ), f"duplicated GLoCE layer name: {gloce_layer.gloce_name}. {gloce_names}"
             gloce_names.add(gloce_layer.gloce_name)
 
-        ############### Add: printing modified text encoder module ################
+        # Add: printing modified text encoder module
         for gloce_layer in self.gloce_layers:
             gloce_layer.apply_to()
             self.add_module(
@@ -577,8 +372,6 @@ def get_registered_buffer(
     n_avail_tokens: int,
     prompts: list[str],
     embeddings: torch.Tensor,
-    embedding_uncond: torch.Tensor,
-    pipe: StableDiffusionPipeline,
     device: torch.device,
     register_buffer_path,
     register_buffer_fn,
@@ -637,24 +430,6 @@ def get_registered_buffer(
                     B, C, T, D = embs.size()
                     embs = embs.reshape(B * C, T, D)
 
-                if "save_path" in kwargs.keys():
-                    save_path = f"{kwargs['save_path']}/seed_{seed}"
-                    os.makedirs(f"{save_path}", exist_ok=True)
-                    save_path = f"{save_path}/image.png"
-
-                else:
-                    save_path = "./test2.png"
-
-                embedding2img(
-                    embs,
-                    "",
-                    pipe,
-                    seed=seed,
-                    uncond_embeddings=embedding_uncond,
-                    end_timestep=end_timestep,
-                    save_path=save_path
-                )
-
                 for find_module_name, module_name_list in zip(args.gloce_method, module_name_list_all):
                     for n in module_name_list:
                         registered_buffer[find_module_name][n]["t"] = 0
@@ -683,11 +458,11 @@ def prepare_text_embedding_token(
     n_avail_tokens=8,
     n_anchor_concepts=5
 ) -> dict[str, torch.Tensor]:
-    prompt_scripts_path = config.scripts_file
+    prompt_scripts_path = f"configs/train_{args.gloce_replace_word}/prompt_templates.csv"
 
     prompt_scripts_df = pd.read_csv(prompt_scripts_path)
     prompt_scripts_list: list[str] = prompt_scripts_df['prompt'].to_list()
-    replace_word = config.replace_word
+    replace_word = args.gloce_replace_word
 
     if replace_word == "artist":
         prmpt_temp_sel_base = f"An image in the style of {replace_word}" 
@@ -993,13 +768,19 @@ def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules:
 
     return param_vh_cache_dict, param_s_cache_dict
 
-def train(
-    # config: RootConfig,
-    prompts_target: list[PromptSettings],
-    prompts_anchor: list[PromptSettings],
-    prompts_update: list[PromptSettings],
-    args: Arguments,
-):
+def train(args: Arguments):
+    # preprocess before erasing
+    args.gloce_method = args.gloce_method.split(",")
+    seed_everything(args.seed)
+    prompts_target = load_prompts_from_yaml(args.gloce_prompts_file_targets)
+    prompts_anchor = load_prompts_from_yaml(args.gloce_prompts_file_anchors)
+    prompts_update = load_prompts_from_yaml(args.gloce_prompts_file_updates)
+    
+    # network config
+    network_rank: int = args.gloce_update_rank if args.gloce_update_rank != -1 else 1
+    network_alpha: float = args.gloce_alpha
+    network_delta: float = args.gloce_delta
+    network_init_size: int = args.gloce_gate_rank
 
     n_target_concepts = args.gloce_n_target_concepts
     tar_concept_idx = args.gloce_tar_concept_idx
@@ -1024,22 +805,21 @@ def train(
         
     model_metadata = {
         "prompts": ",".join([prompt.target for prompt in prompts_target]),
-        "rank": str(config.network.rank),
-        "alpha": str(config.network.alpha),
+        "rank": str(network_rank),
+        "alpha": str(network_alpha),
     }
     
     tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
-    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(args.sd_version) 
+    device = get_devices(args)[0]
 
-    text_encoder.to(DEVICE_CUDA)
+    text_encoder.to(device)
     text_encoder.requires_grad_(False)
     text_encoder.eval()
-    unet.to(DEVICE_CUDA)
+    unet.to(device)
     unet.requires_grad_(False)
     unet.eval()
-    pipe.safety_checker = None
 
     # register org modules
     module_types = []
@@ -1052,7 +832,7 @@ def train(
     for find_module_name in args.gloce_method:
         module_name, module_type = get_module_name_type(find_module_name)            
         org_modules, module_name_list = get_modules_list(unet, text_encoder, find_module_name, module_name, module_type)
-        param_vh_cache_dict, param_s_cache_dict = load_model_sv_cache(find_module_name, args.gloce_param_cache_path, DEVICE_CUDA, org_modules)
+        param_vh_cache_dict, param_s_cache_dict = load_model_sv_cache(find_module_name, args.gloce_param_cache_path, device, org_modules)
 
         module_names.append(module_name)
         module_types.append(module_type)
@@ -1064,24 +844,22 @@ def train(
     network = GLoCENetworkOutProp(
         unet,
         multiplier=1.0,
-        alpha=config.network.alpha,
+        alpha=network_alpha,
         module=GLoCELayerOutProp,
+        delta=network_delta,
         gate_rank=gate_rank,
         update_rank=update_rank,
         degen_rank=degen_rank,
         n_concepts=1,
         org_modules_all=org_modules_all,
         module_name_list_all=module_name_list_all,
-        find_module_names = args.gloce_method,
+        find_module_names=args.gloce_method,
         last_layer=args.gloce_last_layer,
-    ).to(DEVICE_CUDA)
+    ).to(device)
 
-    print("gate rank of netowrk:" , config.network.init_size)
+    print(f"gate rank of netowrk: {network_init_size}")
 
-    network.eval()    
-
-    embedding_unconditional = get_condition([""], tokenizer, text_encoder)
-
+    network.eval()
     network_modules = dict()
     for name, module in network.named_modules():
         if "GLoCELayer" in module.__class__.__name__:
@@ -1125,7 +903,7 @@ def train(
     prmpt_scripts_upd = emb_cache["prmpt_scripts_upd"]    
     
     use_prompt = args.gloce_method in ["unet_ca_v", "unet_ca_out"]
-    if config.replace_word == "artist" and use_prompt:
+    if args.gloce_replace_word == "artist" and use_prompt:
         embeddings_surrogate_sel_base = embeddings_surrogate_cache
         embeddings_target_sel_base = embeddings_target_cache
         embeddings_anchor_sel_base = embeddings_anchor_cache
@@ -1136,8 +914,7 @@ def train(
         anchors = prmpt_scripts_anc
         updates = prmpt_scripts_upd
 
-    ################# Compute register buffer for surrogate concept for erasing #################
-
+    # Compute register buffer for surrogate concept for erasing 
     buffer_sel_basis_surrogate = get_registered_buffer(
         args,
         module_name_list_all,
@@ -1147,16 +924,13 @@ def train(
         n_avail_tokens,
         surrogate,
         embeddings_surrogate_sel_base,
-        embedding_unconditional,
-        pipe,
-        DEVICE_CUDA,
+        device,
         register_buffer_path,
         register_buffer_fn="stacked_surrogate.pt",
         register_func="register_sum_buffer_avg_spatial"
     )
 
     # Compute principal components for surrogate concept
-
     Vh_sur_dict = dict()
     surrogate_mean_dict = dict()
     for find_name in args.gloce_method:
@@ -1180,7 +954,6 @@ def train(
         gloce_module.bias.weight.data = stacked_buffer_surrogate_mean.unsqueeze(0).clone().contiguous()  
 
     # Compute registder buffer for target concept for erasing
-
     buffer_sel_basis_target = get_registered_buffer(
         args,
         module_name_list_all,
@@ -1190,16 +963,13 @@ def train(
         n_avail_tokens,
         targets,
         embeddings_target_sel_base,
-        embedding_unconditional,
-        pipe,
-        DEVICE_CUDA,
+        device,
         register_buffer_path,
         register_buffer_fn="stacked_target.pt",
         register_func="register_sum_buffer_avg_spatial"
     )
 
     # Compute principal components for target concept
-
     target_mean_dict: dict[str, dict[str, nn.Module]] = dict()
     target_cov_dict = dict()
     Vh_tar_dict = dict()
@@ -1228,11 +998,10 @@ def train(
         dim_emb = Vh_upd.size(1)
 
         Vh_sur = Vh_sur_dict[gloce_module.find_name][gloce_module.gloce_org_name][:degen_rank] # hxd        
-        gloce_module.lora_update.weight.data = (Vh_sur @ (torch.eye(dim_emb).to(DEVICE_CUDA)- Vh_upd.T @ Vh_upd)).T.contiguous()
+        gloce_module.lora_update.weight.data = (Vh_sur @ (torch.eye(dim_emb).to(device)- Vh_upd.T @ Vh_upd)).T.contiguous()
         gloce_module.debias.weight.data = target_mean.unsqueeze(0).unsqueeze(0).clone().contiguous()  
     
     # Compute register buffer for surrogate for gate
-
     buffer_sel_basis_gate = get_registered_buffer(
         args,
         module_name_list_all,
@@ -1242,16 +1011,13 @@ def train(
         n_avail_tokens,
         updates,
         embeddings_update_sel_base,
-        embedding_unconditional,
-        pipe,
-        DEVICE_CUDA,
+        device,
         register_buffer_path,
         register_buffer_fn="stacked_gate.pt",
         register_func="register_sum_buffer_avg_spatial"
     )
     
     # Compute principal components of surrogate for gate
-
     Vh_gate_dict: dict[str, dict[str, dict[str, nn.Module]]] = dict()
     gate_mean_dict = dict()
     rel_gate_dict = dict()
@@ -1283,9 +1049,7 @@ def train(
         n_avail_tokens,
         targets,
         embeddings_target_sel_base,
-        embedding_unconditional,
-        pipe,
-        DEVICE_CUDA,
+        device,
         register_buffer_path,
         register_buffer_fn="norm_target.pt",
         register_func="register_norm_buffer_avg_spatial",
@@ -1303,9 +1067,7 @@ def train(
         n_avail_tokens,
         anchors,
         embeddings_anchor_sel_base,
-        embedding_unconditional,
-        pipe,
-        DEVICE_CUDA,
+        device,
         register_buffer_path,
         register_buffer_fn="norm_anchor.pt",
         register_func="register_norm_buffer_avg_spatial",
@@ -1315,7 +1077,6 @@ def train(
     )
 
     # Compute discriminative basis for erasing
- 
     for gloce_module in network.gloce_layers:
         importance_tgt_stack = buffer_norm_basis_target[gloce_module.find_name][gloce_module.gloce_org_name]['data_stack']
         importance_anc_stack = buffer_norm_basis_anchor[gloce_module.find_name][gloce_module.gloce_org_name]['data_stack']
@@ -1323,12 +1084,11 @@ def train(
         importance_anc_stack = torch.cat([imp.unsqueeze(0) for imp in importance_anc_stack], dim=0)
 
         # Determine parameters in logistic function
-
         tol1 = args.gloce_thresh
         x_center = importance_anc_stack.mean() + tol1 * importance_anc_stack.std()     
         tol2 = 0.001 * tol1
 
-        c_right = torch.tensor([0.99]).to(DEVICE_CUDA)
+        c_right = torch.tensor([0.99]).to(device)
         C_right = torch.log(1 / (1 / c_right - 1))
 
         imp_center = x_center
@@ -1346,31 +1106,11 @@ def train(
         gloce_module.selector.imp_center = imp_center
         gloce_module.selector.imp_slope = imp_slope
 
-    ############## Compute discriminative basis for erasing ##############
-
     print("saving gloce parameters...")
     save_path = Path(f"{save_path}")            
     save_path.mkdir(parents=True, exist_ok=True)
     network.save_weights(save_path / f"ckpt.safetensors", metadata=model_metadata)
     print("Done.")
 
-
-def main(args: Arguments):
-        
-    # prompts_target = prompt_pkg.load_prompts_from_yaml(config.prompts_file_target)
-    # prompts_anchor = prompt_pkg.load_prompts_from_yaml(config.prompts_file_anchor)
-    # prompts_update = prompt_pkg.load_prompts_from_yaml(config.prompts_file_update)
-    
-    # if args.gate_rank != -1:
-    #     config.network.init_size = args.gate_rank
-    #     config.network.hidden_size = args.gate_rank
-    #     config.network.continual_rank = args.gate_rank
-            
-    # if args.update_rank != -1:
-    #     config.network.rank = args.update_rank
-    
-    args.gloce_method = args.gloce_method.split(",")
-
-    seed_everything(args.seed)
-    train(args=args)
-    # train(prompts_target, prompts_anchor, prompts_update, args)
+def main(args: Arguments):    
+    train(args)
