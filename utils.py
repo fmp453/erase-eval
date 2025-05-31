@@ -269,7 +269,8 @@ class Arguments(BaseModel):
     ace_change_step_rate: Optional[float] = Field(1.0)
     ace_lora_rank: Optional[int] = Field(4)
     ace_anchor_batch_size: Optional[int] = Field(2)
-    ace_surrogate_concept_clip_path: Optional[str] = Field("evaluation-outputs/cartoon_eval_test/SD3/evaluation_results_clip_CONCEPT_image_None.json")
+    ace_surrogate_concept_clip_path: Optional[str] = Field(default=None)
+    #example of ace_surrogate_concept_clip_path : "evaluation-outputs/cartoon_eval_test/SD3/evaluation_results_clip_CONCEPT_image_None.json"
     ace_anchor_prompt_path: Optional[str] = Field("data/concept_text/IP_character_concept.txt")
     
 

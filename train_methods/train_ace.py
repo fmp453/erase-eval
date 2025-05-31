@@ -9,13 +9,11 @@ import random
 from typing import Optional
 
 import numpy as np
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from safetensors.torch import save_file
-from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel, DDIMScheduler
 from tqdm import tqdm
 
@@ -232,9 +230,7 @@ def train(args: Arguments):
 
     torch.autograd.set_detect_anomaly(True)
     devices = get_devices(args)
-    name = "save_path"
-    # PROMPT CLEANING
-    word_print = prompt = args.concepts
+    prompt = args.concepts
     if prompt == 'allartist':
         prompt = "Kelly Mckernan, Thomas Kinkade, Ajin Demi Human, Alena Aenami, Tyler Edlin, Kilian Eng"
     if prompt == 'i2p':
@@ -248,19 +244,12 @@ def train(args: Arguments):
     else:
         words = [prompt]
 
-    tokenizer: CLIPTokenizer
-    text_encoder: CLIPTextModel
-    unet: UNet2DConditionModel
-    noise_scheduler: DDIMScheduler
     tokenizer, text_encoder, _, unet, noise_scheduler, _ = get_models(args.sd_version)
-    
-    # MODEL TRAINING SETUP
+
     unet.to(devices[0])
     text_encoder.to(devices[1])
     scheduler_ori = copy.deepcopy(noise_scheduler)
     scheduler_ori.set_timesteps(1000)
-
-    # set model to eval
     unet.requires_grad_(False)
     unet.eval()
     text_encoder.eval()
@@ -273,9 +262,9 @@ def train(args: Arguments):
         module=ACELayer,
     ).to(device=devices[0])
     model_metadata = {
-        "prompts": ",".join([prompt]),
-        "rank": str(args.ace_lora_rank),
-        "alpha": str(lora_alpha),
+        "prompts": ",".join(words),
+        "rank": f"{args.ace_lora_rank}",
+        "alpha": f"{lora_alpha}",
     }
 
     unet_lora_params = network.prepare_optimizer_params(args.ace_lr)
@@ -284,14 +273,13 @@ def train(args: Arguments):
     opt = torch.optim.Adam(unet_lora_params, lr=args.ace_lr)
     criteria = torch.nn.MSELoss()
     history = []
-    args.ace_surrogate_concept_clip_path = args.ace_surrogate_concept_clip_path.replace("CONCEPT", args.concepts)
-    if args.ace_surrogate_concept_clip_path is None:
-        is_sc_clip = False
+    is_sc_clip = args.ace_surrogate_concept_clip_path is not None
+    if not is_sc_clip:
         sc_clip = None
     else:
+        args.ace_surrogate_concept_clip_path = args.ace_surrogate_concept_clip_path.replace("CONCEPT", args.concepts)
         with open(args.ace_surrogate_concept_clip_path, "r") as f:
             sc_clip = json.load(f)
-        is_sc_clip = True
 
     anchor_dataset = AnchorsDataset(prompt_path=args.ace_anchor_prompt_path, concept=prompt)
 
@@ -312,8 +300,6 @@ def train(args: Arguments):
         init_latent = torch.randn((1, 4, 64, 64)).to(devices[0])
         init_latent = init_latent * noise_scheduler.init_noise_sigma
         with torch.no_grad():
-            # override the _call_ method of CrossAttn block in unet to record attention maps
-            
             noise_scheduler.set_timesteps(args.ddim_steps)
             # generate an image with the concept from ESD model
             # emb_p seems to work better instead of emb_0
@@ -386,14 +372,15 @@ def train(args: Arguments):
                 surrogate_guidance += clip_scale * (e_prior_ori[j] - e_0)
             else:
                 surrogate_guidance += e_prior_ori[j] - e_0
-        loss_erase_null = criteria(e_n_0, e_0 + args.negative_guidance * (e_p - e_0) - args.ace_surrogate_guidance_scale * surrogate_guidance)
-        loss_erase_cond = criteria(e_n, e_0 - (args.negative_guidance * (e_p - e_0)))
+        
+        loss_erase_null: torch.Tensor = criteria(e_n_0, e_0 + args.negative_guidance * (e_p - e_0) - args.ace_surrogate_guidance_scale * surrogate_guidance)
+        loss_erase_cond: torch.Tensor = criteria(e_n, e_0 - (args.negative_guidance * (e_p - e_0)))
 
         loss_erase = args.ace_null_weight * loss_erase_null + (1 - args.ace_null_weight) * loss_erase_cond
         # reconstruction loss for ESD objective from frozen model and conditional score of ESD model
         # loss = criteria(e_n, e_0) works the best try 5000 epochs
 
-        loss_prior = criteria(e_prior, e_prior_ori)
+        loss_prior: torch.Tensor = criteria(e_prior, e_prior_ori)
         loss = (1 - args.ace_pl_weight) * loss_erase + args.ace_pl_weight * loss_prior
         # update weights to erase the concept
         loss.backward()
@@ -410,38 +397,12 @@ def train(args: Arguments):
         torch.cuda.empty_cache()
         gc.collect()
 
-    folder_path = f'models/{name}/{name}_last'
+    folder_path = f'{args.save_dir}/ace/{args.concepts.replace(" ", "_")}'
     os.makedirs(folder_path, exist_ok=True)
     network.save_weights(
-        os.path.join(folder_path, f"{name}_last.safetensors"),
+        os.path.join(folder_path, "model.safetensors"),
         metadata=model_metadata,
     )
-    save_history(losses, name, word_print)
-
-
-def save_history(losses, name, word_print):
-    folder_path = f'models/{name}'
-    os.makedirs(folder_path, exist_ok=True)
-    with open(f'{folder_path}/loss.txt', 'w') as f:
-        f.writelines([str(i) for i in losses])
-    plot_loss(losses, f'{folder_path}/loss.png', word_print, n=3)
-
-
-def plot_loss(losses, path, word, n=100):
-    v = moving_average(losses, n)
-    plt.plot(v, label=f'{word}_loss')
-    plt.legend(loc="upper left")
-    plt.title('Average loss in trainings', fontsize=20)
-    plt.xlabel('Data point', fontsize=16)
-    plt.ylabel('Loss value', fontsize=16)
-    plt.savefig(path)
-
-
-def moving_average(a, n=3):
-    ret = np.cumsum(a, dtype=float)
-    ret[n:] = ret[n:] - ret[:-n]
-    return ret[n - 1:] / n
-
 
 def main(args: Arguments):
     train(args)
