@@ -259,6 +259,21 @@ class Arguments(BaseModel):
     gloce_prompts_file_anchor: Optional[str] = Field("captions/prompt_train_gloce_anchor.yaml")
     gloce_prompts_file_update: Optional[str] = Field("captions/prompt_train_gloce_update.yaml")
 
+    # configs for ACE
+    ace_lr: Optional[float] = Field(1e-5)
+    ace_iterations: Optional[int] = Field(1000)
+    ace_surrogate_guidance_scale: Optional[float] = Field(3.0)
+    ace_null_weight: Optional[float] = Field(0.8)
+    ace_pr_weight: Optional[float] = Field(0.5)
+    ace_pl_weight: Optional[float] = Field(0.5)
+    ace_change_step_rate: Optional[float] = Field(1.0)
+    ace_lora_rank: Optional[int] = Field(4)
+    ace_anchor_batch_size: Optional[int] = Field(2)
+    ace_surrogate_concept_clip_path: Optional[str] = Field(default=None)
+    #example of ace_surrogate_concept_clip_path : "evaluation-outputs/cartoon_eval_test/SD3/evaluation_results_clip_CONCEPT_image_None.json"
+    ace_anchor_prompt_path: Optional[str] = Field("data/concept_text/IP_character_concept.txt")
+    
+
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
     images_dir: Optional[str] = Field("gen-images")

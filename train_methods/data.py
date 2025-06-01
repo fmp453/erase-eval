@@ -605,3 +605,19 @@ class SalUnDataset(Dataset):
     def __getitem__(self, idx) -> torch.Tensor:
         example = self.dataset[idx]
         return example["image"] if not self.transform else self.transform(example["image"])
+
+class AnchorsDataset(Dataset):
+    def __init__(self, prompt_path, concept):
+        self.anchor_list = []
+        with open(prompt_path, "r", encoding='utf-8') as f:
+            for anchor in f.readlines():
+                anchor_concept = anchor.strip('\n')
+                if anchor_concept != concept:
+                    self.anchor_list.append(anchor_concept)
+
+    def __len__(self):
+        return len(self.anchor_list)
+
+    def __getitem__(self, index):
+        anchor = self.anchor_list[index % len(self.anchor_list)]
+        return anchor

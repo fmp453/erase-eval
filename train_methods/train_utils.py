@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 from tqdm.auto import tqdm
 from transformers import CLIPTokenizer, CLIPTextModel
-from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, DDPMScheduler
+from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, DDPMScheduler, SchedulerMixin
 from diffusers.models.lora import LoRALinearLayer
 from diffusers.models.attention_processor import Attention
 
@@ -492,6 +492,32 @@ def prepare_extra_step_kwargs(scheduler, generator, eta):
     
     return extra_step_kwargs
 
+def predict_noise(
+    unet: UNet2DConditionModel,
+    scheduler: SchedulerMixin,
+    timestep: int,
+    latents: torch.Tensor,
+    conditional_emb: torch.Tensor,
+    guidance_scale: float=1.0,
+) -> torch.Tensor:
+    do_guidance = abs(guidance_scale) > 1.0
+    latent_model_input = (torch.cat([latents] * 2) if do_guidance else latents).to(unet.device)
+    latent_model_input = scheduler.scale_model_input(latent_model_input, timestep)
+    
+    # predict the noise residual
+    noise_pred = unet(latent_model_input, timestep.to(unet.device), encoder_hidden_states=conditional_emb.to(unet.device)).sample
+
+    # perform guidance
+    if do_guidance:
+        noise_pred_out = torch.chunk(noise_pred, 2, dim=0)
+        noise_pred_uncond, noise_pred_prompt = noise_pred_out[0], noise_pred_out[1]
+        
+        cond_guidance = noise_pred_prompt - noise_pred_uncond
+        noise_pred = noise_pred_uncond + (guidance_scale * cond_guidance)
+    
+    return noise_pred
+
+
 # Sample latents from unet and DDIM scheduler until the given timestep.
 @torch.no_grad()
 def sample_until(
@@ -506,25 +532,9 @@ def sample_until(
     """Sample latents until t for a given prompt."""
     timesteps = scheduler.timesteps
 
-    do_guidance = abs(guidance_scale) > 1.0
-    device = unet.device
-
     # Denoising loop
     for i, t in enumerate(timesteps):
-        t = t.to(device)
-        latent_model_input = (torch.cat([latents] * 2) if do_guidance else latents).to(device)
-        latent_model_input = scheduler.scale_model_input(latent_model_input, t)
-
-        # predict the noise residual
-        noise_pred = unet(latent_model_input, t, encoder_hidden_states=prompt_embeds.to(device)).sample
-
-        # perform guidance
-        if do_guidance:
-            noise_pred_out = torch.chunk(noise_pred, 2, dim=0)
-            noise_pred_uncond, noise_pred_prompt = noise_pred_out[0], noise_pred_out[1]
-            
-            cond_guidance = noise_pred_prompt - noise_pred_uncond
-            noise_pred = noise_pred_uncond + (guidance_scale * cond_guidance)
+        noise_pred = predict_noise(unet, scheduler, t, latents, prompt_embeds, guidance_scale)
 
         latents = scheduler.step(model_output=noise_pred, timestep=t, sample=latents, **extra_step_kwargs).prev_sample
 
