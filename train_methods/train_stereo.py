@@ -4,33 +4,131 @@ import argparse
 import os
 import random
 import time
+import string
 import math
+import json
+from typing import Optional
 
-import tqdm
 import torch
-from torch.utils.data import DataLoader
+import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 import numpy as np
+from torch.utils.data import DataLoader
 from transformers import CLIPTokenizer, CLIPTextModel
-from diffusers import LMSDiscreteScheduler, DDIMScheduler, DDPMScheduler, AutoencoderKL, UNet2DConditionModel, get_scheduler
-# from utils.stereo import stereo, attack_stereo
-# from utils.utils import StableDiffuser
+from tqdm import tqdm
+from diffusers import LMSDiscreteScheduler, DDIMScheduler, AutoencoderKL, UNet2DConditionModel, get_scheduler
 
 from train_methods.data import TextualInversionDataset
-from train_methods.train_utils import get_models, get_devices
+from train_methods.train_utils import get_models, get_devices, get_condition, gather_parameters, predict_noise
 from utils import Arguments
 
 
+class MomentumBuffer:
+    def __init__(self, momentum: float):
+        self.momentum = momentum
+        self.running_average = 0
+
+    def update(self, update_value: torch.Tensor):
+        new_average = self.momentum * self.running_average
+        self.running_average = update_value + new_average
+
+def project(
+    v0: torch.Tensor,  # [B, C, H, W]
+    v1: torch.Tensor,  # [B, C, H, W]
+) -> torch.Tensor:
+    dtype = v0.dtype
+    v0, v1 = v0.double(), v1.double()
+    v1 = torch.nn.functional.normalize(v1, dim=[-1, -2, -3])
+    v0_parallel = (v0 * v1).sum(dim=[-1, -2, -3], keepdim=True) * v1
+    v0_orthogonal = v0 - v0_parallel
+    return v0_parallel.to(dtype), v0_orthogonal.to(dtype)
+
+def normalized_guidance(
+    pred_cond: torch.Tensor,   # [B, C, H, W]
+    pred_uncond: torch.Tensor, # [B, C, H, W]
+    guidance_scale: float,
+    momentum_buffer: MomentumBuffer = None,
+    eta: float = 1.0,
+    norm_threshold: float = 0.0,
+) -> torch.Tensor:
+    diff = pred_cond - pred_uncond
+    if momentum_buffer is not None:
+        momentum_buffer.update(diff)
+        diff = momentum_buffer.running_average
+
+    if norm_threshold > 0:
+        ones = torch.ones_like(diff)
+        diff_norm = diff.norm(p=2, dim=[-1, -2, -3], keepdim=True)
+        scale_factor = torch.minimum(ones, norm_threshold / diff_norm)
+        diff = diff * scale_factor
+
+    diff_parallel, diff_orthogonal = project(diff, pred_cond)
+    normalized_update = diff_orthogonal + eta * diff_parallel
+    pred_guided = pred_cond - (guidance_scale - 1) * normalized_update # For negative guidance
+    return pred_guided
+
+
+def normalized_compositional_guidance(
+    pred_conds: list[torch.Tensor], # List of [B, C, H, W] conditional predictions
+    pred_uncond: torch.Tensor,  # [B, C, H, W] unconditional prediction
+    guidance_scales: list[float],  # List of guidance scales for each condition (can be + or -)
+    momentum_buffers: Optional[list[MomentumBuffer]] = None, # List of MomentumBuffers for each condition
+    eta: float = 1.0,
+    norm_threshold: float = 0.0,
+):
+    positive_update = torch.zeros_like(pred_uncond)
+    negative_update = torch.zeros_like(pred_uncond)
+    pos_count, neg_count = 0, 0
+
+    # Separate processing for positive and negative guidance scales
+    for i, (pred_cond, guidance_scale) in enumerate(zip(pred_conds, guidance_scales)):
+        # Calculate difference for each condition
+        diff = pred_cond - pred_uncond
+        if momentum_buffers and momentum_buffers[i] is not None:
+            momentum_buffers[i].update(diff)
+            diff = momentum_buffers[i].running_average
+
+        # Apply normalization threshold if specified
+        if norm_threshold > 0:
+            ones = torch.ones_like(diff)
+            diff_norm = diff.norm(p=2, dim=[-1, -2, -3], keepdim=True)
+            scale_factor = torch.minimum(ones, norm_threshold / diff_norm)
+            diff = diff * scale_factor
+
+        # Compute parallel and orthogonal components
+        diff_parallel, diff_orthogonal = project(diff, pred_cond)
+        normalized_update = diff_orthogonal + eta * diff_parallel
+
+        # Accumulate in either positive or negative update
+        if guidance_scale > 0:
+            positive_update += (guidance_scale - 1) * normalized_update
+            pos_count += 1
+        else:
+            negative_update += (guidance_scale - 1) * normalized_update
+            neg_count += 1
+
+    # Normalize each set if counts are non-zero
+    if pos_count > 0:
+        positive_update /= pos_count
+    if neg_count > 0:
+        negative_update /= neg_count
+
+    return pred_uncond + positive_update + negative_update
+
 # ESDのdiffusers実装と同じ
+# StableDiffuserの解体が必要
+# unetのみ更新するのでunetを返す
 def train_erasing(
     args: Arguments,
-    erase_concept,
-    erase_from,
-    train_method,
-    iterations,
-    lr,
+    tokenizer: CLIPTokenizer,
+    text_encoder: CLIPTextModel,
+    unet: UNet2DConditionModel,
+    noise_scheduler: DDIMScheduler,
+    erase_concept: str,
+    erase_from: str,
     save_path,
-):
+) -> UNet2DConditionModel:
     # Set the random seed for reproducibility
     seed = args.seed
     np.random.seed(seed)      # For numpy
@@ -39,15 +137,13 @@ def train_erasing(
 
     nsteps = 50
 
-    diffuser.requires_grad = True
-    diffuser.train()
+    # finetuner = FineTunedModel(diffuser, train_method=train_method)
+    parameters = gather_parameters(args.stereo_method, unet)
 
-    finetuner = FineTunedModel(diffuser, train_method=train_method)
+    optimizer = optim.AdamW(parameters, lr=args.stereo_lr)
+    criteria = nn.MSELoss()
 
-    optimizer = torch.optim.AdamW(finetuner.parameters(), lr=lr)
-    criteria = torch.nn.MSELoss()
-
-    pbar = tqdm(range(iterations))
+    pbar = tqdm(range(args.stereo_iterations))
     erase_concept = [a.strip() for a in erase_concept.split(',')]
     erase_from = [a.strip() for a in erase_from.split(',')]
 
@@ -66,14 +162,14 @@ def train_erasing(
             index = np.random.choice(len(erase_concept), 1, replace=False)[0]
             erase_concept_sampled = erase_concept[index]
 
-            neutral_text_embeddings = diffuser.get_text_embeddings([''], n_imgs=1)
-            positive_text_embeddings = diffuser.get_text_embeddings([erase_concept_sampled[0]], n_imgs=1)
-            target_text_embeddings = diffuser.get_text_embeddings([erase_concept_sampled[1]], n_imgs=1)
+            neutral_text_embeddings = get_condition([""], tokenizer, text_encoder)
+            positive_text_embeddings = get_condition([erase_concept_sampled[0]], tokenizer, text_encoder)
+            target_text_embeddings = get_condition([erase_concept_sampled[1]], tokenizer, text_encoder)
 
-            diffuser.set_scheduler_timesteps(nsteps)
+            noise_scheduler.set_timesteps(nsteps, unet.device)
             optimizer.zero_grad()
             iteration = torch.randint(1, nsteps - 1, (1,)).item()
-            latents = diffuser.get_initial_latents(1, 512, 1)
+            latents = torch.randn(1, unet.config.in_channels, args.image_size // 8, args.image_size // 8).to(unet.device).repeat(1, 1, 1, 1) * noise_scheduler.init_noise_sigma
 
             with finetuner:
                 latents_steps, _ = diffuser.diffusion(
@@ -85,11 +181,12 @@ def train_erasing(
                     show_progress=False
                 )
 
-            diffuser.set_scheduler_timesteps(1000)
+            noise_scheduler.set_timesteps(1000)
             iteration = int(iteration / nsteps * 1000)
-            positive_latents = diffuser.predict_noise(iteration, latents_steps[0], positive_text_embeddings, guidance_scale=1)
-            neutral_latents = diffuser.predict_noise(iteration, latents_steps[0], neutral_text_embeddings, guidance_scale=1)
-            target_latents = diffuser.predict_noise(iteration, latents_steps[0], target_text_embeddings, guidance_scale=1)
+            timestep = noise_scheduler.timesteps[iteration]
+            positive_latents = predict_noise(unet, noise_scheduler, timestep, latents, positive_text_embeddings, guidance_scale=1)
+            neutral_latents = predict_noise(unet, noise_scheduler, timestep, latents, neutral_text_embeddings, guidance_scale=1)
+            target_latents = predict_noise(unet, noise_scheduler, timestep, latents, target_text_embeddings, guidance_scale=1)
 
             torch.cuda.empty_cache()
 
@@ -99,28 +196,19 @@ def train_erasing(
         with finetuner:
             negative_latents = diffuser.predict_noise(iteration, latents_steps[0], target_text_embeddings, guidance_scale=1)
      
-        # ------------------------------------------ NG + APG --------------------------------------------------
+        # ----------- NG + APG ------------
         # Using the negative guidance GT with the APG (https://arxiv.org/pdf/2410.02416) formulation.
         pred_neg_guidance = normalized_guidance(positive_latents, neutral_latents, args.negative_guidance)
-        loss = criteria(negative_latents, pred_neg_guidance)
-        # ------------------------------------------------------------------------------------------------------
+        loss: torch.Tensor = criteria(negative_latents, pred_neg_guidance)
 
         loss.backward()
         optimizer.step()
         torch.cuda.empty_cache()
         pbar.set_description(f"Loss: {loss.item():.4f}")
 
-    with finetuner:
-        torch.save(diffuser.unet.state_dict(), save_path)
-
-    del neutral_text_embeddings, positive_text_embeddings, target_text_embeddings
-    del latents, latents_steps, positive_latents, neutral_latents, target_latents, negative_latents
-    del loss, optimizer, finetuner
-    del erase_concept, erase_from, criteria, pbar, index, erase_concept_sampled, iteration, nsteps
-
+    unet.save_pretrained(save_path)
     torch.cuda.empty_cache()
-    diffuser.eval()
-    return diffuser
+    return unet
 
 
 # text encoderのみを更新するのでtext encoderを返す
@@ -153,7 +241,7 @@ def train_concept_inversion(
     random.seed(seed)
     torch.manual_seed(seed) 
 
-    for param in text_encoder.get_input_embeddings.parameters():
+    for param in text_encoder.get_input_embeddings().parameters():
         param.requires_grad = True
 
     # Add placeholder tokens to tokenizer
@@ -208,7 +296,7 @@ def train_concept_inversion(
         effective_batch_size = dataloader.batch_size
         lr *= effective_batch_size  # Adjust learning rate based on batch size
 
-    optimizer = torch.optim.AdamW(text_encoder.get_input_embeddings().parameters(), lr=lr)
+    optimizer = optim.AdamW(text_encoder.get_input_embeddings().parameters(), lr=lr)
     scheduler = get_scheduler(lr_scheduler, optimizer, num_warmup_steps=lr_warmup_steps, num_training_steps=max_train_steps)
 
     # Initialize a single progress bar for the entire training process
@@ -224,14 +312,15 @@ def train_concept_inversion(
                 break
 
             optimizer.zero_grad()
+            batch: dict[str, torch.Tensor]
 
-            latents = vae.encode(batch["pixel_values"].to(vae.device)).latent_dist.sample() * 0.18215
+            latents: torch.Tensor = vae.encode(batch["pixel_values"].to(vae.device)).latent_dist.sample() * 0.18215
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, 999, (latents.shape[0],), device=latents.device)
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
             encoder_hidden_states = text_encoder(batch["input_ids"].to(text_encoder.device)).last_hidden_state
-            model_pred = unet(noisy_latents, timesteps, encoder_hidden_states)["sample"]
+            model_pred: torch.Tensor = unet(noisy_latents, timesteps, encoder_hidden_states)["sample"]
 
             target = noise
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -265,6 +354,22 @@ def train_concept_inversion(
     torch.cuda.empty_cache()
     return text_encoder
 
+def generate_placeholder_token():
+    return "token_" + ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+def generate_unique_placeholder_token(saved_tokens: dict[str, torch.Tensor], iteration: int):
+    # Generate a new placeholder token
+    placeholder_token = generate_placeholder_token()
+    
+    # Check if the token is already in saved_tokens
+    if placeholder_token in saved_tokens.values():
+        # If not unique, call the function recursively
+        return generate_unique_placeholder_token(saved_tokens, iteration)
+    
+    # If unique, save it in saved_tokens and return
+    saved_tokens[f'{iteration}'] = placeholder_token
+    return placeholder_token
+
 def search_thoroughly_enough(
     # diffuser,
     tokenizer: CLIPTokenizer,
@@ -276,10 +381,7 @@ def search_thoroughly_enough(
     initializer_token,
     train_data_dir,
     train_method,
-    lr,
     ti_lr,
-    negative_guidance,
-    iterations,
     n_iterations,
     device,
     ti_max_train_steps,
@@ -310,16 +412,15 @@ def search_thoroughly_enough(
 
         # 1. Erase the current concept
         saved_unet = train_erasing(
+            args=args,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            unet=unet,
+            noise_scheduler=ddim_scheduler,
             erase_concept=current_concept,
             erase_from=current_concept,
             train_method=train_method,
-            iterations=iterations,
-            negative_guidance=negative_guidance,
-            lr=lr,
             save_path=erased_weights_path,
-            args
-            # diffuser=diffuser,
-            # device=device
         )
         print(f"Erased weights saved to {erased_weights_path}")
 
@@ -366,6 +467,140 @@ def search_thoroughly_enough(
     return final_model_path, saved_tokens, diffuser
 
 
+def robustly_erase_once(
+    args: Arguments,
+    tokenizer: CLIPTokenizer,
+    text_encoder: CLIPTextModel,
+    noise_scheduler: DDIMScheduler,
+    unet: UNet2DConditionModel,
+    erase_concepts,
+    train_method,
+    iterations,
+    compositional_guidance_scale,
+    save_path,
+    anchor_concepts_path
+):
+    nsteps = 50
+
+    with open(anchor_concepts_path, 'r') as f:
+        all_anchor_concepts = json.load(f)[erase_concepts[0]]
+
+    finetuner = FineTunedModel(diffuser, train_method=train_method)
+
+    parameters = gather_parameters(train_method, unet)
+
+    optimizer = optim.AdamW(parameters, lr=args.stereo_lr)
+    criteria = nn.MSELoss()
+    
+    torch.cuda.empty_cache()
+
+    # ------- Stratified sampling of the anchor concepts ------
+    total_sentences = len(all_anchor_concepts)
+    appearances_per_sentence = iterations // total_sentences
+    # Repeat and shuffle sentences to get a balanced distribution
+    balanced_list = all_anchor_concepts * appearances_per_sentence
+    np.random.shuffle(balanced_list)
+    # If we still need a few more to reach n iterations
+    remainder = iterations - len(balanced_list)
+    if remainder > 0:
+        balanced_list.extend(np.random.choice(all_anchor_concepts, remainder, replace=False))
+
+    # ------ Stratified sampling of the erase concepts -------
+    total_concepts = len(erase_concepts)
+    appearances_per_concept = iterations // total_concepts
+    # Repeat each concept and shuffle the list
+    balanced_erase_list = erase_concepts * appearances_per_concept
+    np.random.shuffle(balanced_erase_list)
+    # Handle the remainder if `iterations` isn't an exact multiple of `total_concepts`
+    remainder = iterations - len(balanced_erase_list)
+    if remainder > 0:
+        balanced_erase_list.extend(np.random.choice(erase_concepts, remainder, replace=False))
+
+    pbar = tqdm(range(iterations))
+    for i in pbar:
+        with torch.no_grad():
+            erase_concept_sampled = balanced_erase_list[i]
+            anchor_concepts = [balanced_list[i]]
+
+            print(f"Erasing concept: {erase_concept_sampled} from anchor concept: {anchor_concepts} at iteration {i}")
+
+            neutral_text_embeddings = get_condition([''], tokenizer, text_encoder)
+            target_text_embeddings = get_condition([erase_concept_sampled], tokenizer, text_encoder)
+
+            # Get embeddings for the erase concepts (normal and attack) and anchor concepts
+            negative_word_embs = []
+            for neg_word in erase_concepts:
+                negative_word_embs.append(get_condition([neg_word], tokenizer, text_encoder))
+
+            anchor_word_embs = []
+            for anchor_word in anchor_concepts:
+                anchor_word_embs.append(get_condition([anchor_word], tokenizer, text_encoder))
+
+            noise_scheduler.set_timesteps(nsteps)
+            optimizer.zero_grad()
+            iteration = torch.randint(1, nsteps - 1, (1,)).item()
+            latents = torch.randn(1, unet.config.in_channels, args.image_size // 8, args.image_size // 8).to(unet.device).repeat(1, 1, 1, 1) * noise_scheduler.init_noise_sigma
+
+            with finetuner:
+                latents_steps, _ = diffuser.diffusion(
+                    latents,
+                    target_text_embeddings,
+                    start_iteration=0,
+                    end_iteration=iteration,
+                    guidance_scale=3, 
+                    show_progress=False
+                )
+
+            noise_scheduler.set_timesteps(1000)
+            iteration = int(iteration / nsteps * 1000)
+            timestep = noise_scheduler.timesteps[iteration]
+            neutral_latents = predict_noise(unet, noise_scheduler, timestep, latents_steps[0], neutral_text_embeddings)
+            target_latents = predict_noise(unet, noise_scheduler, timestep, latents_steps[0], target_text_embeddings)
+
+            # get noise estimate for the negative concepts
+            e_negatives_latents = []
+            for emb_neg in negative_word_embs:
+                e_negatives_latents.append(predict_noise(unet, noise_scheduler, timestep, latents_steps[0], emb_neg))
+
+            # get noise estimate for anchor words
+            e_anchor_latents = []
+            for emb_anchor in anchor_word_embs:
+                e_anchor_latents.append(predict_noise(unet, noise_scheduler, timestep, latents_steps[0], emb_anchor))
+
+            torch.cuda.empty_cache()
+        
+        with finetuner:
+            negative_latents = predict_noise(unet, noise_scheduler, timestep, latents_steps[0], target_text_embeddings)
+
+        # ----- Compositional guidance  + APG 
+        # Negative Concept
+        neg_guidance_scales = []
+        for _ in range(len(e_negatives_latents)):
+            neg_guidance_scales.append(-(float(compositional_guidance_scale)))
+
+        # Anchor concepts
+        pos_guidance_scales = []
+        for _ in range(len(e_anchor_latents)):
+            pos_guidance_scales.append(float(compositional_guidance_scale))
+
+        print(f"Using compositional guidance with APG : pos_guidance_scales {pos_guidance_scales} and neg_guidance_scales {neg_guidance_scales}")
+
+        combined_conditions = e_negatives_latents + e_anchor_latents
+        combined_guidance_scales = neg_guidance_scales + pos_guidance_scales
+
+        # Using the negative guidance GT with the APG (https://arxiv.org/pdf/2410.02416) formulation with our modified compositional guidance
+        compositional_guidance_estimate = normalized_compositional_guidance(combined_conditions, neutral_latents, combined_guidance_scales)
+        # Compute loss
+        loss: torch.Tensor = criteria(negative_latents, compositional_guidance_estimate)
+
+        loss.backward()
+        optimizer.step()
+        torch.cuda.empty_cache()
+        pbar.set_description(f"Loss: {loss.item():.4f}")
+
+    unet.save_pretrained(save_path)
+    torch.cuda.empty_cache()
+
 def stereo(
     args: Arguments,
     tokenizer: CLIPTokenizer,
@@ -381,7 +616,6 @@ def stereo(
     print(f"---------------------------------- Starting Search Thoroughly Enough ----------------------------------")
     # Stage 1: STE (Search Thoroughly Enough)
     final_model_path, saved_tokens, diffuser = search_thoroughly_enough(
-        # diffuser=diffuser,
         tokenizer=tokenizer,
         text_encoder=text_encoder,
         vae=vae,
@@ -461,8 +695,6 @@ def stereo(
 def train(args: Arguments):
     device = get_devices(args)[0]
     tokenizer, text_encoder, vae, unet, ddim_scheduler, ddpm_scheduler = get_models(args)
-        # self.feature_extractor = CLIPFeatureExtractor.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="feature_extractor")
-        # self.safety_checker = StableDiffusionSafetyChecker.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="safety_checker")
 
     lms_scheduler = LMSDiscreteScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000)
     text_encoder.eval()
