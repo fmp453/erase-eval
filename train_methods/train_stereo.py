@@ -16,6 +16,7 @@ from diffusers import LMSDiscreteScheduler, DDIMScheduler, DDPMScheduler, Autoen
 # from utils.stereo import stereo, attack_stereo
 # from utils.utils import StableDiffuser
 
+from train_methods.data import TextualInversionDataset
 from train_methods.train_utils import get_models, get_devices
 from utils import Arguments
 
@@ -122,9 +123,9 @@ def train_erasing(
     return diffuser
 
 
+# text encoderのみを更新するのでtext encoderを返す
 def train_concept_inversion(
     args: Arguments,
-    diffuser,
     placeholder_token, 
     initializer_token, 
     train_data_dir, 
@@ -134,6 +135,7 @@ def train_concept_inversion(
     text_encoder: CLIPTextModel,
     vae: AutoencoderKL,
     unet: UNet2DConditionModel,
+    noise_scheduler: DDIMScheduler,
     num_vectors=1, 
     max_train_steps=3000,  # Total training steps across all epochs
     learnable_property="object",
@@ -143,7 +145,7 @@ def train_concept_inversion(
     iteration=None,
     num_iterations=None,
     center_crop=False
-):
+) -> CLIPTextModel:
     
     # Set the random seed for reproducibility
     seed = args.seed
@@ -184,7 +186,6 @@ def train_concept_inversion(
     org_token_embeds = text_encoder.get_input_embeddings().weight.data.clone()
     
 
-    # Set up dataset and dataloader with specified resolution
     dataset = TextualInversionDataset(
         data_root=train_data_dir,
         tokenizer=tokenizer,
@@ -199,7 +200,6 @@ def train_concept_inversion(
     )
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
-    # Calculate steps per epoch and number of epochs needed to reach max_train_steps
     steps_per_epoch = len(dataloader)
     num_train_epochs = math.ceil(max_train_steps / steps_per_epoch)
 
@@ -208,7 +208,6 @@ def train_concept_inversion(
         effective_batch_size = dataloader.batch_size
         lr *= effective_batch_size  # Adjust learning rate based on batch size
 
-    # Optimizer and learning rate scheduler
     optimizer = torch.optim.AdamW(text_encoder.get_input_embeddings().parameters(), lr=lr)
     scheduler = get_scheduler(lr_scheduler, optimizer, num_warmup_steps=lr_warmup_steps, num_training_steps=max_train_steps)
 
@@ -224,24 +223,19 @@ def train_concept_inversion(
             if global_step >= max_train_steps:
                 break
 
-            # Zero gradients for each batch
             optimizer.zero_grad()
 
-            # Encode images to latent space
             latents = vae.encode(batch["pixel_values"].to(vae.device)).latent_dist.sample() * 0.18215
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, 999, (latents.shape[0],), device=latents.device)
-            noisy_latents = scheduler.add_noise(latents, noise, timesteps)
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            # Forward pass through U-Net within finetuner context
             encoder_hidden_states = text_encoder(batch["input_ids"].to(text_encoder.device)).last_hidden_state
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states)["sample"]
 
-            # Calculate loss and backpropagate
             target = noise
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
             loss.backward()
-            # Optimizer step and scheduler update
             optimizer.step()
             torch.cuda.empty_cache()
             scheduler.step()
@@ -263,19 +257,21 @@ def train_concept_inversion(
 
     progress_bar.close()
 
-    # Save the text encoder state dict
-    if not (save_path == None):
-        torch.save(diffuser.text_encoder.state_dict(), save_path)
+    if save_path is not None:
+        text_encoder.save_pretrained(save_path)
     else:
         print("Not saving the text encoder state dict as save_path is None.")
 
-    del optimizer, scheduler, dataset, dataloader, progress_bar, global_step, steps_per_epoch, num_train_epochs, effective_batch_size, token_embeds, index_no_updates, model_pred, target, loss, batch, latents, noise, timesteps, noisy_latents, encoder_hidden_states, placeholder_tokens, additional_tokens, initializer_token_id, placeholder_token_ids, tokenizer, org_token_embeds
     torch.cuda.empty_cache()
-    diffuser.eval()
-    return diffuser
+    return text_encoder
 
 def search_thoroughly_enough(
-    diffuser,
+    # diffuser,
+    tokenizer: CLIPTokenizer,
+    text_encoder: CLIPTextModel,
+    vae: AutoencoderKL,
+    unet: UNet2DConditionModel,
+    ddim_scheduler: DDIMScheduler,
     initial_erase_concept,
     initializer_token,
     train_data_dir,
@@ -313,7 +309,7 @@ def search_thoroughly_enough(
         print(f"Erasing concept: {current_concept} -> Placeholder token: '{placeholder_token}' (initialized from '{initializer_token}')")
 
         # 1. Erase the current concept
-        diffuser = train_erasing(
+        saved_unet = train_erasing(
             erase_concept=current_concept,
             erase_from=current_concept,
             train_method=train_method,
@@ -321,23 +317,23 @@ def search_thoroughly_enough(
             negative_guidance=negative_guidance,
             lr=lr,
             save_path=erased_weights_path,
-            diffuser=diffuser,
-            device=device
+            args
+            # diffuser=diffuser,
+            # device=device
         )
         print(f"Erased weights saved to {erased_weights_path}")
 
         # 2. Perform textual inversion with the erased model to attack
-        diffuser.unet.load_state_dict(torch.load(erased_weights_path))
+        unet.load_state_dict(torch.load(erased_weights_path))
         torch.cuda.empty_cache()
 
-        diffuser = train_concept_inversion(
-            diffuser=diffuser,
+        text_encoder = train_concept_inversion(
+            args=args,
             placeholder_token=placeholder_token,
             initializer_token=initializer_token,
             train_data_dir=train_data_dir,
             lr=ti_lr,
             save_path=attack_model_path,
-            device=device,
             max_train_steps=ti_max_train_steps,
             learnable_property=learnable_property,
             scale_lr=True, 
@@ -354,7 +350,7 @@ def search_thoroughly_enough(
         # Update the concept to the current placeholder token for the next iteration
         current_concept = placeholder_token
 
-        print(f"===================================== Iteration {iteration + 1}/{n_iterations} complete. =====================================\n\n")
+        print(f"========== Iteration {iteration + 1}/{n_iterations} complete.===========\n\n")
         torch.cuda.empty_cache()
 
 
@@ -386,6 +382,11 @@ def stereo(
     # Stage 1: STE (Search Thoroughly Enough)
     final_model_path, saved_tokens, diffuser = search_thoroughly_enough(
         # diffuser=diffuser,
+        tokenizer=tokenizer,
+        text_encoder=text_encoder,
+        vae=vae,
+        unet=unet,
+        noise_scheduler=ddim_scheduler,
         initial_erase_concept=args.concepts,
         initializer_token=args.initializer_token,
         train_data_dir=args.train_data_dir,
