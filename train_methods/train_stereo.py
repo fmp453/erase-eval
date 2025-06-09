@@ -707,17 +707,19 @@ def stereo(
 
 def attack_stereo(args; Arguments):
     # Perform textual inversion with the erased model to attack
-    erased_weights_path = os.path.join(args.output_dir, args.unet_ckpt_to_attack)
-    diffuser.unet.load_state_dict(torch.load(erased_weights_path))
+    erased_weights_path = os.path.join(args.save_dir, args.unet_ckpt_to_attack)
+    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(erased_weights_path)
     torch.cuda.empty_cache()
 
     placeholder_token = generate_placeholder_token()
 
     attack_filename = "eval_ci_attack_on_stereo_text_encoder.pt"
-    attack_model_path = os.path.join(args.output_dir, attack_filename)
+    attack_model_path = os.path.join(args.save_dir, attack_filename)
 
     diffuser = train_concept_inversion(
+        args=args,
         placeholder_token=placeholder_token,
+
         train_data_dir=args.attack_eval_images,
         lr=args.stereo_ci_lr,
         save_path=attack_model_path,
