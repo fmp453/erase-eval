@@ -288,6 +288,7 @@ class Arguments(BaseModel):
     stereo_generic_prompt: Optional[str] = Field("a photo of a", description="Generic prompt for textual inversion visualization")
     stereo_num_of_adv_concepts: Optional[int] = Field(4, description="Number of adversarial concepts to use in REO")
     stereo_anchor_concept_path: Optional[str] = Field("captions/stereo_anchor_prompts.json", description="Path to anchor concept json used in REO stage")
+    stereo_attack_eval_images: Optional[str] = Field("data/images/eval/nudity")
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")

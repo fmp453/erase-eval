@@ -705,32 +705,75 @@ def stereo(
     print(f"-- Robustly Erase Once complete. Final model saved to {final_unet_path} --")
     print(f"REO time: {time.time() - reo_start_time} seconds")
 
-def attack_stereo(args; Arguments):
-    # Perform textual inversion with the erased model to attack
-    erased_weights_path = os.path.join(args.save_dir, args.unet_ckpt_to_attack)
-    unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(erased_weights_path)
-    torch.cuda.empty_cache()
+def inference_attack(
+    args: Arguments,
+    saved_tokens,
+    unet: UNet2DConditionModel, 
+    tokenizer: CLIPTokenizer,
+    text_encoder: CLIPTextModel
+):
+    device = text_encoder.device
+    pipe = StableDiffusionPipeline.from_pretrained(args.sd_version)
+    pipe.text_encoder = text_encoder
+    pipe.tokenizer = tokenizer
+    pipe.unet = unet
+    pipe.eval()
+    pipe.to(device)
+    
+    generator = torch.Generator().manual_seed(args.seed)
+
+    iteration_dir = Path(args.save_dir / "eval_ci_iteration")
+    iteration_dir.mkdir(exist_ok=True)
+
+    with torch.no_grad():
+        for token in saved_tokens:
+            attack_images = pipe(
+                f"{args.stereo_generic_prompt} {token}",
+                width=args.image_size,
+                height=args.image_size,
+                n_steps=50,
+                n_imgs=10,
+                generator=generator,
+                guidance_scale=7.5
+            )
+            for i, img in enumerate(attack_images):
+                img.save(Path(iteration_dir / f"eval_ci_attack_image_placeholder_{token}_{i}.png"))
+
+def attack_stereo(
+    args: Arguments,
+    tokenizer: CLIPTokenizer,
+    text_encoder: CLIPTextModel,
+    vae: AutoencoderKL,
+    unet: UNet2DConditionModel,
+    noise_scheduler: DDIMScheduler,
+):
 
     placeholder_token = generate_placeholder_token()
 
     attack_filename = "eval_ci_attack_on_stereo_text_encoder.pt"
     attack_model_path = os.path.join(args.save_dir, attack_filename)
 
-    diffuser = train_concept_inversion(
+    tokenizer, text_encoder = train_concept_inversion(
         args=args,
         placeholder_token=placeholder_token,
-
-        train_data_dir=args.attack_eval_images,
+        train_data_dir=args.stereo_attack_eval_images, # train_data_dirが必要
         lr=args.stereo_ci_lr,
-        save_path=attack_model_path,
+        tokenizer=tokenizer,
+        text_encoder=text_encoder,
+        vae=vae,
+        unet=unet,
+        noise_scheduler=noise_scheduler,
         scale_lr=True, 
         iteration=0,
         num_iterations=1,
     )
-
-    # Perform inference and save images
-    print(f"Generating images for placeholder_token: {placeholder_token} using generic prompt: {args.stereo_generic_prompt}")
-    inference_attack(prompt=args.generic_prompt, saved_tokens=[placeholder_token], output_dir=args.output_dir, unet_ckpt=args.unet_ckpt_to_attack, text_encoder_ckpt=attack_filename, device=args.device)
+    inference_attack(
+        args=args,
+        saved_tokens=[placeholder_token], 
+        unet=unet,
+        tokenizer=tokenizer,
+        text_encoder=text_encoder
+    )
 
 
 def train(args: Arguments):
@@ -759,7 +802,13 @@ def train(args: Arguments):
                 ddim_scheduler
             )
         case "attack":
-            attack_stereo(args)
+            attack_stereo(
+                args,
+                tokenizer,
+                text_encoder,
+                vae,
+                unet,
+            )
         case "both":
             stereo(
                 args,
