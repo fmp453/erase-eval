@@ -278,7 +278,7 @@ def train_concept_inversion(
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     steps_per_epoch = len(dataloader)
-    num_train_epochs = math.ceil(args.stereo_ti_max_train_iters / steps_per_epoch)
+    num_train_epochs = math.ceil(args.stereo_ti_max_iters / steps_per_epoch)
 
     # Scale learning rate if specified
     if scale_lr:
@@ -286,18 +286,16 @@ def train_concept_inversion(
         lr *= effective_batch_size  # Adjust learning rate based on batch size
 
     optimizer = optim.AdamW(text_encoder.get_input_embeddings().parameters(), lr=lr)
-    scheduler = get_scheduler("constant", optimizer, num_warmup_steps=0, num_training_steps=args.stereo_ti_max_train_iters)
+    scheduler = get_scheduler("constant", optimizer, num_warmup_steps=0, num_training_steps=args.stereo_ti_max_iters)
 
     # Initialize a single progress bar for the entire training process
-    progress_bar = tqdm(total=args.stereo_ti_max_train_iters, desc="Concept Inversion Attack Progress", unit="step")
+    progress_bar = tqdm(total=args.stereo_ti_max_iters, desc="Concept Inversion Attack Progress", unit="step")
     global_step = 0
 
     for epoch in range(num_train_epochs):
         text_encoder.train()
         
         for step, batch in enumerate(dataloader):
-            if global_step >= args.stereo_ti_max_train_iters:
-                break
 
             optimizer.zero_grad()
             batch: dict[str, torch.Tensor]
@@ -329,11 +327,11 @@ def train_concept_inversion(
             progress_bar.set_postfix(loss=loss.item())
             progress_bar.update(1)
             global_step += 1
-            if global_step >= args.stereo_ti_max_train_iters:
+            if global_step >= args.stereo_ti_max_iters:
                 break
 
     progress_bar.close()
-
+    text_encoder.eval()
     text_encoder.save_pretrained(text_encoder_save_path)
     tokenizer.save_pretrained(tokenizer_save_path)
 
@@ -366,15 +364,8 @@ def inference_and_save(
     text_encoder_dir,
     tokenizer_dir,
 ):
-    # Ensure tokenizer has the placeholder tokens added during the training process
-    # いらないかも
-    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(tokenizer_dir)
-    # for token in list(saved_tokens.values()):
-    #     if token not in tokenizer.get_vocab():
-    #         print(f"!!!! Adding placeholder token '{token}' to tokenizer.")
-    #         tokenizer.add_tokens([token])
-    #         text_encoder.resize_token_embeddings(len(tokenizer))
 
+    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(tokenizer_dir)
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(unet_dir)
     text_encoder: CLIPTextModel = CLIPTextModel.from_pretrained(text_encoder_dir)
     pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(args.sd_version)
@@ -396,8 +387,8 @@ def inference_and_save(
             f"{args.stereo_generic_prompt} {prompt}",
             width=args.image_size,
             height=args.image_size,
-            n_steps=50,
-            n_imgs=args.num_images_per_prompt,
+            num_inference_steps=50,
+            num_images_per_prompt=args.num_images_per_prompt,
             generator=generator,
             guidance_scale=args.guidance_scale
         ).images
@@ -411,8 +402,8 @@ def inference_and_save(
                 f"{args.stereo_generic_prompt} {token}",
                 width=args.image_size,
                 height=args.image_size,
-                n_steps=50,
-                n_imgs=args.num_images_per_prompt,
+                num_inference_steps=50,
+                num_images_per_prompt=args.num_images_per_prompt,
                 generator=generator,
                 guidance_scale=args.guidance_scale
             )
@@ -733,8 +724,8 @@ def inference_attack(
                 f"{args.stereo_generic_prompt} {token}",
                 width=args.image_size,
                 height=args.image_size,
-                n_steps=50,
-                n_imgs=10,
+                num_inference_steps=50,
+                num_images_per_prompt=10,
                 generator=generator,
                 guidance_scale=7.5
             )
