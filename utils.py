@@ -272,7 +272,23 @@ class Arguments(BaseModel):
     ace_surrogate_concept_clip_path: Optional[str] = Field(default=None)
     #example of ace_surrogate_concept_clip_path : "evaluation-outputs/cartoon_eval_test/SD3/evaluation_results_clip_CONCEPT_image_None.json"
     ace_anchor_prompt_path: Optional[str] = Field("data/concept_text/IP_character_concept.txt")
-    
+
+    # configs for STEREO
+    stereo_method: Literal["noxattn", "xattn"] = Field("noxattn")
+    stereo_mode: Literal["stereo", "attack", "both"] = Field("stereo")
+    stereo_iteration: Optional[int] = Field(200)
+    stereo_ste_lr: Optional[float] = Field(0.5e-5)
+    stereo_reo_lr: Optional[float] = Field(2e-5)
+    stereo_ci_lr: Optional[float] = Field(5e-3)
+    stereo_ti_max_iters: Optional[int] = Field(3000, description="Maximum training steps for textual inversion")
+    stereo_n_iters: Optional[int] = Field(4, description="Total number of erasure-attack iterations")
+    stereo_compositional_guidance_scale: Optional[float] = Field(2.0, description="Compositional guidance scale. The value has to be +1 of the scale you would like to set. If the intended scale is 1.0, then the value has to be 2.0")
+    stereo_initializer_token: Literal["person", "object", "art"] = Field("object")
+    stereo_learnable_property: Literal["object", "style"] = Field("object")
+    stereo_generic_prompt: Optional[str] = Field("a photo of a", description="Generic prompt for textual inversion visualization")
+    stereo_num_of_adv_concepts: Optional[int] = Field(4, description="Number of adversarial concepts to use in REO")
+    stereo_anchor_concept_path: Optional[str] = Field("captions/stereo_anchor_prompts.json", description="Path to anchor concept json used in REO stage")
+    stereo_attack_eval_images: Optional[str] = Field("data/images/eval/nudity")
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
