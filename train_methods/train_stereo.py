@@ -212,6 +212,7 @@ def train_concept_inversion(
     args: Arguments,
     placeholder_token, 
     lr, 
+    train_data_dir: str,
     text_encoder_save_path,
     tokenizer_save_path,
     tokenizer: CLIPTokenizer,
@@ -264,7 +265,7 @@ def train_concept_inversion(
     org_token_embeds = text_encoder.get_input_embeddings().weight.data.clone()
 
     dataset = TextualInversionDataset(
-        data_root=args.data_dir,
+        data_root=train_data_dir,
         tokenizer=tokenizer,
         size=args.image_size,
         placeholder_token=" ".join(tokenizer.convert_ids_to_tokens(placeholder_token_ids)),
@@ -469,6 +470,7 @@ def search_thoroughly_enough(
             args=args,
             placeholder_token=placeholder_token,
             lr=args.stereo_ci_lr,
+            train_data_dir=args.data_dir,
             text_encoder_save_path=attack_model_dir,
             tokenizer_save_path=attack_tokenizer_dir,
             tokenizer=tokenizer,
@@ -750,14 +752,12 @@ def attack_stereo(
 
     placeholder_token = generate_placeholder_token()
 
-    attack_filename = "eval_ci_attack_on_stereo_text_encoder.pt"
-    attack_model_path = os.path.join(args.save_dir, attack_filename)
-
     tokenizer, text_encoder = train_concept_inversion(
         args=args,
         placeholder_token=placeholder_token,
-        train_data_dir=args.stereo_attack_eval_images, # train_data_dirが必要
+        train_data_dir=args.stereo_attack_eval_images,
         lr=args.stereo_ci_lr,
+        train_data_dir=args.data_dir,
         tokenizer=tokenizer,
         text_encoder=text_encoder,
         vae=vae,
