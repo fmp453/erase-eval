@@ -15,6 +15,7 @@ from torch.utils.data import Dataset
 from transformers import CLIPTokenizer
 
 from train_methods.train_utils import prompt_augmentation, tokenize
+from train_methods.templates import imagenet_style_templates_small, imagenet_templates_small, person_templates_small
 
 PIL_INTERPOLATION = {
     "linear": PIL.Image.Resampling.BILINEAR,
@@ -630,64 +631,6 @@ class AnchorsDataset(Dataset):
     def __getitem__(self, index):
         anchor = self.anchor_list[index % len(self.anchor_list)]
         return anchor
-
-# Define prompt templates
-imagenet_templates_small = [
-    "a photo of a {}",
-    "a rendering of a {}",
-    "a cropped photo of the {}",
-    "the photo of a {}",
-    "a photo of a clean {}",
-    "a photo of a dirty {}",
-    "a dark photo of the {}",
-    "a photo of my {}",
-    "a photo of the cool {}",
-    "a close-up photo of a {}",
-    "a bright photo of the {}",
-    "a cropped photo of a {}",
-    "a photo of the {}",
-    "a good photo of the {}",
-    "a photo of one {}",
-    "a close-up photo of the {}",
-    "a rendition of the {}",
-    "a photo of the clean {}",
-    "a rendition of a {}",
-    "a photo of a nice {}",
-    "a good photo of a {}",
-    "a photo of the nice {}",
-    "a photo of the small {}",
-    "a photo of the weird {}",
-    "a photo of the large {}",
-    "a photo of a cool {}",
-    "a photo of a small {}",
-]
-
-imagenet_style_templates_small = [
-    "a painting in the style of {}",
-    "a rendering in the style of {}",
-    "a cropped painting in the style of {}",
-    "the painting in the style of {}",
-    "a clean painting in the style of {}",
-    "a dirty painting in the style of {}",
-    "a dark painting in the style of {}",
-    "a picture in the style of {}",
-    "a cool painting in the style of {}",
-    "a close-up painting in the style of {}",
-    "a bright painting in the style of {}",
-    "a cropped painting in the style of {}",
-    "a good painting in the style of {}",
-    "a close-up painting in the style of {}",
-    "a rendition in the style of {}",
-    "a nice painting in the style of {}",
-    "a small painting in the style of {}",
-    "a weird painting in the style of {}",
-    "a large painting in the style of {}",
-]
-
-person_templates_small = [
-    "a photo portrait of {}",
-    "a DSLR portrait of {}",
-]
 
 class TextualInversionDataset(Dataset):
     def __init__(
