@@ -1,18 +1,15 @@
 # Precise, Fast, and Low-cost Concept Erasure in Value Space: Orthogonal Complement Matters
 
 import os, sys
-import random
 from copy import deepcopy
 from typing import Optional
 
-from PIL import Image
 from tqdm import tqdm
 from einops import rearrange
 
-import numpy as np
 import torch
 import torch.nn as nn
-from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, DDPMScheduler, DPMSolverMultistepScheduler
+from diffusers import UNet2DConditionModel, DDIMScheduler, DDPMScheduler, DPMSolverMultistepScheduler
 from diffusers.models.attention_processor import Attention
 
 from train_methods.templates import template_dict
@@ -318,16 +315,14 @@ def main(args: Arguments):
 
     global ORTHO_DECOMP_STORAGE
 
-    # # Sampling Config
-    # parser.add_argument('--decomp_timestep', type=int, default=0, help='The decomp calculation will keep until this hyper-parameter')
     # # Erasing Config
     # parser.add_argument('--contents', type=str, default='')  --contents 'erase, retention'
 
     device = get_devices(args)[0]
-    mode_list = args.mode.replace(' ', '').split(',')
+    mode_list = args.adavd_mode.replace(' ', '').split(',')
 
     # region [If certain concept is already sampled, then skip it.]
-    concept_list, concept_list_tmp = [], [item.strip() for item in args.contents.split(',')]
+    concept_list, concept_list_tmp = [], [item.strip() for item in args.adavd_contents.split(',')]
     if 'retain' in mode_list:
         for concept in concept_list_tmp:
             check_path = os.path.join(args.save_dir, args.concepts.replace(', ', '_'), concept, 'retain')
@@ -388,7 +383,7 @@ def main(args: Arguments):
             atten_type='erase',
             target_records=deepcopy(target_records),
             sigmoid_setting=(args.adavd_sigmoid_a, args.adavd_sigmoid_b, args.adavd_sigmoid_c),
-            decomp_timestep=args.decomp_timestep,
+            decomp_timestep=args.adavd_decomp_timestep,
         )
         unet_erase.save_pretrained(f"{args.save_dir}/adavd/erase")
     elif "retain" in mode_list:
@@ -397,7 +392,7 @@ def main(args: Arguments):
             atten_type='retain', 
             target_records=deepcopy(target_records), 
             sigmoid_setting=(args.adavd_sigmoid_a, args.adavd_sigmoid_b, args.adavd_sigmoid_c),
-            decomp_timestep=args.decomp_timestep
+            decomp_timestep=args.adavd_decomp_timestep,
         )
         unet_erase.save_pretrained(f"{args.save_dir}/adavd/retain")
 

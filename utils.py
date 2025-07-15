@@ -300,6 +300,8 @@ class Arguments(BaseModel):
     adavd_sigmoid_b: Optional[float] = Field(0.93)
     adavd_sigmoid_c: Optional[float] = Field(2)
     adavd_record_type: Literal["keys", "values"] = Field("values")
+    adavd_decomp_timestep: Optional[int] = Field(0)
+    adavd_contents: Optional[str] = Field("")
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
