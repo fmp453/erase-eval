@@ -24,7 +24,7 @@ def get_args():
 
 class Arguments(BaseModel):
     
-    mode: Literal["train", "infer"] = Field("train", description="train or infer")
+    mode: Literal["train", "infer"] = Field("train", description="train (erase) or infer")
     method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "original"] = Field("esd")
     sd_version: Optional[str] = Field("compvis/stable-diffusion-v1-4")
     device: Optional[str] = Field("0", description="gpu id. when using two gpus, separated by comma")
@@ -289,6 +289,19 @@ class Arguments(BaseModel):
     stereo_num_of_adv_concepts: Optional[int] = Field(4, description="Number of adversarial concepts to use in REO")
     stereo_anchor_concept_path: Optional[str] = Field("captions/stereo_anchor_prompts.json", description="Path to anchor concept json used in REO stage")
     stereo_attack_eval_images: Optional[str] = Field("data/images/eval/nudity")
+
+
+    # configs for AdaVD
+    adavd_batch_size: Optional[int] = Field(10)
+    adavd_total_timesteps: Optional[int] = Field(30)
+    adavd_mode: Literal["original", "erase", "retain"] = Field("original")
+    adavd_erase_type: Literal["object", "style", "celebrity"] = Field("object")
+    adavd_sigmoid_a: Optional[float] = Field(100)
+    adavd_sigmoid_b: Optional[float] = Field(0.93)
+    adavd_sigmoid_c: Optional[float] = Field(2)
+    adavd_record_type: Literal["keys", "values"] = Field("values")
+    adavd_decomp_timestep: Optional[int] = Field(0)
+    adavd_contents: Optional[str] = Field("")
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
