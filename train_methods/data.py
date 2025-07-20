@@ -259,7 +259,7 @@ class AblatingConceptDataset(Dataset):
             "instance_images": torch.from_numpy(instance_image).permute(2, 0, 1),
             "mask": torch.from_numpy(mask),
             "instance_prompt_ids": tokenize(instance_prompt, self.tokenizer).input_ids,
-            "instance_anchor_prompt_ids": self.tokenizer(instance_anchor_prompt, self.tokenizer).input_ids
+            "instance_anchor_prompt_ids": tokenize(instance_anchor_prompt, self.tokenizer).input_ids
         }
         return example
 
@@ -397,7 +397,7 @@ class DocoDataset(Dataset):
             "instance_images": torch.from_numpy(instance_image).permute(2, 0, 1),
             "mask": torch.from_numpy(mask),
             "instance_prompt_ids": tokenize(instance_prompt, self.tokenizer).input_ids,
-            "instance_anchor_prompt_ids": self.tokenizer(instance_anchor_prompt, self.tokenizer).input_ids
+            "instance_anchor_prompt_ids": tokenize(instance_anchor_prompt, self.tokenizer).input_ids
         }
         return example
 
