@@ -303,6 +303,28 @@ class Arguments(BaseModel):
     adavd_decomp_timestep: Optional[int] = Field(0)
     adavd_contents: Optional[str] = Field("")
 
+    # configs for cpe
+    cpe_network_rank: Optional[int] = Field(1)
+    cpe_network_alpha: Optional[float] = Field(1.0)
+    cpe_network_continual_rank: Optional[int] = Field(16)
+    cpe_network_hidden_size: Optional[int] = Field(16)
+    cpe_network_init_size: Optional[int] = Field(16)
+    cpe_num_add_prompts: Optional[int] = Field(16)
+    cpe_batch_size: Optional[int] = Field(1)
+    cpe_iterations: Optional[int] = Field(450)
+    cpe_lr: Optional[float] = Field(0.00003)
+    cpe_lr_scheduler: Optional[str] = Field("cosine_with_restarts")
+    cpe_lr_scheduler_num_cycles: Optional[int] = Field(1)
+    cpe_lr_warmup_steps: Optional[int] = Field(5)
+    cpe_num_stages: Optional[int] = Field(10)
+    cpe_factor_init_iter: Optional[int] = Field(4)
+    cpe_factor_init_lr: Optional[int] = Field(10)
+    cpe_factor_init_lr_cycle: Optional[int] = Field(2)
+    cpe_text_encoder_lr: Optional[float] = Field(1e-05)
+    cpe_unet_lr: Optional[float] = Field(0.0001)
+    cpe_adv_coef: Optional[float] = Field(1.0)
+    cpe_pal: Optional[float] = Field(1e+4)
+
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
     images_dir: Optional[str] = Field("gen-images")

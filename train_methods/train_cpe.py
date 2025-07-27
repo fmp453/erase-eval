@@ -12,17 +12,14 @@ import os
 
 import numpy as np
 import torch
+import torch.optim as optim
 import bitsandbytes as bnb
 from tqdm import tqdm
 from diffusers import PNDMScheduler, StableDiffusionPipeline
+from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
-
-from src.configs import config as config_pkg
-from src.configs import prompt as prompt_pkg
-from src.configs.config import RootConfig
-
-from train_methods.train_spm import PromptSettings
+from train_methods.train_spm import PromptSettings, PromptEmbedsPair
 from train_methods.utils_cpe import CPELayer_ResAG, CPENetwork_ResAG, PromptTuningLayer, AnchorSamplerGensim
 from train_methods.train_utils import get_devices, get_models, get_condition
 from utils import Arguments
@@ -43,6 +40,193 @@ def get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_
     return schedule_func(optimizer, num_warmup_steps=lr_warmup_steps, num_training_steps=num_training_steps, num_cycles=lr_scheduler_num_cycles)
 
 
+def train_erase_one_stage(
+    args: Arguments,
+    stage: int,
+    pbar: tqdm[int],
+    device_cuda,
+    tokenizer: CLIPTokenizer,
+    text_encoder: CLIPTextModel,
+    network: CPENetwork_ResAG,
+    adv_prompts: PromptTuningLayer,
+    network_modules,
+    unet_modules,
+    optimizer: optim.Optimizer,
+    lr_scheduler,
+    criteria,
+    prompt_scripts_list,
+    prompts,
+    replace_word,
+    embedding_unconditional,
+    anchor_sampler,
+    lipschitz,
+    embeddings_erase_cache,
+    embeddings_anchor_cache,
+    ):
+
+    for i in pbar:
+        loss = {}
+        optimizer.zero_grad()
+        # Prepare for erasing prompt 
+        prompt_one = prompts
+
+        cache = dict()      
+        with torch.no_grad():            
+            prompt_pairs: list[PromptEmbedsPair] = []
+
+            for settings in prompt_one:
+                ind = random.randint(0, embeddings_erase_cache.size(0)-1)
+                embeddings = embeddings_erase_cache[ind]
+
+                cache[settings.target] = embeddings[0].unsqueeze(0)
+                cache[settings.neutral] = embeddings[1].unsqueeze(0)
+                cache['unconditional'] = embedding_unconditional
+
+                prompt_pair = PromptEmbedsPair(
+                    criteria,
+                    cache[settings.target],
+                    cache[settings.target],
+                    cache['unconditional'],
+                    cache[settings.neutral],
+                    settings,
+                )
+                assert prompt_pair.sampling_batch_size % prompt_pair.batch_size == 0
+                prompt_pairs.append(prompt_pair)
+
+        # Prepare for anchoring prompt
+        with torch.no_grad():
+            anchors = anchor_sampler.sample_mixup_batch_cache(prompt_pair, tokenizer=tokenizer, \
+                                    text_encoder=text_encoder, network=network, \
+                                    prompt_scripts_list=prompt_scripts_list, replace_word=replace_word, \
+                                    embeddings_anchor_cache=embeddings_anchor_cache, \
+                                    scale=config.train.noise_scale, mixup=config.train.mixup)
+            
+        ################### Prepare adversairal prompt
+        len_emb_adv = 0
+        if adv_prompts.len_prompts > 0:
+            embeddings_adv = adv_prompts.forward_eval(prompt_pair.target)
+            len_emb_adv = embeddings_adv.size(0)
+        
+        ############### loss_prompt_erase/anchor
+        pal = torch.tensor([args.cpe_pal]).float().to(device=device_cuda)     
+
+        pal_k_coef_log_dict_erase = dict()
+        pal_v_coef_log_dict_erase = dict()        
+        loss_prompt_erase_to_k = 0
+        loss_prompt_erase_to_v = 0
+
+        pal_k_coef_log_dict_anchor = dict()
+        pal_v_coef_log_dict_anchor = dict()
+        loss_prompt_anchor_to_k = 0
+        loss_prompt_anchor_to_v = 0   
+
+        loss_adv_erase_to_k = torch.tensor([0.]).float().to(device=device_cuda)     
+        loss_adv_erase_to_v = torch.tensor([0.]).float().to(device=device_cuda)     
+        
+        idx = 0
+    
+        for name in network_modules.keys():
+            if not "lora_unet" in name:
+                continue
+            if "lora_adaptor" in name:
+                continue
+
+            targets = torch.cat([prompt_pair.target, embeddings_adv]) if len_emb_adv > 0 else prompt_pair.target
+
+            with torch.no_grad():
+                crsattn_org = unet_modules[name](torch.cat([targets, prompt_pair.neutral, prompt_pair.unconditional, anchors[1::2]], dim=0).float())
+                crsattn_target_org = crsattn_org[0].unsqueeze(0) #if targets.size(0) == 1 else crsattn_org[:1+len_emb_adv]
+                crsattn_neutral_org = crsattn_org[1+len_emb_adv].unsqueeze(0)
+                crsattn_comp_org = crsattn_org[(2+len_emb_adv):]
+                
+                if len_emb_adv > 0:
+                    # crsattn_target_adv_org = crsattn_org[1:1+len_emb_adv]
+                    crsattn_neutral_adv_org = crsattn_org[1+len_emb_adv].unsqueeze(0).repeat(len_emb_adv,1,1)
+                
+
+            with network:
+                crsattn = unet_modules[name](torch.cat([targets, prompt_pair.neutral, prompt_pair.unconditional, anchors[1::2]], dim=0).float())
+                crsattn_target = crsattn[0].unsqueeze(0) #if targets.size(0) == 1 else crsattn[:1+len_emb_adv]
+                crsattn_comp = crsattn[(2+len_emb_adv):]
+                
+                if len_emb_adv > 0:
+                    crsattn_target_adv = crsattn[1:1+len_emb_adv]
+                    # crsattn_neutral = crsattn[1+len_emb_adv].unsqueeze(0).repeat(1+len_emb_adv,1,1)
+
+
+            g_scale = prompt_pair.guidance_scale
+            if "to_k" in name:
+                lipschitz_for_key_target = ( lipschitz['lipschitz_ov'][idx]*lipschitz['lipschitz_q'][idx] ).unsqueeze(0).unsqueeze(1).unsqueeze(2) / prompt_pair.target.shape[1]
+                loss_prompt_erase_to_k += (lipschitz_for_key_target * ( (crsattn_neutral_org - crsattn_target) + g_scale*(crsattn_neutral_org-crsattn_target_org) )**2).mean()
+                if len_emb_adv > 0:
+                    loss_adv_erase_to_k += (lipschitz_for_key_target * ( (crsattn_neutral_adv_org - crsattn_target_adv) + g_scale*(crsattn_neutral_org-crsattn_target_org) )**2).mean()
+                pal_k_coef_log_dict_erase[f"pal_k_coef_log_dict_erase/{idx}th-layer"] = lipschitz_for_key_target.mean()
+
+                lipschitz_for_key_comp = ( lipschitz['lipschitz_ov'][idx]*lipschitz['lipschitz_q'][idx] ).unsqueeze(0).unsqueeze(1).unsqueeze(2) / prompt_pair.target.shape[1]
+                loss_prompt_anchor_to_k += (lipschitz_for_key_comp * (crsattn_comp_org-crsattn_comp)**2).mean()
+                pal_k_coef_log_dict_anchor[f"pal_k_coef_log_dict_anchor/{idx}th-layer"] = lipschitz_for_key_comp.mean()                
+
+            else:
+                lipschitz_for_val_target = lipschitz['lipschitz_o'][idx].unsqueeze(0).unsqueeze(1)
+                loss_prompt_erase_to_v += (lipschitz_for_val_target * ( (crsattn_neutral_org - crsattn_target) + g_scale*(crsattn_neutral_org-crsattn_target_org) )**2).mean()
+                if len_emb_adv > 0:
+                    loss_adv_erase_to_v += (lipschitz_for_val_target * ( (crsattn_neutral_adv_org - crsattn_target_adv) + g_scale*(crsattn_neutral_org-crsattn_target_org) )**2).mean()
+                pal_v_coef_log_dict_erase[f"pal_v_coef_log_dict_erase/{idx}th-layer"] = lipschitz_for_val_target.mean()
+
+                lipschitz_for_val_comp = lipschitz['lipschitz_o'][idx].unsqueeze(0).repeat(crsattn_comp.shape[0],1).unsqueeze(2)
+                loss_prompt_anchor_to_v += (lipschitz_for_val_comp * (crsattn_comp_org-crsattn_comp)**2).mean() #/ crsattn_comp_org.shape[0]
+                pal_v_coef_log_dict_anchor[f"pal_v_coef_log_dict_anchor/{idx}th-layer"] = lipschitz_for_val_comp.mean()            
+
+                idx+=1
+        
+        loss_prompt_erase_to_k = loss_prompt_erase_to_k / len(network_modules)
+        loss_prompt_erase_to_v = loss_prompt_erase_to_v / len(network_modules)
+        loss_prompt_erase = loss_prompt_erase_to_v + loss_prompt_erase_to_k       
+
+        loss_prompt_anchor_to_k = loss_prompt_anchor_to_k / len(network_modules)
+        loss_prompt_anchor_to_v = loss_prompt_anchor_to_v / len(network_modules)
+        loss_prompt_anchor = loss_prompt_anchor_to_v + loss_prompt_anchor_to_k        
+
+
+        loss_adv_erase_to_k = loss_adv_erase_to_k / len(network_modules)
+        loss_adv_erase_to_v = loss_adv_erase_to_v / len(network_modules)
+        loss_adv_erase = loss_adv_erase_to_v + loss_adv_erase_to_k
+        loss[f"loss_erasing_stage{stage}/loss_prompt_erase"] = loss_prompt_erase
+        loss[f"loss_erasing_stage{stage}/loss_prompt_erase_to_k"] = loss_prompt_erase_to_k
+        loss[f"loss_erasing_stage{stage}/loss_prompt_erase_to_v"] = loss_prompt_erase_to_v
+
+        loss[f"loss_erasing_stage{stage}/loss_prompt_anchor"] = loss_prompt_anchor
+        loss[f"loss_erasing_stage{stage}/loss_prompt_anchor_to_k"] = loss_prompt_anchor_to_k
+        loss[f"loss_erasing_stage{stage}/loss_prompt_anchor_to_v"] = loss_prompt_anchor_to_v 
+
+        loss[f"loss_erasing_stage{stage}/loss_adv_erase"] = loss_adv_erase 
+        
+        adv_coef = args.cpe_adv_coef
+        loss[f"loss_erasing"] = loss[f"loss_erasing_stage{stage}/loss_prompt_erase"] \
+                            + adv_coef * loss[f"loss_erasing_stage{stage}/loss_adv_erase"] \
+                            + pal * loss[f"loss_erasing_stage{stage}/loss_prompt_anchor"]
+
+        ############### loss_prompt_erase/anchor ################ 
+        ######################### misc ##########################    
+        loss["pal"] = pal
+        loss["guidance"] = torch.tensor([prompt_pair.guidance_scale]).cuda()
+        loss["la_strength"] = torch.tensor([prompt_pair.la_strength]).cuda()
+        loss["batch_size"] = torch.tensor([prompt_pair.batch_size]).cuda()               
+        
+        ######################## optim ##########################        
+        loss[f"loss_erasing"].backward()
+
+        if args.max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(
+                trainable_params, args.train.max_grad_norm, norm_type=2
+            )
+        optimizer.step()
+        lr_scheduler.step()
+
+        pbar.set_description(f"Loss: {loss[f'loss_erasing'].item():.4f}")
+        
+    return network, adv_prompts, 
+
 def train(
     config: RootConfig,
     prompts: list[PromptSettings],
@@ -50,8 +234,8 @@ def train(
 ):
     model_metadata = {
         "prompts": ",".join([prompt.target for prompt in prompts]),
-        "rank": str(config.network.rank),
-        "alpha": str(config.network.alpha),
+        "rank": str(args.cpe_network_rank),
+        "alpha": str(args.cpe_network_alpha),
     }
     save_path = Path(args.save_dir)
 
@@ -88,18 +272,17 @@ def train(
     network = CPENetwork_ResAG(
         unet,
         text_encoder,
-        rank=config.network.rank,
+        rank=args.cpe_network_rank,
         multiplier=1.0,
-        alpha=config.network.alpha,
+        alpha=args.cpe_network_alpha,
         module=CPELayer_ResAG,
         continual=True,
         task_id=task_id,
-        continual_rank=config.network.continual_rank,
-        hidden_size=config.network.hidden_size,
-        init_size=config.network.init_size,
+        continual_rank=args.cpe_network_continual_rank,
+        hidden_size=args.cpe_network_hidden_size,
+        init_size=args.cpe_network_init_size,
     ).to(device)
 
-    print("gate rank of netowrk:" , config.network.init_size)
     print("Prompts")
     for settings in prompts:
         print(settings)
@@ -132,8 +315,7 @@ def train(
             lipschitz_ov.append(S_ov[0])
     lipschitz = {"lipschitz_o": lipschitz_o, "lipschitz_q": lipschitz_q, "lipschitz_ov": lipschitz_ov}
     ######## Compute lipschitz for weight matrices #########
-            
-    ###################### Prepare #########################
+
     embedding_unconditional = get_condition([""], tokenizer, text_encoder)
     
     network_modules = dict()
@@ -152,28 +334,11 @@ def train(
     
     _, num_tokens, token_dim = embedding_unconditional.size()    
     adv_prompts = PromptTuningLayer(
-        config.train.num_add_prompts, 
+        args.cpe_num_add_prompts,
         num_tokens, token_dim, device
     ).to(device)
     
-
-    if config.train.resume_stage > 0:
-        print(f"###### Resuming from stage {config.train.resume_stage} #######")
-        
-        model_path = save_path / f"{config.save.name}_stage{int(config.train.resume_stage)}.safetensors"
-        model_path_adv = save_path / f"{config.save.name}_adv_prompts_stage{int(config.train.resume_stage)}.safetensors"
-
-        cpes, _ = load_state_dict(model_path)
-        for k, v in network.named_parameters(): 
-            v.data=cpes[k].to(device)
-    
-        cpes_adv, _ = load_state_dict(model_path_adv)
-        for _ in range(config.train.resume_stage):
-            adv_prompts.expand_prompts()
-        adv_prompts.load_state_dict(cpes_adv)
-        
-    
-    ############### Prepare for erasing token cache ####################
+    # Prepare for erasing token cache
     prompt_one = prompts
     with torch.no_grad():
         prompt_in_scripts_target = []
@@ -197,7 +362,7 @@ def train(
             
     simWords = []
 
-    ########## for debugging with sim words from csv
+    # for debugging with sim words from csv
     with torch.no_grad():
         if replace_word == "explicit":
             simWords_csv = pd.read_csv("./anchors/mass_surr_prompts_explicit.csv")
@@ -213,7 +378,7 @@ def train(
                 simWords_csv = pd.read_csv("./anchors/mass_surr_words_character.csv")
             elif replace_word in ["actor", "artist"]:
                 
-                #### prepare simWords ###
+                # prepare simWords
                 if replace_word == "actor":
                     simWords_erase = [pr.target for pr in prompt_one]
                 
@@ -258,9 +423,9 @@ def train(
                     emb_act_anc = get_condition(simW_batch, tokenizer, text_encoder)
                     embeddings_actor_anchor.append(emb_act_anc)
                 embeddings_actor_anchor = torch.cat(embeddings_actor_anchor, dim=0)
-                ##################### prepare embeddings ####################
+                # prepare embeddings
                 
-                ##################### compute similarity ####################
+                # compute similarity
                 emb_erase_flat = embeddings_erase.view(len(simWords_erase), -1)
                 emb_anchor_flat = embeddings_actor_anchor.view(len(simWords_actor_anchor), -1)
     
@@ -268,14 +433,11 @@ def train(
                 emb_anchor_flat_norm = emb_anchor_flat / emb_anchor_flat.norm(2, dim=1, keepdim=True)
     
                 similarity = emb_erase_flat_norm @ emb_anchor_flat_norm.T
-                ##################### compute similarity ####################
 
-                #################### select anchor celebs ###################    
+                # select anchor celebs
                 _, ind_sorted = similarity.sort()
                 ind_sorted_list = ind_sorted.cpu().numpy().tolist()
-                
                 simWords_selected = [simWords_actor_anchor[sim_idx] for sim_idx in ind_sorted_list[0][-50:]]
-                #################### select anchor celebs ################### 
                 simWords = simWords_general_words + simWords_selected
 
             
@@ -293,69 +455,53 @@ def train(
             
             embeddings_anchor_cache = torch.cat(embeddings_anchor_cache, dim=0)
     
-    train_iterations = config.train.iterations
-    # train_iterations_adv = config.train.iterations_adv
-    train_lr = config.train.lr
-    train_lr_scheduler_num_cycles = config.train.lr_scheduler_num_cycles
+    train_iterations = args.cpe_iterations
+    # train_iterations_adv = args.cpe_iterations_adv
+    train_lr = args.cpe_lr
+    train_lr_scheduler_num_cycles = args.cpe_lr_scheduler_num_cycles
 
-    for stage in range(config.train.resume_stage, config.train.num_stages):      
+    for stage in range(args.cpe_num_stages):
         print(f"Stage: {stage}\n")
-        
+
         if stage == 0:
-            config.train.iterations = config.train.factor_init_iter*train_iterations
-            config.train.lr = config.train.factor_init_lr*train_lr
-            config.train.lr_scheduler_num_cycles = config.train.factor_init_lr_cycle*train_lr_scheduler_num_cycles
+            args.cpe_iterations = args.cpe_factor_init_iter * train_iterations
+            args.cpe_lr = args.cpe_factor_init_lr * train_lr
+            args.cpe_lr_scheduler_num_cycles = args.cpe_factor_init_lr_cycle * train_lr_scheduler_num_cycles
         else:
-            config.train.iterations = train_iterations
-            config.train.lr = train_lr
-            config.train.lr_scheduler_num_cycles = train_lr_scheduler_num_cycles
+            args.cpe_iterations = train_iterations
+            args.cpe_lr = train_lr
+            args.cpe_lr_scheduler_num_cycles = train_lr_scheduler_num_cycles
 
         trainable_params = network.prepare_optimizer_params(
-            config.train.text_encoder_lr, config.train.unet_lr, config.train.lr
+            args.cpe_text_encoder_lr, args.cpe_unet_lr, args.cpe_lr
         )
 
-        pbar = tqdm(range(config.train.iterations))
+        pbar = tqdm(range(args.cpe_iterations))
 
         network.requires_grad_(True)
         network.train()
         adv_prompts.requires_grad_(False)
         adv_prompts.eval()
         
-        optimizer = bnb.optim.Adam8bit(trainable_params, config)
-        # convert arguments from config
-        lr_scheduler = get_scheduler_fix(optimizer, iterations=)
+        optimizer = bnb.optim.Adam8bit(trainable_params, lr=args.cpe_lr)
+        lr_scheduler = get_scheduler_fix(
+            optimizer, 
+            iterations=args.cpe_iterations,
+            lr_scheduler_num_cycles=args.cpe_lr_scheduler_num_cycles,
+            lr_warmup_steps=args.cpe_lr_warmup_steps
+        )
         criteria = torch.nn.MSELoss()
                 
         network, adv_prompts = train_erase_one_stage(
-                stage, pbar, config, device,
-                pipe, unet, tokenizer, text_encoder,
+                args, stage, pbar, device,
+                tokenizer, text_encoder,
                 network, adv_prompts, network_modules, unet_modules,
                 optimizer, lr_scheduler, criteria,
                 prompt_scripts_list, prompts, replace_word, embedding_unconditional,
                 anchor_sampler, lipschitz,
                 torch.float32,
-                model_metadata,embeddings_erase_cache,embeddings_anchor_cache, ) 
-        
-          
-        ####################### save ckpt #######################     
-        if (stage+1)%config.save.stage_interval == 0:
-            print("Saving Network...")
-
-            save_path = Path(config.save.path)            
-            save_path.mkdir(parents=True, exist_ok=True)
-            network.save_weights(
-                save_path / f"{config.save.name}_stage{stage+1}.safetensors",
-                dtype=torch.float32,
-                metadata=model_metadata,
-            )
-            
-            adv_prompts.save_weights(
-                save_path / f"{config.save.name}_adv_prompts_last.safetensors",
-                dtype=torch.float32,
-                metadata=model_metadata,
-            )
-        ####################### save ckpt #######################      
-
+                model_metadata,embeddings_erase_cache,embeddings_anchor_cache
+        )
         
         if config.train.do_adv_learn:      
             adv_prompts.expand_prompts()
@@ -369,9 +515,16 @@ def train(
             adv_parameters = adv_prompts.prompts.parameters()
             trainable_params_adv = [{"params": adv_parameters, "lr":config.train.lr_adv}]    
 
-            _, _, optimizer_adv = get_optimizer(
-                config, trainable_params_adv)
-            lr_scheduler_adv = get_scheduler_adv(config, optimizer_adv)
+            optimizer_adv = bnb.optim.AdamW8bit(
+                trainable_params_adv,
+                lr=args.cpe_lr
+            )
+            lr_scheduler_adv = get_scheduler_fix(
+                optimizer_adv,
+                iterations=args.cpe_iterations,
+                lr_scheduler_num_cycles=args.cpe_lr_scheduler_num_cycles,
+                lr_warmup_steps=args.cpe_lr_warmup_steps
+            )
             criteria_adv = torch.nn.MSELoss()        
 
             network, adv_prompts = train_adv_one_stage(
@@ -387,9 +540,9 @@ def train(
                     embeddings_anchor_cache)
       
 
-    config.train.iterations = train_iterations
-    config.train.lr = train_lr
-    config.train.lr_scheduler_num_cycles = train_lr_scheduler_num_cycles        
+    args.cpe_iterations = train_iterations
+    args.cpe_lr = train_lr
+    args.cpe_lr_scheduler_num_cycles = train_lr_scheduler_num_cycles        
 
     print("Saving...")
     save_path.mkdir(parents=True, exist_ok=True)
@@ -425,19 +578,6 @@ def main(args):
         config.train.st_prompt_idx = args.st_prompt_idx
     if args.end_prompt_idx != -1:
         config.train.end_prompt_idx = args.end_prompt_idx
-    if args.gate_rank != -1:
-        config.network.init_size = args.gate_rank
-        config.network.hidden_size = args.gate_rank
-        config.network.continual_rank = args.gate_rank
-    if args.guidance_scale != -1:
-        for p_idx, p in enumerate(prompts):
-            p.guidance_scale = args.guidance_scale 
-    if args.pal != -1:
-        config.train.pal = args.pal
-    if args.resume_stage != -1:
-        config.train.resume_stage = args.resume_stage
-    if args.lora_rank != -1:
-        config.network.rank = args.lora_rank     
     config.train.skip_learned = args.skip_learned
         
     exp_name = config.save.path.split("/")[-2].replace(f"guide#", f"guide{p.guidance_scale}").replace(f"pal#", f"pal{config.train.pal}").replace(f"gate_rank#", f"gate_rank{config.network.init_size}")
@@ -478,7 +618,6 @@ def main(args):
         train(config, [p])
         
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -486,7 +625,6 @@ if __name__ == "__main__":
         required=True,
         help="Config file for training.",
     )
-    
     parser.add_argument(
         "--st_prompt_idx",
         type=int,
@@ -497,60 +635,45 @@ if __name__ == "__main__":
         type=int,
         default=-1,
     )
-
-    
     parser.add_argument(
         "--gate_rank",
         type=int,
         default=-1,
     )
-    
     parser.add_argument(
         "--guidance_scale",
         type=float,
         default=-1,
     )
-    
     parser.add_argument(
         "--pal",
         type=float,
         default=-1,
     )
-
     parser.add_argument(
         "--noise",
         type=str,
         default="",
     )
-
-
-    
     parser.add_argument(
         "--resume_stage",
         type=int,
         default=-1,
     )
-    
     parser.add_argument(
         "--lora_rank",
         type=int,
         default=-1,
     )
-    
     parser.add_argument(
         "--mixup",
         type=bool,
         default=True,
-    )
-        
-        
+    )        
     parser.add_argument(
         "--skip_learned",
         type=bool,
         default=False,
     )
-    
-
     args = parser.parse_args()
-        
     main(args)
