@@ -7,21 +7,20 @@ import argparse
 from pathlib import Path
 import pandas as pd
 import random
+import math
+import os
 
 import numpy as np
 import torch
+import bitsandbytes as bnb
 from tqdm import tqdm
-import os
-
 from diffusers import PNDMScheduler, StableDiffusionPipeline
+from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
-from src.models.merge_cpe import *
 
-import src.engine.train_util as train_util
 from src.configs import config as config_pkg
 from src.configs import prompt as prompt_pkg
 from src.configs.config import RootConfig
-from src.engine.trainer import *
 
 from train_methods.train_spm import PromptSettings
 from train_methods.utils_cpe import CPELayer_ResAG, CPENetwork_ResAG, PromptTuningLayer, AnchorSamplerGensim
@@ -38,6 +37,11 @@ def seed_everything(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
 
+def get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_steps, num_processes: int = 1):
+    num_training_steps = iterations * num_processes  
+    schedule_func = TYPE_TO_SCHEDULER_FUNCTION[SchedulerType("cosine_with_restarts")]
+    return schedule_func(optimizer, num_warmup_steps=lr_warmup_steps, num_training_steps=num_training_steps, num_cycles=lr_scheduler_num_cycles)
+
 
 def train(
     config: RootConfig,
@@ -49,7 +53,7 @@ def train(
         "rank": str(config.network.rank),
         "alpha": str(config.network.alpha),
     }
-    save_path = Path(config.save.path)
+    save_path = Path(args.save_dir)
 
     tokenizer, text_encoder, vae, unet, _, _ = get_models(args)
     noise_scheduler: PNDMScheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
@@ -107,7 +111,7 @@ def train(
     replace_word = config.replace_word
     prompt_scripts_list += [replace_word]*(1)
 
-    ######## Compute lipschitz for weight matrices #########
+    ######## Compute lipschitz for weight matrices
     lipschitz_o = []
     lipschitz_q = []
     lipschitz_ov = []
@@ -140,12 +144,11 @@ def train(
     unet_modules = dict()
     for name, module in unet.named_modules():
         name = "_".join(name.split("."))
-        name = "lora_unet_" + name
+        name = f"lora_unet_{name}"
 
         for network_name in network_modules.keys():
             if name == network_name:
-                unet_modules[name] = module    
-    ###################### Prepare #########################
+                unet_modules[name] = module
     
     _, num_tokens, token_dim = embedding_unconditional.size()    
     adv_prompts = PromptTuningLayer(
@@ -192,17 +195,9 @@ def train(
         embeddings_erase_ntl = get_condition(prompt_in_scripts_neutral, tokenizer, text_encoder).unsqueeze(1)
         embeddings_erase_cache = torch.cat([embeddings_erase_tgt, embeddings_erase_ntl], dim=1)
             
-    ############### Prepare for erasing token cache ####################
-    
-
-    
-    ######################################################################
-    ############### Prepare for anchornig token cache ####################
-
-    samples = []        
     simWords = []
 
-    ########## for debugging with sim words from csv ############
+    ########## for debugging with sim words from csv
     with torch.no_grad():
         if replace_word == "explicit":
             simWords_csv = pd.read_csv("./anchors/mass_surr_prompts_explicit.csv")
@@ -211,16 +206,14 @@ def train(
 
             embeddings_anchor_cache = []
             prompt_in_scripts_anchor = [simWord[0] for simWord in simWords]
-            embeddings_anchor_cache = train_util.encode_prompts(
-                            tokenizer, text_encoder, prompt_in_scripts_anchor)
+            embeddings_anchor_cache = get_condition(prompt_in_scripts_anchor, tokenizer, text_encoder)
 
         else:
             if replace_word == "target":
                 simWords_csv = pd.read_csv("./anchors/mass_surr_words_character.csv")
-            elif replace_word == "actor" or replace_word == "artist":
+            elif replace_word in ["actor", "artist"]:
                 
-                ###########################################################
-                ##################### prepare simWords ####################
+                #### prepare simWords ###
                 if replace_word == "actor":
                     simWords_erase = [pr.target for pr in prompt_one]
                 
@@ -233,12 +226,13 @@ def train(
                 
                     simWords_actor_anchor = [a[0] for a in simWords_actor_anchor]
 
-                elif replace_word == "artist":
+                # elif replace_word == "artist":
+                else:
                     simWords_erase = [pr.target for pr in prompt_one]
                 
                     simWords_general_words_csv = pd.read_csv("./anchors/mass_surr_words_artist_general_words.csv")
                     simWords_general_words = list(simWords_general_words_csv.itertuples(index=False, name=None))
-                    simWords_general_words = [a for _,a,b in simWords_general_words]
+                    simWords_general_words = [a for _, a, _ in simWords_general_words]
         
                     simWords_actor_anchor_csv = pd.read_csv("./anchors/mass_surr_words_1734artists.csv")
                     simWords_actor_anchor = list(simWords_actor_anchor_csv.itertuples(index=False, name=None))
@@ -248,11 +242,6 @@ def train(
                 for simW_erase in simWords_erase:            
                     simWords_actor_anchor = [item for item in simWords_actor_anchor if simW_erase not in item.lower()]
 
-                ##################### prepare simWords ####################
-                ###########################################################
-
-                #############################################################
-                ##################### prepare embeddings ####################
                 len_actor_anchor = len(simWords_actor_anchor)
                 anchor_batch = 100
     
@@ -262,17 +251,15 @@ def train(
                         simWords_act_anc_batch.append(simWords_actor_anchor[anchor_batch*batch_idx:anchor_batch*(batch_idx+1)])
                     else:
                         simWords_act_anc_batch.append(simWords_actor_anchor[anchor_batch*batch_idx:])
-                embeddings_erase = train_util.encode_prompts(tokenizer, text_encoder, simWords_erase)            
+                embeddings_erase = get_condition(simWords_erase, tokenizer, text_encoder)
     
                 embeddings_actor_anchor = []
                 for simW_batch in simWords_act_anc_batch:
-                    emb_act_anc = train_util.encode_prompts(tokenizer, text_encoder, simW_batch)
+                    emb_act_anc = get_condition(simW_batch, tokenizer, text_encoder)
                     embeddings_actor_anchor.append(emb_act_anc)
                 embeddings_actor_anchor = torch.cat(embeddings_actor_anchor, dim=0)
-                ##################### prepare embeddings ####################                
-                #############################################################
+                ##################### prepare embeddings ####################
                 
-                #############################################################
                 ##################### compute similarity ####################
                 emb_erase_flat = embeddings_erase.view(len(simWords_erase), -1)
                 emb_anchor_flat = embeddings_actor_anchor.view(len(simWords_actor_anchor), -1)
@@ -281,10 +268,10 @@ def train(
                 emb_anchor_flat_norm = emb_anchor_flat / emb_anchor_flat.norm(2, dim=1, keepdim=True)
     
                 similarity = emb_erase_flat_norm @ emb_anchor_flat_norm.T
-                ##################### compute similarity #################### 
+                ##################### compute similarity ####################
 
                 #################### select anchor celebs ###################    
-                val_sorted, ind_sorted = similarity.sort()
+                _, ind_sorted = similarity.sort()
                 ind_sorted_list = ind_sorted.cpu().numpy().tolist()
                 
                 simWords_selected = [simWords_actor_anchor[sim_idx] for sim_idx in ind_sorted_list[0][-50:]]
@@ -301,43 +288,13 @@ def train(
                     pr_in_script_anc = pr_in_script_anc.replace(replace_word.lower(), simWord)        
                     prompt_in_scripts_anchor.append(pr_in_script_anc)
 
-                embeddings_erase_anc = train_util.encode_prompts(
-                            tokenizer, text_encoder, prompt_in_scripts_anchor)
-
+                embeddings_erase_anc = get_condition(prompt_in_scripts_anchor, tokenizer, text_encoder)
                 embeddings_anchor_cache.append(embeddings_erase_anc)
             
             embeddings_anchor_cache = torch.cat(embeddings_anchor_cache, dim=0)
     
-    #################### Generate original image  ########################
-    if config.logging.gen_init_img:
-        network.eval()
-        
-        log_dict = {}
-        print("Generating samples...")
-        with network:
-            samples = train_util.text2img(
-                pipe,
-                prompts=config.logging.prompts,
-                negative_prompt=config.logging.negative_prompt,
-                width=config.logging.width,
-                height=config.logging.height,
-                num_inference_steps=config.logging.num_inference_steps,
-                guidance_scale=config.logging.guidance_scale,
-                generate_num=config.logging.generate_num,
-                seed=config.logging.seed,
-            )
-        for text, img in samples:
-            if len(text) > 30:
-                text = text[:30]+text[-10:]
-            log_dict[text+f"_stage{0}"] = wandb.Image(img)
-
-            
-        network.train()    
-    #################### Generate original image  ######################## 
-    
-    
     train_iterations = config.train.iterations
-    train_iterations_adv = config.train.iterations_adv
+    # train_iterations_adv = config.train.iterations_adv
     train_lr = config.train.lr
     train_lr_scheduler_num_cycles = config.train.lr_scheduler_num_cycles
 
@@ -364,9 +321,9 @@ def train(
         adv_prompts.requires_grad_(False)
         adv_prompts.eval()
         
-        optimizer_name, optimizer_args, optimizer = train_util.get_optimizer(
-            config, trainable_params)
-        lr_scheduler = train_util.get_scheduler_fix(config, optimizer)
+        optimizer = bnb.optim.Adam8bit(trainable_params, config)
+        # convert arguments from config
+        lr_scheduler = get_scheduler_fix(optimizer, iterations=)
         criteria = torch.nn.MSELoss()
                 
         network, adv_prompts = train_erase_one_stage(
@@ -376,7 +333,7 @@ def train(
                 optimizer, lr_scheduler, criteria,
                 prompt_scripts_list, prompts, replace_word, embedding_unconditional,
                 anchor_sampler, lipschitz,
-                save_weight_dtype,
+                torch.float32,
                 model_metadata,embeddings_erase_cache,embeddings_anchor_cache, ) 
         
           
@@ -388,13 +345,13 @@ def train(
             save_path.mkdir(parents=True, exist_ok=True)
             network.save_weights(
                 save_path / f"{config.save.name}_stage{stage+1}.safetensors",
-                dtype=save_weight_dtype,
+                dtype=torch.float32,
                 metadata=model_metadata,
             )
             
             adv_prompts.save_weights(
                 save_path / f"{config.save.name}_adv_prompts_last.safetensors",
-                dtype=save_weight_dtype,
+                dtype=torch.float32,
                 metadata=model_metadata,
             )
         ####################### save ckpt #######################      
@@ -412,9 +369,9 @@ def train(
             adv_parameters = adv_prompts.prompts.parameters()
             trainable_params_adv = [{"params": adv_parameters, "lr":config.train.lr_adv}]    
 
-            optimizer_name_adv, optimizer_args_adv, optimizer_adv = train_util.get_optimizer(
+            _, _, optimizer_adv = get_optimizer(
                 config, trainable_params_adv)
-            lr_scheduler_adv = train_util.get_scheduler_adv(config, optimizer_adv)
+            lr_scheduler_adv = get_scheduler_adv(config, optimizer_adv)
             criteria_adv = torch.nn.MSELoss()        
 
             network, adv_prompts = train_adv_one_stage(
@@ -424,7 +381,7 @@ def train(
                     optimizer_adv, lr_scheduler_adv, criteria_adv,
                     prompt_scripts_list, prompts, replace_word, embedding_unconditional, 
                     anchor_sampler, lipschitz,
-                    save_weight_dtype,
+                    torch.float32,
                     model_metadata,
                     embeddings_erase_cache,
                     embeddings_anchor_cache)
@@ -438,13 +395,13 @@ def train(
     save_path.mkdir(parents=True, exist_ok=True)
     network.save_weights(
         save_path / f"{config.save.name}_last.safetensors",
-        dtype=save_weight_dtype,
+        dtype=torch.float32,
         metadata=model_metadata,
     )
     
     adv_prompts.save_weights(
         save_path / f"{config.save.name}_adv_prompts_last.safetensors",
-        dtype=save_weight_dtype,
+        dtype=torch.float32,
         metadata=model_metadata,
     )
     
