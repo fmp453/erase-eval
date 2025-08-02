@@ -324,6 +324,15 @@ class Arguments(BaseModel):
     cpe_unet_lr: Optional[float] = Field(0.0001)
     cpe_adv_coef: Optional[float] = Field(1.0)
     cpe_pal: Optional[float] = Field(1e+4)
+    cpe_do_adv_learn: Literal[True, False] = Field(True)
+    cpe_adv_iters: Optional[int] = Field(450)
+    cpe_adv_lr: Optional[float] = Field(0.01)
+    cpe_replace_word: Optional[str] = Field("artist", description="abstract concept of the target's. For example, in the case of erasing Akira Toriyama, this concept is replaced into artist.")
+    cpe_prompt_scripts_path: Optional[str] = Field("", description="path to template prompt file (in csv format). example is /train_artist/prompt_templates.csv")
+    cpe_mixup: Literal[True, False] = Field(True)
+    cpe_noise_scale: Optional[float] = Field(0.0)
+    cpe_st_prompt_idx: Optional[int] = Field(1)
+    cpe_end_prompt_idx: Optional[int] = Field(-1)
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")

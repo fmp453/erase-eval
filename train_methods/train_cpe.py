@@ -12,10 +12,12 @@ import os
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.optim as optim
 import bitsandbytes as bnb
 from tqdm import tqdm
-from diffusers import PNDMScheduler, StableDiffusionPipeline
+from diffusers import PNDMScheduler
+from torch.optim.lr_scheduler import LRScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
@@ -49,23 +51,24 @@ def train_erase_one_stage(
     text_encoder: CLIPTextModel,
     network: CPENetwork_ResAG,
     adv_prompts: PromptTuningLayer,
-    network_modules,
-    unet_modules,
+    network_modules: dict[str, nn.Module],
+    unet_modules: nn.Module,
     optimizer: optim.Optimizer,
-    lr_scheduler,
+    lr_scheduler: LRScheduler,
     criteria,
     prompt_scripts_list,
-    prompts,
+    prompts: list[PromptSettings],
     replace_word,
     embedding_unconditional,
     anchor_sampler,
-    lipschitz,
-    embeddings_erase_cache,
+    lipschitz: dict[str, list[torch.Tensor]],
+    embeddings_erase_cache: torch.Tensor,
     embeddings_anchor_cache,
-    ):
+    trainable_params,
+):
 
-    for i in pbar:
-        loss = {}
+    for _ in pbar:
+        loss: dict[str, torch.Tensor] = {}
         optimizer.zero_grad()
         # Prepare for erasing prompt 
         prompt_one = prompts
@@ -95,19 +98,25 @@ def train_erase_one_stage(
 
         # Prepare for anchoring prompt
         with torch.no_grad():
-            anchors = anchor_sampler.sample_mixup_batch_cache(prompt_pair, tokenizer=tokenizer, \
-                                    text_encoder=text_encoder, network=network, \
-                                    prompt_scripts_list=prompt_scripts_list, replace_word=replace_word, \
-                                    embeddings_anchor_cache=embeddings_anchor_cache, \
-                                    scale=config.train.noise_scale, mixup=config.train.mixup)
+            anchors = anchor_sampler.sample_mixup_batch_cache(
+                prompt_pair,
+                tokenizer=tokenizer,
+                text_encoder=text_encoder,
+                network=network,
+                prompt_scripts_list=prompt_scripts_list,
+                replace_word=replace_word,
+                embeddings_anchor_cache=embeddings_anchor_cache,
+                scale=args.cpe_noise_scale,
+                mixup=args.cpe_mixup
+            )
             
-        ################### Prepare adversairal prompt
+        # Prepare adversairal prompt
         len_emb_adv = 0
         if adv_prompts.len_prompts > 0:
             embeddings_adv = adv_prompts.forward_eval(prompt_pair.target)
             len_emb_adv = embeddings_adv.size(0)
         
-        ############### loss_prompt_erase/anchor
+        # loss_prompt_erase/anchor
         pal = torch.tensor([args.cpe_pal]).float().to(device=device_cuda)     
 
         pal_k_coef_log_dict_erase = dict()
@@ -126,17 +135,15 @@ def train_erase_one_stage(
         idx = 0
     
         for name in network_modules.keys():
-            if not "lora_unet" in name:
-                continue
-            if "lora_adaptor" in name:
+            if not "lora_unet" in name or "lora_adaptor" in name:
                 continue
 
             targets = torch.cat([prompt_pair.target, embeddings_adv]) if len_emb_adv > 0 else prompt_pair.target
 
             with torch.no_grad():
-                crsattn_org = unet_modules[name](torch.cat([targets, prompt_pair.neutral, prompt_pair.unconditional, anchors[1::2]], dim=0).float())
-                crsattn_target_org = crsattn_org[0].unsqueeze(0) #if targets.size(0) == 1 else crsattn_org[:1+len_emb_adv]
-                crsattn_neutral_org = crsattn_org[1+len_emb_adv].unsqueeze(0)
+                crsattn_org: torch.Tensor = unet_modules[name](torch.cat([targets, prompt_pair.neutral, prompt_pair.unconditional, anchors[1::2]], dim=0).float())
+                crsattn_target_org = crsattn_org[0].unsqueeze(0)
+                crsattn_neutral_org = crsattn_org[1 + len_emb_adv].unsqueeze(0)
                 crsattn_comp_org = crsattn_org[(2+len_emb_adv):]
                 
                 if len_emb_adv > 0:
@@ -145,36 +152,34 @@ def train_erase_one_stage(
                 
 
             with network:
-                crsattn = unet_modules[name](torch.cat([targets, prompt_pair.neutral, prompt_pair.unconditional, anchors[1::2]], dim=0).float())
-                crsattn_target = crsattn[0].unsqueeze(0) #if targets.size(0) == 1 else crsattn[:1+len_emb_adv]
+                crsattn: torch.Tensor = unet_modules[name](torch.cat([targets, prompt_pair.neutral, prompt_pair.unconditional, anchors[1::2]], dim=0).float())
+                crsattn_target = crsattn[0].unsqueeze(0)
                 crsattn_comp = crsattn[(2+len_emb_adv):]
                 
                 if len_emb_adv > 0:
                     crsattn_target_adv = crsattn[1:1+len_emb_adv]
-                    # crsattn_neutral = crsattn[1+len_emb_adv].unsqueeze(0).repeat(1+len_emb_adv,1,1)
-
 
             g_scale = prompt_pair.guidance_scale
             if "to_k" in name:
-                lipschitz_for_key_target = ( lipschitz['lipschitz_ov'][idx]*lipschitz['lipschitz_q'][idx] ).unsqueeze(0).unsqueeze(1).unsqueeze(2) / prompt_pair.target.shape[1]
-                loss_prompt_erase_to_k += (lipschitz_for_key_target * ( (crsattn_neutral_org - crsattn_target) + g_scale*(crsattn_neutral_org-crsattn_target_org) )**2).mean()
+                lipschitz_for_key_target = (lipschitz['lipschitz_ov'][idx]*lipschitz['lipschitz_q'][idx]).unsqueeze(0).unsqueeze(1).unsqueeze(2) / prompt_pair.target.shape[1]
+                loss_prompt_erase_to_k += (lipschitz_for_key_target * ((crsattn_neutral_org - crsattn_target) + g_scale *(crsattn_neutral_org-crsattn_target_org)) ** 2).mean()
                 if len_emb_adv > 0:
-                    loss_adv_erase_to_k += (lipschitz_for_key_target * ( (crsattn_neutral_adv_org - crsattn_target_adv) + g_scale*(crsattn_neutral_org-crsattn_target_org) )**2).mean()
+                    loss_adv_erase_to_k += (lipschitz_for_key_target * ((crsattn_neutral_adv_org - crsattn_target_adv) + g_scale *(crsattn_neutral_org-crsattn_target_org)) ** 2).mean()
                 pal_k_coef_log_dict_erase[f"pal_k_coef_log_dict_erase/{idx}th-layer"] = lipschitz_for_key_target.mean()
 
-                lipschitz_for_key_comp = ( lipschitz['lipschitz_ov'][idx]*lipschitz['lipschitz_q'][idx] ).unsqueeze(0).unsqueeze(1).unsqueeze(2) / prompt_pair.target.shape[1]
-                loss_prompt_anchor_to_k += (lipschitz_for_key_comp * (crsattn_comp_org-crsattn_comp)**2).mean()
+                lipschitz_for_key_comp = (lipschitz['lipschitz_ov'][idx]*lipschitz['lipschitz_q'][idx]).unsqueeze(0).unsqueeze(1).unsqueeze(2) / prompt_pair.target.shape[1]
+                loss_prompt_anchor_to_k += (lipschitz_for_key_comp * (crsattn_comp_org-crsattn_comp) ** 2).mean()
                 pal_k_coef_log_dict_anchor[f"pal_k_coef_log_dict_anchor/{idx}th-layer"] = lipschitz_for_key_comp.mean()                
 
             else:
                 lipschitz_for_val_target = lipschitz['lipschitz_o'][idx].unsqueeze(0).unsqueeze(1)
-                loss_prompt_erase_to_v += (lipschitz_for_val_target * ( (crsattn_neutral_org - crsattn_target) + g_scale*(crsattn_neutral_org-crsattn_target_org) )**2).mean()
+                loss_prompt_erase_to_v += (lipschitz_for_val_target * ((crsattn_neutral_org - crsattn_target) + g_scale*(crsattn_neutral_org-crsattn_target_org)) ** 2).mean()
                 if len_emb_adv > 0:
-                    loss_adv_erase_to_v += (lipschitz_for_val_target * ( (crsattn_neutral_adv_org - crsattn_target_adv) + g_scale*(crsattn_neutral_org-crsattn_target_org) )**2).mean()
+                    loss_adv_erase_to_v += (lipschitz_for_val_target * ((crsattn_neutral_adv_org - crsattn_target_adv) + g_scale*(crsattn_neutral_org-crsattn_target_org)) ** 2).mean()
                 pal_v_coef_log_dict_erase[f"pal_v_coef_log_dict_erase/{idx}th-layer"] = lipschitz_for_val_target.mean()
 
-                lipschitz_for_val_comp = lipschitz['lipschitz_o'][idx].unsqueeze(0).repeat(crsattn_comp.shape[0],1).unsqueeze(2)
-                loss_prompt_anchor_to_v += (lipschitz_for_val_comp * (crsattn_comp_org-crsattn_comp)**2).mean() #/ crsattn_comp_org.shape[0]
+                lipschitz_for_val_comp = lipschitz['lipschitz_o'][idx].unsqueeze(0).repeat(crsattn_comp.shape[0], 1).unsqueeze(2)
+                loss_prompt_anchor_to_v += (lipschitz_for_val_comp * (crsattn_comp_org-crsattn_comp)**2).mean()
                 pal_v_coef_log_dict_anchor[f"pal_v_coef_log_dict_anchor/{idx}th-layer"] = lipschitz_for_val_comp.mean()            
 
                 idx+=1
@@ -202,35 +207,128 @@ def train_erase_one_stage(
         loss[f"loss_erasing_stage{stage}/loss_adv_erase"] = loss_adv_erase 
         
         adv_coef = args.cpe_adv_coef
-        loss[f"loss_erasing"] = loss[f"loss_erasing_stage{stage}/loss_prompt_erase"] \
-                            + adv_coef * loss[f"loss_erasing_stage{stage}/loss_adv_erase"] \
-                            + pal * loss[f"loss_erasing_stage{stage}/loss_prompt_anchor"]
+        loss[f"loss_erasing"] = loss[f"loss_erasing_stage{stage}/loss_prompt_erase"] + adv_coef * loss[f"loss_erasing_stage{stage}/loss_adv_erase"] + pal * loss[f"loss_erasing_stage{stage}/loss_prompt_anchor"]
 
-        ############### loss_prompt_erase/anchor ################ 
-        ######################### misc ##########################    
+        # loss_prompt_erase/anchor 
+        # misc 
         loss["pal"] = pal
         loss["guidance"] = torch.tensor([prompt_pair.guidance_scale]).cuda()
         loss["la_strength"] = torch.tensor([prompt_pair.la_strength]).cuda()
         loss["batch_size"] = torch.tensor([prompt_pair.batch_size]).cuda()               
-        
-        ######################## optim ##########################        
+
         loss[f"loss_erasing"].backward()
 
         if args.max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(
-                trainable_params, args.train.max_grad_norm, norm_type=2
+            nn.utils.clip_grad_norm_(
+                trainable_params, args.max_grad_norm, norm_type=2
             )
         optimizer.step()
         lr_scheduler.step()
 
         pbar.set_description(f"Loss: {loss[f'loss_erasing'].item():.4f}")
-        
+
     return network, adv_prompts, 
 
-def train(
-    config: RootConfig,
+def train_adv_one_stage(
+    args: Arguments,
+    stage,
+    pbar_adv: tqdm[int],
+    network,
+    adv_prompts: nn.Module,
+    network_modules: dict[str, nn.Module],
+    unet_modules,
+    optimizer_adv: optim.Optimizer,
+    lr_scheduler_adv: LRScheduler,
+    criteria_adv,
     prompts: list[PromptSettings],
-    args: Arguments
+    embedding_unconditional,
+    lipschitz: dict[str, list[torch.Tensor]],
+    embeddings_erase_cache: torch.Tensor,
+    trainable_params_adv: list[nn.Module]
+):
+
+    for _ in pbar_adv:
+        loss_adv: dict[str, torch.Tensor] = dict()
+        optimizer_adv.zero_grad()
+
+        # Prepare for erasing prompt
+        prompt_one = prompts
+
+        cache: dict[str, torch.Tensor] = {}
+        with torch.no_grad():            
+            prompt_pairs: list[PromptEmbedsPair] = []
+
+            for settings in prompt_one:
+                ind = random.randint(0, embeddings_erase_cache.size(0) - 1)
+                embeddings = embeddings_erase_cache[ind]
+
+                cache[settings.target] = embeddings[0].unsqueeze(0)
+                cache[settings.neutral] = embeddings[1].unsqueeze(0)
+                cache['unconditional'] = embedding_unconditional
+
+                prompt_pair = PromptEmbedsPair(
+                    criteria_adv,
+                    cache[settings.target],
+                    cache[settings.target],
+                    cache['unconditional'],
+                    cache[settings.neutral],
+                    settings,
+                )
+                assert prompt_pair.sampling_batch_size % prompt_pair.batch_size == 0
+                prompt_pairs.append(prompt_pair)
+
+        # Prepare adversairal prompt
+        embeddings_adv = adv_prompts.forward(prompt_pair.target)
+        len_emb_adv = embeddings_adv.size(0)
+
+        # loss_prompt_adv
+        loss_prompt_adv_to_k = 0
+        loss_prompt_adv_to_v = 0
+
+        idx = 0
+        for name in network_modules.keys():
+            if not "lora_unet" in name or "lora_adaptor" in name:
+                continue
+
+            targets = embeddings_adv
+
+            with torch.no_grad():
+                crsattn_target_org: torch.Tensor = unet_modules[name](prompt_pair.target).float().repeat(len_emb_adv,1,1)
+
+            with network:
+                crsattn_target_adv: torch.Tensor = unet_modules[name](targets).float()
+
+            if "to_k" in name:
+                lipschitz_for_key_target = (lipschitz['lipschitz_ov'][idx] * lipschitz['lipschitz_q'][idx]).unsqueeze(0).unsqueeze(1).unsqueeze(2) / prompt_pair.target.shape[1]
+                loss_prompt_adv_to_k += (lipschitz_for_key_target * (crsattn_target_adv - crsattn_target_org) ** 2).mean()
+
+            else:
+                lipschitz_for_val_target = lipschitz['lipschitz_o'][idx].unsqueeze(0).unsqueeze(1)
+                loss_prompt_adv_to_v += (lipschitz_for_val_target * (crsattn_target_adv - crsattn_target_org) ** 2).mean()
+
+                idx+=1
+                
+        loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv_to_k"] = loss_prompt_adv_to_k / len(network_modules)
+        loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv_to_v"] = loss_prompt_adv_to_v / len(network_modules)   
+        loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv"] = loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv_to_k"] + loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv_to_v"]
+
+        # optim 
+        loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv"].backward()
+
+        if args.max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(
+                trainable_params_adv, args.max_grad_norm, norm_type=2
+            )
+        optimizer_adv.step()
+        lr_scheduler_adv.step()
+
+        pbar_adv.set_description(f"Loss: {loss_adv[f'loss_adv_stage{stage}/loss_prompt_adv'].item():.4f}")
+        
+    return network, adv_prompts
+
+def train(
+    args: Arguments,
+    prompts: list[PromptSettings],
 ):
     model_metadata = {
         "prompts": ",".join([prompt.target for prompt in prompts]),
@@ -238,36 +336,19 @@ def train(
         "alpha": str(args.cpe_network_alpha),
     }
     save_path = Path(args.save_dir)
-
-    tokenizer, text_encoder, vae, unet, _, _ = get_models(args)
+    tokenizer, text_encoder, _, unet, _, _ = get_models(args)
     noise_scheduler: PNDMScheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     device = get_devices(args)[0]
-
     text_encoder.to(device)
     text_encoder.eval()
-
     unet.to(device)
     unet.enable_xformers_memory_efficient_attention()
     unet.requires_grad_(False)
     unet.eval()
-    
     text_encoder.requires_grad_(False)
     text_encoder.eval()
-    pipe = StableDiffusionPipeline(
-        vae=vae,
-        text_encoder=text_encoder,
-        tokenizer=tokenizer,
-        unet=unet,
-        scheduler=noise_scheduler,
-        safety_checker=None,
-        feature_extractor=None,
-        image_encoder=None,
-        requires_safety_checker=False
-    ).to(device)
-    
     anchor_sampler = AnchorSamplerGensim()
-    
-    task_id = len(config.pretrained_model.safetensor)
+    task_id = len([])
     
     network = CPENetwork_ResAG(
         unet,
@@ -286,13 +367,13 @@ def train(
     print("Prompts")
     for settings in prompts:
         print(settings)
-    print("pal:", config.train.pal)
+    print("pal:", args.cpe_pal)
 
-    prompt_scripts_path = config.scripts_file
+    prompt_scripts_path = args.cpe_prompt_scripts_path
     prompt_scripts_df = pd.read_csv(prompt_scripts_path)
-    prompt_scripts_list = prompt_scripts_df['prompt'].to_list()
-    replace_word = config.replace_word
-    prompt_scripts_list += [replace_word]*(1)
+    prompt_scripts_list: list[str] = prompt_scripts_df['prompt'].to_list()
+    replace_word = args.cpe_replace_word
+    prompt_scripts_list += [replace_word] * (1)
 
     ######## Compute lipschitz for weight matrices
     lipschitz_o = []
@@ -314,7 +395,7 @@ def train(
             lipschitz_q.append(S_q[0])
             lipschitz_ov.append(S_ov[0])
     lipschitz = {"lipschitz_o": lipschitz_o, "lipschitz_q": lipschitz_q, "lipschitz_ov": lipschitz_ov}
-    ######## Compute lipschitz for weight matrices #########
+    # Compute lipschitz for weight matrices
 
     embedding_unconditional = get_condition([""], tokenizer, text_encoder)
     
@@ -374,6 +455,7 @@ def train(
             embeddings_anchor_cache = get_condition(prompt_in_scripts_anchor, tokenizer, text_encoder)
 
         else:
+            # todo: change the csv file path
             if replace_word == "target":
                 simWords_csv = pd.read_csv("./anchors/mass_surr_words_character.csv")
             elif replace_word in ["actor", "artist"]:
@@ -439,7 +521,6 @@ def train(
                 ind_sorted_list = ind_sorted.cpu().numpy().tolist()
                 simWords_selected = [simWords_actor_anchor[sim_idx] for sim_idx in ind_sorted_list[0][-50:]]
                 simWords = simWords_general_words + simWords_selected
-
             
             embeddings_anchor_cache = []
             for simWord in simWords:
@@ -493,27 +574,41 @@ def train(
         criteria = torch.nn.MSELoss()
                 
         network, adv_prompts = train_erase_one_stage(
-                args, stage, pbar, device,
-                tokenizer, text_encoder,
-                network, adv_prompts, network_modules, unet_modules,
-                optimizer, lr_scheduler, criteria,
-                prompt_scripts_list, prompts, replace_word, embedding_unconditional,
-                anchor_sampler, lipschitz,
-                torch.float32,
-                model_metadata,embeddings_erase_cache,embeddings_anchor_cache
+            args=args,
+            stage=stage,
+            pbar=pbar,
+            device_cuda=device,
+            tokenizer=tokenizer,
+            text_encoder=text_encoder,
+            network=network,
+            adv_prompts=adv_prompts,
+            network_modules=network_modules,
+            unet_modules=unet_modules,
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            criteria=criteria,
+            prompt_scripts_list=prompt_scripts_list,
+            prompts=prompts,
+            replace_word=replace_word,
+            embedding_unconditional=embedding_unconditional,
+            anchor_sampler=anchor_sampler,
+            lipschitz=lipschitz,
+            embeddings_erase_cache=embeddings_erase_cache,
+            embeddings_anchor_cache=embeddings_anchor_cache,
+            trainable_params=trainable_params,
         )
         
-        if config.train.do_adv_learn:      
+        if args.cpe_do_adv_learn:
             adv_prompts.expand_prompts()
             
-            pbar_adv = tqdm(range(config.train.iterations_adv))        
+            pbar_adv = tqdm(range(args.cpe_adv_iters))
             network.requires_grad_(False)
             network.eval()
             adv_prompts.requires_grad_(True)
             adv_prompts.train()
 
             adv_parameters = adv_prompts.prompts.parameters()
-            trainable_params_adv = [{"params": adv_parameters, "lr":config.train.lr_adv}]    
+            trainable_params_adv = [{"params": adv_parameters, "lr": args.cpe_adv_lr}]
 
             optimizer_adv = bnb.optim.AdamW8bit(
                 trainable_params_adv,
@@ -528,17 +623,22 @@ def train(
             criteria_adv = torch.nn.MSELoss()        
 
             network, adv_prompts = train_adv_one_stage(
-                    stage, pbar_adv, config, device,
-                    pipe, unet, tokenizer, text_encoder,
-                    network, adv_prompts, network_modules, unet_modules,
-                    optimizer_adv, lr_scheduler_adv, criteria_adv,
-                    prompt_scripts_list, prompts, replace_word, embedding_unconditional, 
-                    anchor_sampler, lipschitz,
-                    torch.float32,
-                    model_metadata,
-                    embeddings_erase_cache,
-                    embeddings_anchor_cache)
-      
+                args=args,
+                stage=stage,
+                pbar_adv=pbar_adv,
+                network=network,
+                adv_prompts=adv_prompts,
+                network_modules=network_modules,
+                unet_modules=unet_modules,
+                optimizer_adv=optimizer_adv,
+                lr_scheduler_adv=lr_scheduler_adv,
+                criteria_adv=criteria_adv,
+                prompts=prompts,
+                embedding_unconditional=embedding_unconditional,
+                lipschitz=lipschitz,
+                embeddings_erase_cache=embeddings_erase_cache,
+                trainable_params_adv=trainable_params_adv,
+            )
 
     args.cpe_iterations = train_iterations
     args.cpe_lr = train_lr
@@ -547,17 +647,17 @@ def train(
     print("Saving...")
     save_path.mkdir(parents=True, exist_ok=True)
     network.save_weights(
-        save_path / f"{config.save.name}_last.safetensors",
+        save_path / "model_last.safetensors",
         dtype=torch.float32,
         metadata=model_metadata,
     )
-    
+
     adv_prompts.save_weights(
-        save_path / f"{config.save.name}_adv_prompts_last.safetensors",
+        save_path / "model_adv_prompts_last.safetensors",
         dtype=torch.float32,
         metadata=model_metadata,
     )
-    
+
     del (
         unet,
         noise_scheduler,
@@ -565,41 +665,22 @@ def train(
         network,
     )
 
-    print("Done.")
 
-
-def main(args):
+def main(args: Arguments):
     config_file = args.config_file
 
     config = config_pkg.load_config_from_yaml(config_file)
     prompts = prompt_pkg.load_prompts_from_yaml(config.prompts_file)
     
-    if args.st_prompt_idx != -1:
+    if args.cpe_st_prompt_idx != 1:
         config.train.st_prompt_idx = args.st_prompt_idx
     if args.end_prompt_idx != -1:
         config.train.end_prompt_idx = args.end_prompt_idx
     config.train.skip_learned = args.skip_learned
-        
-    exp_name = config.save.path.split("/")[-2].replace(f"guide#", f"guide{p.guidance_scale}").replace(f"pal#", f"pal{config.train.pal}").replace(f"gate_rank#", f"gate_rank{config.network.init_size}")
-
-    if args.lora_rank != -1:
-        exp_name = exp_name + "_lora_rank" + f"{config.network.rank}"    
-    
-    if len(args.noise) > 0:
-        exp_name = exp_name + "_noise" + args.noise
-        config.train.noise_scale = float(args.noise)
-
-    if not args.mixup:
-        exp_name = exp_name + "_nomixup"
-        config.train.mixup = args.mixup
-        
-    config.save.path = "/".join(config.save.path.split("/")[:-2]+[exp_name]+[config.save.path.split("/")[-1]])
 
     base_path = config.save.path
-    base_logging_prompts = config.logging.prompts
     
     for p_idx, p in enumerate(prompts):
-        config.logging.prompts = [prompt.replace('[target]', p.target) if '[target]' in prompt else prompt for prompt in base_logging_prompts]
         config.save.path = base_path.replace(config.replace_word.upper(), p.target.replace(' ', '_'))
                 
         if (p_idx < config.train.st_prompt_idx) or (p_idx > config.train.end_prompt_idx):
@@ -611,9 +692,6 @@ def main(args):
             continue
                 
         print(p_idx, [p])
-        print("pal:", config.train.pal)
-        print("noise_scale:", config.train.noise_scale)
-            
         seed_everything(config.train.train_seed)        
         train(config, [p])
         
@@ -621,55 +699,10 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config_file",
-        required=True,
-        help="Config file for training.",
-    )
-    parser.add_argument(
-        "--st_prompt_idx",
-        type=int,
-        default=-1,
-    )
-    parser.add_argument(
-        "--end_prompt_idx",
-        type=int,
-        default=-1,
-    )
-    parser.add_argument(
         "--gate_rank",
         type=int,
         default=-1,
     )
-    parser.add_argument(
-        "--guidance_scale",
-        type=float,
-        default=-1,
-    )
-    parser.add_argument(
-        "--pal",
-        type=float,
-        default=-1,
-    )
-    parser.add_argument(
-        "--noise",
-        type=str,
-        default="",
-    )
-    parser.add_argument(
-        "--resume_stage",
-        type=int,
-        default=-1,
-    )
-    parser.add_argument(
-        "--lora_rank",
-        type=int,
-        default=-1,
-    )
-    parser.add_argument(
-        "--mixup",
-        type=bool,
-        default=True,
-    )        
     parser.add_argument(
         "--skip_learned",
         type=bool,
