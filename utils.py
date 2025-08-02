@@ -337,10 +337,12 @@ class Arguments(BaseModel):
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
+    negative_prompt: Optional[str] = Field("")
     images_dir: Optional[str] = Field("gen-images")
     erased_model_dir: Optional[str] = Field("models")
     guidance_scale: Optional[float] = Field(7.5, description="CFG scale")
     num_images_per_prompt: Optional[int] = Field(5)
+    num_inference_steps: Optional[float] = Field(30)
     matching_metric: Optional[str] = Field("clipcos_tokenuni", description="matching metric for prompt vs erased concept")
     
     
