@@ -270,7 +270,7 @@ def train(
     save_path = Path(save_path)
 
     noise_scheduler: PNDMScheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
-    tokenizer, text_encoder, vae, unet, _, _ = get_models(args)
+    tokenizer, text_encoder, _, unet, _, _ = get_models(args)
     device = get_devices(args)[0]
     
     text_encoder.to(device)
@@ -324,7 +324,7 @@ def train(
     pbar = tqdm(range(iterations))
     loss = None
 
-    for i in pbar:
+    for _ in pbar:
         with torch.no_grad():
             noise_scheduler.set_timesteps(max_denoising_steps, device=device)
             optimizer.zero_grad()
@@ -458,5 +458,3 @@ def main(args: Arguments):
             sampling_batch_size=4
         )]
     )
-
-

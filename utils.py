@@ -333,6 +333,7 @@ class Arguments(BaseModel):
     cpe_noise_scale: Optional[float] = Field(0.0)
     cpe_st_prompt_idx: Optional[int] = Field(1)
     cpe_end_prompt_idx: Optional[int] = Field(-1)
+    cpe_skip_learned: Literal[True, False] = Field(False)
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")

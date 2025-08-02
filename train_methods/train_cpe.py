@@ -3,7 +3,6 @@
 
 # - https://huggingface.co/spaces/baulab/Erasing-Concepts-In-Diffusion/blob/main/train.py
 
-import argparse
 from pathlib import Path
 import pandas as pd
 import random
@@ -18,7 +17,6 @@ import bitsandbytes as bnb
 from tqdm import tqdm
 from diffusers import PNDMScheduler
 from torch.optim.lr_scheduler import LRScheduler
-from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
 from train_methods.train_spm import PromptSettings, PromptEmbedsPair
@@ -47,8 +45,6 @@ def train_erase_one_stage(
     stage: int,
     pbar: tqdm[int],
     device_cuda,
-    tokenizer: CLIPTokenizer,
-    text_encoder: CLIPTextModel,
     network: CPENetwork_ResAG,
     adv_prompts: PromptTuningLayer,
     network_modules: dict[str, nn.Module],
@@ -56,15 +52,13 @@ def train_erase_one_stage(
     optimizer: optim.Optimizer,
     lr_scheduler: LRScheduler,
     criteria,
-    prompt_scripts_list,
     prompts: list[PromptSettings],
-    replace_word,
     embedding_unconditional,
-    anchor_sampler,
+    anchor_sampler: AnchorSamplerGensim,
     lipschitz: dict[str, list[torch.Tensor]],
     embeddings_erase_cache: torch.Tensor,
-    embeddings_anchor_cache,
-    trainable_params,
+    embeddings_anchor_cache: torch.Tensor,
+    trainable_params: list[nn.Module],
 ):
 
     for _ in pbar:
@@ -100,11 +94,6 @@ def train_erase_one_stage(
         with torch.no_grad():
             anchors = anchor_sampler.sample_mixup_batch_cache(
                 prompt_pair,
-                tokenizer=tokenizer,
-                text_encoder=text_encoder,
-                network=network,
-                prompt_scripts_list=prompt_scripts_list,
-                replace_word=replace_word,
                 embeddings_anchor_cache=embeddings_anchor_cache,
                 scale=args.cpe_noise_scale,
                 mixup=args.cpe_mixup
@@ -147,9 +136,7 @@ def train_erase_one_stage(
                 crsattn_comp_org = crsattn_org[(2+len_emb_adv):]
                 
                 if len_emb_adv > 0:
-                    # crsattn_target_adv_org = crsattn_org[1:1+len_emb_adv]
                     crsattn_neutral_adv_org = crsattn_org[1+len_emb_adv].unsqueeze(0).repeat(len_emb_adv,1,1)
-                
 
             with network:
                 crsattn: torch.Tensor = unet_modules[name](torch.cat([targets, prompt_pair.neutral, prompt_pair.unconditional, anchors[1::2]], dim=0).float())
@@ -182,7 +169,7 @@ def train_erase_one_stage(
                 loss_prompt_anchor_to_v += (lipschitz_for_val_comp * (crsattn_comp_org-crsattn_comp)**2).mean()
                 pal_v_coef_log_dict_anchor[f"pal_v_coef_log_dict_anchor/{idx}th-layer"] = lipschitz_for_val_comp.mean()            
 
-                idx+=1
+                idx += 1
         
         loss_prompt_erase_to_k = loss_prompt_erase_to_k / len(network_modules)
         loss_prompt_erase_to_v = loss_prompt_erase_to_v / len(network_modules)
@@ -209,8 +196,6 @@ def train_erase_one_stage(
         adv_coef = args.cpe_adv_coef
         loss[f"loss_erasing"] = loss[f"loss_erasing_stage{stage}/loss_prompt_erase"] + adv_coef * loss[f"loss_erasing_stage{stage}/loss_adv_erase"] + pal * loss[f"loss_erasing_stage{stage}/loss_prompt_anchor"]
 
-        # loss_prompt_erase/anchor 
-        # misc 
         loss["pal"] = pal
         loss["guidance"] = torch.tensor([prompt_pair.guidance_scale]).cuda()
         loss["la_strength"] = torch.tensor([prompt_pair.la_strength]).cuda()
@@ -219,9 +204,7 @@ def train_erase_one_stage(
         loss[f"loss_erasing"].backward()
 
         if args.max_grad_norm > 0:
-            nn.utils.clip_grad_norm_(
-                trainable_params, args.max_grad_norm, norm_type=2
-            )
+            nn.utils.clip_grad_norm_(trainable_params, args.max_grad_norm, norm_type=2)
         optimizer.step()
         lr_scheduler.step()
 
@@ -281,7 +264,6 @@ def train_adv_one_stage(
         embeddings_adv = adv_prompts.forward(prompt_pair.target)
         len_emb_adv = embeddings_adv.size(0)
 
-        # loss_prompt_adv
         loss_prompt_adv_to_k = 0
         loss_prompt_adv_to_v = 0
 
@@ -316,9 +298,7 @@ def train_adv_one_stage(
         loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv"].backward()
 
         if args.max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(
-                trainable_params_adv, args.max_grad_norm, norm_type=2
-            )
+            torch.nn.utils.clip_grad_norm_(trainable_params_adv, args.max_grad_norm, norm_type=2)
         optimizer_adv.step()
         lr_scheduler_adv.step()
 
@@ -352,7 +332,6 @@ def train(
     
     network = CPENetwork_ResAG(
         unet,
-        text_encoder,
         rank=args.cpe_network_rank,
         multiplier=1.0,
         alpha=args.cpe_network_alpha,
@@ -375,7 +354,7 @@ def train(
     replace_word = args.cpe_replace_word
     prompt_scripts_list += [replace_word] * (1)
 
-    ######## Compute lipschitz for weight matrices
+    # Compute lipschitz for weight matrices
     lipschitz_o = []
     lipschitz_q = []
     lipschitz_ov = []
@@ -443,10 +422,9 @@ def train(
             
     simWords = []
 
-    # for debugging with sim words from csv
     with torch.no_grad():
         if replace_word == "explicit":
-            simWords_csv = pd.read_csv("./anchors/mass_surr_prompts_explicit.csv")
+            simWords_csv = pd.read_csv("../captions/cpe_surr_prompts_explicit.csv")
             simWords = list(simWords_csv.itertuples(index=False, name=None))
             simWords = [(a,b) for _,a,b in simWords]
 
@@ -455,37 +433,37 @@ def train(
             embeddings_anchor_cache = get_condition(prompt_in_scripts_anchor, tokenizer, text_encoder)
 
         else:
-            # todo: change the csv file path
             if replace_word == "target":
-                simWords_csv = pd.read_csv("./anchors/mass_surr_words_character.csv")
+                simWords_csv = pd.read_csv("../captions/cpe_surr_words_character.csv")
             elif replace_word in ["actor", "artist"]:
                 
                 # prepare simWords
                 if replace_word == "actor":
                     simWords_erase = [pr.target for pr in prompt_one]
                 
-                    simWords_general_words_csv = pd.read_csv("./anchors/mass_surr_words_actor_general_words.csv")
+                    simWords_general_words_csv = pd.read_csv("../captions/cpe_surr_words_actor_general_words.csv")
                     simWords_general_words = list(simWords_general_words_csv.itertuples(index=False, name=None))
-                    simWords_general_words = [a for _,a,b in simWords_general_words]
+                    simWords_general_words = [a for _,a,_ in simWords_general_words]
         
-                    simWords_actor_anchor_csv = pd.read_csv("./anchors/mass_surr_words_500celebs.csv")
+                    simWords_actor_anchor_csv = pd.read_csv("../captions/cpe_surr_words_500celebs.csv")
                     simWords_actor_anchor = list(simWords_actor_anchor_csv.itertuples(index=False, name=None))
                 
                     simWords_actor_anchor = [a[0] for a in simWords_actor_anchor]
 
-                # elif replace_word == "artist":
-                else:
+                elif replace_word == "artist":
                     simWords_erase = [pr.target for pr in prompt_one]
                 
-                    simWords_general_words_csv = pd.read_csv("./anchors/mass_surr_words_artist_general_words.csv")
+                    simWords_general_words_csv = pd.read_csv("../captions/cpe_surr_words_artist_general_words.csv")
                     simWords_general_words = list(simWords_general_words_csv.itertuples(index=False, name=None))
                     simWords_general_words = [a for _, a, _ in simWords_general_words]
         
-                    simWords_actor_anchor_csv = pd.read_csv("./anchors/mass_surr_words_1734artists.csv")
+                    simWords_actor_anchor_csv = pd.read_csv("../captions/cpe_surr_words_1734artists.csv")
                     simWords_actor_anchor = list(simWords_actor_anchor_csv.itertuples(index=False, name=None))
                     simWords_actor_anchor = [a[-1] for a in simWords_actor_anchor]
                     simWords_actor_anchor = list(set(simWords_actor_anchor))
-                                                
+                else:
+                    ValueError("invalid replace word. use `target`, `actor`, or `artist`")
+
                 for simW_erase in simWords_erase:            
                     simWords_actor_anchor = [item for item in simWords_actor_anchor if simW_erase not in item.lower()]
 
@@ -493,11 +471,11 @@ def train(
                 anchor_batch = 100
     
                 simWords_act_anc_batch = []
-                for batch_idx in range(int(math.ceil(float(len_actor_anchor)/anchor_batch))):
-                    if anchor_batch*(batch_idx+1) <= len_actor_anchor:
-                        simWords_act_anc_batch.append(simWords_actor_anchor[anchor_batch*batch_idx:anchor_batch*(batch_idx+1)])
+                for batch_idx in range(int(math.ceil(float(len_actor_anchor) / anchor_batch))):
+                    if anchor_batch * (batch_idx + 1) <= len_actor_anchor:
+                        simWords_act_anc_batch.append(simWords_actor_anchor[anchor_batch * batch_idx:anchor_batch * (batch_idx + 1)])
                     else:
-                        simWords_act_anc_batch.append(simWords_actor_anchor[anchor_batch*batch_idx:])
+                        simWords_act_anc_batch.append(simWords_actor_anchor[anchor_batch * batch_idx:])
                 embeddings_erase = get_condition(simWords_erase, tokenizer, text_encoder)
     
                 embeddings_actor_anchor = []
@@ -505,7 +483,6 @@ def train(
                     emb_act_anc = get_condition(simW_batch, tokenizer, text_encoder)
                     embeddings_actor_anchor.append(emb_act_anc)
                 embeddings_actor_anchor = torch.cat(embeddings_actor_anchor, dim=0)
-                # prepare embeddings
                 
                 # compute similarity
                 emb_erase_flat = embeddings_erase.view(len(simWords_erase), -1)
@@ -537,7 +514,6 @@ def train(
             embeddings_anchor_cache = torch.cat(embeddings_anchor_cache, dim=0)
     
     train_iterations = args.cpe_iterations
-    # train_iterations_adv = args.cpe_iterations_adv
     train_lr = args.cpe_lr
     train_lr_scheduler_num_cycles = args.cpe_lr_scheduler_num_cycles
 
@@ -553,9 +529,7 @@ def train(
             args.cpe_lr = train_lr
             args.cpe_lr_scheduler_num_cycles = train_lr_scheduler_num_cycles
 
-        trainable_params = network.prepare_optimizer_params(
-            args.cpe_text_encoder_lr, args.cpe_unet_lr, args.cpe_lr
-        )
+        trainable_params = network.prepare_optimizer_params(args.cpe_text_encoder_lr, args.cpe_unet_lr, args.cpe_lr)
 
         pbar = tqdm(range(args.cpe_iterations))
 
@@ -578,8 +552,6 @@ def train(
             stage=stage,
             pbar=pbar,
             device_cuda=device,
-            tokenizer=tokenizer,
-            text_encoder=text_encoder,
             network=network,
             adv_prompts=adv_prompts,
             network_modules=network_modules,
@@ -587,9 +559,7 @@ def train(
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
             criteria=criteria,
-            prompt_scripts_list=prompt_scripts_list,
             prompts=prompts,
-            replace_word=replace_word,
             embedding_unconditional=embedding_unconditional,
             anchor_sampler=anchor_sampler,
             lipschitz=lipschitz,
@@ -667,46 +637,36 @@ def train(
 
 
 def main(args: Arguments):
-    config_file = args.config_file
+    concepts = args.concepts.split(",")
+    prompts=[
+        PromptSettings(
+            target=concept,
+            positive=concept,
+            unconditional="",
+            action="erase_with_la",
+            guidance_scale=1.0,
+            resolution=args.image_size,
+            batch_size=1,
+            dynamic_resolution=True,
+            la_strength=1000,
+            sampling_batch_size=4
+        )
+        for concept in concepts
+    ]
 
-    config = config_pkg.load_config_from_yaml(config_file)
-    prompts = prompt_pkg.load_prompts_from_yaml(config.prompts_file)
-    
-    if args.cpe_st_prompt_idx != 1:
-        config.train.st_prompt_idx = args.st_prompt_idx
-    if args.end_prompt_idx != -1:
-        config.train.end_prompt_idx = args.end_prompt_idx
-    config.train.skip_learned = args.skip_learned
-
-    base_path = config.save.path
+    base_path = args.save_dir
     
     for p_idx, p in enumerate(prompts):
-        config.save.path = base_path.replace(config.replace_word.upper(), p.target.replace(' ', '_'))
-                
-        if (p_idx < config.train.st_prompt_idx) or (p_idx > config.train.end_prompt_idx):
+        args.save_dir = base_path.replace(args.cpe_replace_word.upper(), p.target.replace(' ', '_'))
+
+        if (p_idx < args.cpe_st_prompt_idx) or (p_idx > args.cpe_end_prompt_idx):
             continue
     
-        os.makedirs(config.save.path, exist_ok=True)
-        if config.train.skip_learned and os.path.isfile(f"{config.save.path}/{config.save.name}_last.safetensors"):
+        os.makedirs(args.save_dir, exist_ok=True)
+        if args.cpe_skip_learned and os.path.isfile(f"{args.save_dir}/model_last.safetensors"):
             print(f"{p_idx} {p.target} has already been trained")
             continue
                 
         print(p_idx, [p])
-        seed_everything(config.train.train_seed)        
-        train(config, [p])
-        
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--gate_rank",
-        type=int,
-        default=-1,
-    )
-    parser.add_argument(
-        "--skip_learned",
-        type=bool,
-        default=False,
-    )
-    args = parser.parse_args()
-    main(args)
+        seed_everything(args.seed)
+        train(args, [p])

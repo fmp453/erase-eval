@@ -9,7 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from diffusers import UNet2DConditionModel
 from safetensors.torch import save_file
-from transformers import CLIPTextModel
 
 from train_methods.train_spm import PromptEmbedsPair
 
@@ -93,11 +92,10 @@ class AttentionModule(nn.Module):
         if mask is not None:
             mask = mask.unsqueeze(1)   # For head axis broadcasting.
 
-        attn = self.attention(q_list, k_list, mask=mask)
-        
+        attn = self.attention(q_list, k_list, mask=mask)        
         e_aggregated = torch.einsum("bnst,bitd->bnsd", attn, input)
-        
-        return e_aggregated, attn    
+
+        return e_aggregated, attn
 
 
 class GateModule(nn.Module):
@@ -313,7 +311,6 @@ class CPENetwork_ResAG(nn.Module):
     def __init__(
         self,
         unet: UNet2DConditionModel,
-        text_encoder: CLIPTextModel,
         rank: int = 4,
         multiplier: float = 1.0,
         alpha: float = 1.0,
@@ -375,7 +372,6 @@ class CPENetwork_ResAG(nn.Module):
             ), f"duplicated CPE layer name: {cpe_layer.cpe_name}. {cpe_names}"
             cpe_names.add(cpe_layer.cpe_name)
 
-        ############### Add: printing modified text encoder module ################
         for cpe_layer in self.unet_cpe_layers:
             cpe_layer.apply_to()
             self.add_module(
@@ -423,16 +419,19 @@ class CPENetwork_ResAG(nn.Module):
                         
                         cpe_name = prefix + "." + name + "." + child_name
                         cpe_name = cpe_name.replace(".", "_")
-                        print(f"{cpe_name}")
-                        
+                        print(f"{cpe_name=}")
                         
                         cpe_layer = self.module(
-                            cpe_name, child_module, multiplier, rank, self.alpha, \
-                            init_size=self.init_size, hidden_size=self.hidden_size, \
-                            num_embeddings=self.num_embeddings, \
-                            task_id=self.task_id, \
-                            # attention_gate=self.attention_gate, \
-                            attention_gate=self.attention_gate, \
+                            cpe_name, 
+                            child_module, 
+                            multiplier, 
+                            rank, 
+                            self.alpha,
+                            init_size=self.init_size, 
+                            hidden_size=self.hidden_size,
+                            num_embeddings=self.num_embeddings,
+                            task_id=self.task_id,
+                            attention_gate=self.attention_gate,
                             n_concepts=self.n_concepts,
                             **self.module_kwargs
                         )
@@ -542,31 +541,26 @@ class PromptTuningLayer(nn.Module):
 class AnchorSamplerGensim():
     
     def sample_mixup_batch_cache(
-        self, prompt_pair: PromptEmbedsPair,
-        tokenizer=None,
-        text_encoder=None,
-        network=None,
-        prompt_scripts_list=None,
-        replace_word=None,
-        embeddings_anchor_cache=None,
+        self, 
+        prompt_pair: PromptEmbedsPair,
+        embeddings_anchor_cache: torch.Tensor,
         scale=0.001,
         mixup=True
     ):
         inds = []
-        for idx_word in range(2*prompt_pair.sampling_batch_size * prompt_pair.target.shape[0]):
-            inds.append(random.randint(0, embeddings_anchor_cache.size(0)-1))
+        for _ in range(2 * prompt_pair.sampling_batch_size * prompt_pair.target.shape[0]):
+            inds.append(random.randint(0, embeddings_anchor_cache.size(0) - 1))
 
         embs = embeddings_anchor_cache[inds]
         D,H,W = embs.shape[0], embs.shape[1], embs.shape[2]
-        scale = 0.001
         noise = scale * embs.view(D, -1).norm(2, dim=1, keepdim=True).unsqueeze(-1) * torch.randn_like(embs)
         samples = embs + noise
         samples_pair = samples.view(D//2, 2, H, W)
 
-        #### MixUp #####
-        mixRate = torch.tensor(np.random.beta(1.0, 1.0, (prompt_pair.sampling_batch_size * prompt_pair.target.shape[0],1,1))).to(samples_pair.device)
+        # MixUp 
+        mixRate = torch.tensor(np.random.beta(1.0, 1.0, (prompt_pair.sampling_batch_size * prompt_pair.target.shape[0], 1, 1))).to(samples_pair.device)
 
-        samples = mixRate*samples_pair[:,0,:] + (1-mixRate)*samples_pair[:,1,:] if mixup else samples_pair[:,0,:]
+        samples = mixRate * samples_pair[:,0,:] + (1 - mixRate) * samples_pair[:,1,:] if mixup else samples_pair[:,0,:]
 
         if prompt_pair.unconditional.shape[0] == 1:
             samples = [torch.cat([prompt_pair.unconditional, samples[idx].unsqueeze(0)]) for idx in range(samples.shape[0])]
