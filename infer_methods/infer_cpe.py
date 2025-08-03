@@ -55,7 +55,6 @@ def load_state_dict(file_name, dtype):
     return sd, metadata
 
 def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: Optional[int] = None, device = "cuda") -> tuple[CLIPTokenizer, CLIPTextModel, UNet2DConditionModel, StableDiffusionPipeline]:
-    print(f"Loading checkpoint from {checkpoint_path}")
     pipe = StableDiffusionPipeline.from_pretrained(
         checkpoint_path,
         upcast_attention=True if v2 else False,
@@ -89,11 +88,7 @@ def encode_prompts(tokenizer: CLIPTokenizer, text_encoder: CLIPTokenizer, prompt
         return text_embeddings, torch.unique(text_tokens, dim=1)
     return text_embeddings
 
-def infer_with_cpe(
-    args: Arguments,
-    model_path: list[str],
-    config: GenerationConfig,
-):
+def infer_with_cpe(args: Arguments, model_path: list[str]):
 
     model_paths = model_path
     device = f"cuda:{args.device.split(',')[0]}"
@@ -101,21 +96,19 @@ def infer_with_cpe(
     tokenizer, text_encoder, unet, pipe = load_checkpoint_model(args.sd_version, "v2" in args.sd_version)
     text_encoder.to(device)
     text_encoder.eval()
-
     unet.to(device)
     unet.enable_xformers_memory_efficient_attention()
     unet.requires_grad_(False)
     unet.eval()
 
     cpes, metadatas = zip(*[load_state_dict(model_path, torch.float32) for model_path in model_paths])
-        
+
     # check if CPEs are compatible
     assert all([metadata["rank"] == metadatas[0]["rank"] for metadata in metadatas])
 
     erased_prompts = [md["prompts"].split(",") for md in metadatas]
     print(f"Erased prompts: {erased_prompts}")
 
-    print(metadatas[0])
     network = CPENetwork_ResAG(
         unet,
         text_encoder,
@@ -125,26 +118,25 @@ def infer_with_cpe(
         module=CPELayer_ResAG,
         continual=True,
         task_id=10,
-        continual_rank=config.gate_rank,
-        hidden_size=config.gate_rank,
-        init_size=config.gate_rank,  
+        continual_rank=args.cpe_gate_rank,
+        hidden_size=args.cpe_gate_rank,
+        init_size=args.cpe_gate_rank,
         n_concepts=len(model_paths),
     ).to(device)
-    
+
     for k,v in network.named_parameters():
         for idx in range(len(cpes)):
             if len(v.shape) > 1:
                 v.data[idx,:] = cpes[idx][k]
             else:
                 v.data[idx] = cpes[idx][k]
-                
+
     network.to(device)
     network.eval()
     network.set_inference_mode()
-    
-    prompt = args.prompt
+
     with torch.no_grad():
-        prompt_embeds = encode_prompts(tokenizer, text_encoder, [prompt])
+        prompt_embeds = encode_prompts(tokenizer, text_encoder, [args.prompt])
         network.reset_cache_attention_gate()
         seed_everything(args.seed)
 
@@ -159,120 +151,20 @@ def infer_with_cpe(
                 num_images_per_prompt=args.num_images_per_prompt,
                 prompt_embeds=prompt_embeds,
             ).images
-        
+
         os.makedirs(args.images_dir, exist_ok=True)
         for i, image in enumerate(images):
             image[i].save(f"{args.images_dir}/{i:02}.png")
-        
+
         network.reset_cache_attention_gate()
 
 def infer(args: Arguments):
-    spm_path = [lp for lp in args.erased_model_dir.split(",")]
-    for i in range(len(spm_path)):
-        concept = str(Path(spm_path[i])).split("/")[1]
-        spm_path[i] = Path(f"{spm_path[i]}/{concept}")
-        
-    generation_config = GenerationConfig(**{
-        "prompts": [args.prompt],
-        "generate_num": 5,
-        "save_path": args.images_dir
-    })
-            
-    infer_with_cpe(spm_path, generation_config, args)
+    cpe_path = [lp for lp in args.erased_model_dir.split(",")]
+    for i in range(len(cpe_path)):
+        concept = str(Path(cpe_path[i])).split("/")[1]
+        cpe_path[i] = Path(f"{cpe_path[i]}/{concept}")
+
+    infer_with_cpe(args, cpe_path)
 
 def main(args):
     infer(args)
-
-
-def main(args):
-    concepts_folder = os.listdir(args.model_path[0])    
-    concepts_ckpt = []
-    
-    for folder in concepts_folder:
-        for ckpt in os.listdir(os.path.join(args.model_path[0],folder)):
-            if ("last.safetensors" in ckpt) and ("adv_prompts" not in ckpt):
-                concepts_ckpt.append(os.path.join(args.model_path[0],folder,ckpt))
-
-    model_path = [Path(lp) for lp in concepts_ckpt]
-    
-    generation_config = load_config_from_yaml(args.config)
-
-    if args.st_prompt_idx != -1:
-        generation_config.st_prompt_idx = args.st_prompt_idx
-    if args.end_prompt_idx != -1:
-        generation_config.end_prompt_idx = args.end_prompt_idx
-    if args.gate_rank != -1:
-        generation_config.gate_rank = args.gate_rank
-    
-    
-    generation_config.save_path = os.path.join("/".join(generation_config.save_path.split("/")[:-3]), args.save_env, "/".join(generation_config.save_path.split("/")[-2:]))
-
-    infer_with_cpe(
-        model_path,
-        generation_config,
-        base_model=args.base_model,
-        v2=args.v2,
-        precision=args.precision,
-    )
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--config",
-        default="configs/generation.yaml",
-        help="Base configs for image generation.",
-    )
-    parser.add_argument(
-        "--model_path",
-        required=True,
-        nargs="*",
-        help="CPE model to use.",
-    )
-    # model configs
-    parser.add_argument(
-        "--base_model",
-        type=str,
-        default="CompVis/stable-diffusion-v1-4",
-        help="Base model for generation.",
-    )
-    parser.add_argument(
-        "--v2",
-        action="store_true",
-        help="Use the 2.x version of the SD.",
-    )
-    parser.add_argument(
-        "--precision",
-        type=str,
-        default="fp32",
-        help="Precision for the base model.",
-    )
-    parser.add_argument(
-        "--save_env",
-        type=str,
-        default="",
-        help="Precision for the base model.",
-    )    
-    
-    parser.add_argument(
-        "--st_prompt_idx",
-        type=int,
-        default=-1,
-    )
-    
-    parser.add_argument(
-        "--end_prompt_idx",
-        type=int,
-        default=-1,
-    )
-    
-    parser.add_argument(
-        "--gate_rank",
-        type=int,
-        default=-1,
-    )
-
-    args = parser.parse_args()
-
-    main(args)
-

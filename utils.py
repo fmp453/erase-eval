@@ -334,6 +334,7 @@ class Arguments(BaseModel):
     cpe_st_prompt_idx: Optional[int] = Field(1)
     cpe_end_prompt_idx: Optional[int] = Field(-1)
     cpe_skip_learned: Literal[True, False] = Field(False)
+    cpe_gate_rank: Optional[int] = Field(16, description="same as cpe_network_continual_rank, cpe_network_hidden_size, and cpe_network_init_size.")
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
