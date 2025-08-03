@@ -100,6 +100,7 @@ We reimplemented several methods using [🤗 Diffusers](https://github.com/huggi
 - [Adaptive Value Decomposer (AdaVD)](https://github.com/WYuan1001/AdaVD)
 - [Gated Low-rank adaptation for Concept Erasure (GLoCE)](https://github.com/Hyun1A/GLoCE)
 - [Anti-Editing Concept Erasure in Text-to-Image Models (ACE)](https://github.com/120L020904/ACE)
+- [Concept Pinpoint Eraser for Text-to-image Diffusion Models via Residual Attention Gate (CPE)](https://github.com/Hyun1A/CPE)
 
 File Stracture is followed by [TabSyn](https://github.com/amazon-science/tabsyn). 
 
