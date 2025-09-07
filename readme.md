@@ -82,7 +82,7 @@ Our paper can be cited as follows.
 ```
 
 ## Acknowledgement
-We reimplemented several methods using [🤗 Diffusers](https://github.com/huggingface/diffusers)
+We reimplemented methods listed below using [🤗 Diffusers](https://github.com/huggingface/diffusers)
 
 - [Erased Stable Diffusion (ESD)](https://github.com/rohitgandikota/erasing)
 - [Ablating Concepts (AC)](https://github.com/nupurkmr9/concept-ablation)
@@ -102,6 +102,7 @@ We reimplemented several methods using [🤗 Diffusers](https://github.com/huggi
 - [Anti-Editing Concept Erasure in Text-to-Image Models (ACE)](https://github.com/120L020904/ACE)
 - [Concept Pinpoint Eraser for Text-to-image Diffusion Models via Residual Attention Gate (CPE)](https://github.com/Hyun1A/CPE)
 - [A Two-Stage Framework for Adversarially Robust Concept Erasing from Text-to-Image Diffusion Models (STEREO)](https://github.com/koushiksrivats/robust-concept-erasing)
+- [Robust Adversarial Concept Erasure for Secure Text-to-Image Diffusion Model (R.A.C.E)](https://github.com/chkimmmmm/R.A.C.E.)
 
 File Stracture is followed by [TabSyn](https://github.com/amazon-science/tabsyn). 
 
