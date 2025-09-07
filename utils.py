@@ -336,6 +336,16 @@ class Arguments(BaseModel):
     cpe_skip_learned: Literal[True, False] = Field(False)
     cpe_gate_rank: Optional[int] = Field(16, description="same as cpe_network_continual_rank, cpe_network_hidden_size, and cpe_network_init_size.")
 
+    # configs for RACE
+    race_adv_train: Literal[True, False] = Field(False)
+    race_esd_path: Optional[str] = Field("", description="pretrained esd model's path")
+    race_lasso: Literal[True, False] = Field(False)
+    race_adv_loss: Literal["l1", "l2"] = Field("l2")
+    race_lr: Optional[float] = Field(1e-5)
+    race_iterations: Optional[int] = Field(1000)
+    race_epsilon: Optional[float] = Field(0.1)
+    race_pgd_num_step: Optional[int] = Field(10)
+
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
     negative_prompt: Optional[str] = Field("")
