@@ -4,12 +4,12 @@ import requests
 from io import BytesIO
 from pathlib import Path
 
-import openai
 import torch
 import torch.nn as nn
 from clip_retrieval.clip_client import ClipClient
-from torchvision import transforms
+from openai import OpenAI
 from PIL import Image
+from torchvision import transforms
 from tqdm.auto import tqdm
 
 from transformers import CLIPTokenizer, CLIPTextModel, CLIPFeatureExtractor
@@ -214,8 +214,8 @@ def get_anchor_prompts(
     concept_type,
     num_class_images=200,
 ):
-    api_key = os.getenv("OPENAI_API_KEY")
-    client = openai.Client(api_key=api_key)
+    api_key = os.environ.get("OPENAI_API_KEY")
+    client = OpenAI(api_key=api_key)
     class_prompt_collection = []
     caption_target = []
     if concept_type == "object":
@@ -233,7 +233,7 @@ def get_anchor_prompts(
         ]
         while True:
             completion = client.chat.completions.create(
-                model="gpt-4o-2024-08-06", 
+                model="gpt-4o-2024-11-20",
                 messages=messages
             )
             class_prompt_collection += [
