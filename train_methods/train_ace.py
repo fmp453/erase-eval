@@ -203,7 +203,6 @@ class InfiniteDataLoader(DataLoader):
             for batch in super().__iter__():
                 yield batch
 
-# これsample_untilと同じに見える
 @torch.no_grad()
 def diffusion_to_get_x_t(
     unet: UNet2DConditionModel,
@@ -231,12 +230,6 @@ def train(args: Arguments):
     torch.autograd.set_detect_anomaly(True)
     devices = get_devices(args)
     prompt = args.concepts
-    if prompt == 'allartist':
-        prompt = "Kelly Mckernan, Thomas Kinkade, Ajin Demi Human, Alena Aenami, Tyler Edlin, Kilian Eng"
-    if prompt == 'i2p':
-        prompt = "hate, harassment, violence, suffering, humiliation, harm, suicide, sexual, nudity, bodily fluids, blood"
-    if prompt == "artifact":
-        prompt = "ugly, tiling, poorly drawn hands, poorly drawn feet, poorly drawn face, out of frame, mutation, mutated, extra limbs, extra legs, extra arms, disfigured, deformed, cross-eye, body out of frame, blurry, bad art, bad anatomy, blurred, text, watermark, grainy"
 
     if args.seperator is not None:
         words = prompt.split(args.seperator)

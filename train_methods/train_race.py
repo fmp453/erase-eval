@@ -52,13 +52,7 @@ def pgd_attack(
 
 
 def training(args: Arguments):
-    # PROMPT CLEANING
-    if prompt == 'allartist':
-        prompt = "Kelly Mckernan, Thomas Kinkade, Ajin Demi Human, Alena Aenami, Tyler Edlin, Kilian Eng"
-    if prompt == 'i2p':
-        prompt = "hate, harassment, violence, suffering, humiliation, harm, suicide, sexual, nudity, bodily fluids, blood"
-    if prompt == "artifact":
-        prompt = "ugly, tiling, poorly drawn hands, poorly drawn feet, poorly drawn face, out of frame, mutation, mutated, extra limbs, extra legs, extra arms, disfigured, deformed, cross-eye, body out of frame, blurry, bad art, bad anatomy, blurred, text, watermark, grainy"
+    prompt = args.concepts
 
     if args.seperator is not None:
         words = prompt.split(args.seperator)

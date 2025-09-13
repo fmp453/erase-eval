@@ -117,15 +117,8 @@ def param_choices(train_method: str, text_encoder: CustomCLIPTextModel=None, une
 def train(args: Arguments):
     
     devices = get_devices(args)
-    
-    # ====== Stage 0: PROMPT CLEANING ======
+
     prompt = args.concepts
-    if prompt == 'allartist':
-        prompt = "Kelly Mckernan, Thomas Kinkade, Ajin Demi Human, Alena Aenami, Tyler Edlin, Kilian Eng"
-    if prompt == 'i2p':
-        prompt = "hate, harassment, violence, suffering, humiliation, harm, suicide, sexual, nudity, bodily fluids, blood"
-    if prompt == "artifact":
-        prompt = "ugly, tiling, poorly drawn hands, poorly drawn feet, poorly drawn face, out of frame, mutation, mutated, extra limbs, extra legs, extra arms, disfigured, deformed, cross-eye, body out of frame, blurry, bad art, bad anatomy, blurred, text, watermark, grainy"
 
     if args.seperator is not None:
         words = prompt.split(args.seperator)
@@ -198,8 +191,6 @@ def train(args: Arguments):
                 custom_text_encoder.eval()
                 custom_text_encoder.requires_grad_(False)
                 unet.eval()
-                # args.adv_attack_embd_typeで処理が分岐されていたが呼び出している関数も引数も同じなので統一
-                # 返り値の変数名だけ違うのでそこを揃える形に変更    
                 if attack_round == 0:
                     attack_init_embd = None
                 else:
