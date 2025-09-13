@@ -1,15 +1,15 @@
 # Unified Concept Editing in Diffusion Models (UCE)
 
 import ast
-import copy
 import operator
+from copy import deepcopy
 from functools import reduce
 
 import torch
 from diffusers import UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from train_methods.train_utils import get_devices, get_models, tokenize
+from train_methods.train_utils import get_devices, get_models, tokenize, get_condition
 from utils import Arguments
 
 
@@ -45,18 +45,18 @@ def edit_model(
 
     ### get the value and key modules
     projection_matrices = [l.to_v for l in ca_layers]
-    og_matrices = [copy.deepcopy(l.to_v) for l in ca_layers]
+    og_matrices = [deepcopy(l.to_v) for l in ca_layers]
     if with_to_k:
         projection_matrices = projection_matrices + [l.to_k for l in ca_layers]
-        og_matrices = og_matrices + [copy.deepcopy(l.to_k) for l in ca_layers]
+        og_matrices = og_matrices + [deepcopy(l.to_k) for l in ca_layers]
 
     ## reset the parameters
     num_ca_clip_layers = len(ca_layers)
     for idx_, l in enumerate(ca_layers):
-        l.to_v = copy.deepcopy(og_matrices[idx_])
+        l.to_v = deepcopy(og_matrices[idx_])
         projection_matrices[idx_] = l.to_v
         if with_to_k:
-            l.to_k = copy.deepcopy(og_matrices[num_ca_clip_layers + idx_])
+            l.to_k = deepcopy(og_matrices[num_ca_clip_layers + idx_])
             projection_matrices[num_ca_clip_layers + idx_] = l.to_k
 
     ### check the layers to edit (by default it is None; one can specify)
@@ -79,17 +79,17 @@ def edit_model(
         ret_texts = retain_text_
 
     print(old_texts, new_texts)
-    ######### START ERASING #########
+    # START ERASING
     for layer_num in range(len(projection_matrices)):
         if (layers_to_edit is not None) and (layer_num not in layers_to_edit):
             continue
 
-        #### prepare input k* and v*
+        # prepare input k* and v*
         with torch.no_grad():
-            #mat1 = \lambda W + \sum{v k^T}
+            # mat1 = \lambda W + \sum{v k^T}
             mat1 = lamb * projection_matrices[layer_num].weight
 
-            #mat2 = \lambda I + \sum{k k^T}
+            # mat2 = \lambda I + \sum{k k^T}
             mat2 = lamb * torch.eye(projection_matrices[layer_num].weight.shape[1], device = projection_matrices[layer_num].weight.device)
 
             for cnt, t in enumerate(zip(old_texts, new_texts)):
@@ -97,8 +97,7 @@ def edit_model(
                 new_text = t[1]
                 texts = [old_text, new_text]
                 text_input = tokenize(texts, tokenizer)
-                with torch.no_grad():
-                    text_embeddings = text_encoder(text_input.input_ids.to(text_encoder.device))[0]
+                text_embeddings = get_condition(texts, tokenizer, text_encoder)
                   
                 final_token_idx = text_input.attention_mask[0].sum().item()-2
                 final_token_idx_new = text_input.attention_mask[1].sum().item()-2
@@ -122,7 +121,7 @@ def edit_model(
                             new_embs = layer(new_emb).detach()
                             new_emb_proj = (u*new_embs).sum()
                             
-                            target = new_embs - (new_emb_proj)*u 
+                            target = new_embs - (new_emb_proj) * u 
                             values.append(target.detach()) 
                         elif technique == 'replace':
                             values.append(layer(new_emb).detach())
@@ -139,11 +138,10 @@ def edit_model(
 
             for old_text, new_text in zip(ret_texts, ret_texts):
                 text_input = tokenize([old_text, new_text], tokenizer)
-                with torch.no_grad():
-                    text_embeddings = text_encoder(text_input.input_ids.to(text_encoder.device))[0]
+                text_embeddings = get_condition([old_text, new_text], tokenizer, text_encoder)
                 old_emb, new_emb = text_embeddings
                 context = old_emb.detach()
-                
+
                 values = []
                 with torch.no_grad():
                     for layer in projection_matrices:
@@ -156,7 +154,7 @@ def edit_model(
                 for_mat2 = (context_vector @ context_vector_T).sum(dim=0)
                 mat1 += preserve_scale*for_mat1
                 mat2 += preserve_scale*for_mat2
-                #update projection matrix
+                # update projection matrix
             projection_matrices[layer_num].weight = torch.nn.Parameter(mat1 @ torch.inverse(mat2))
 
     print(f'Current model status: Edited "{str(old_text_)}" into "{str(new_texts)}" and Retained "{str(retain_text_)}"')
@@ -164,7 +162,6 @@ def edit_model(
 
 
 def train(args: Arguments):    
-    
     technique = args.technique
     device = get_devices(args)[0]
     erase_scale = args.erase_scale
@@ -172,10 +169,8 @@ def train(args: Arguments):
 
     concepts = args.concepts.split(',')
     concepts = [con.strip() for con in concepts]
-    
     old_texts = []
-    
-    # removing prompt cleaning
+
     additional_prompts = []
     concepts_ = []
     for concept in concepts:
@@ -189,7 +184,7 @@ def train(args: Arguments):
     if len(guided_concepts) == 1:
         new_texts = [guided_concepts[0] for _ in old_texts]
     else:
-        new_texts = [[con]*length for con in guided_concepts]
+        new_texts = [[con] * length for con in guided_concepts]
         new_texts = reduce(operator.concat, new_texts)
 
     retain_texts = ['']

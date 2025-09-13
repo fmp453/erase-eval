@@ -86,8 +86,8 @@ def train_step(
 
         # Stop-grad and send to the second device
         _latents = latents.to(devices[1])
-        e_0 = unet_teacher(_latents, t_ddpm.to(devices[1]), encoder_hidden_states=uncond_emb).sample
-        e_p = unet_teacher(_latents, t_ddpm.to(devices[1]), encoder_hidden_states=safety_emb).sample
+        e_0: torch.Tensor = unet_teacher(_latents, t_ddpm.to(devices[1]), encoder_hidden_states=uncond_emb).sample
+        e_p: torch.Tensor = unet_teacher(_latents, t_ddpm.to(devices[1]), encoder_hidden_states=safety_emb).sample
 
         e_0 = e_0.detach().to(devices[0])
         e_p = e_p.detach().to(devices[0])
@@ -95,11 +95,9 @@ def train_step(
         # args.negative_guidance: s_s in the paper
         noise_target = e_0 - args.negative_guidance * (e_p - e_0)
 
-    noise_pred = unet_student(latents, t_ddpm.to(devices[0]), encoder_hidden_states=safety_emb.to(devices[0])).sample
+    noise_pred: torch.Tensor = unet_student(latents, t_ddpm.to(devices[0]), encoder_hidden_states=safety_emb.to(devices[0])).sample
+    return F.mse_loss(noise_pred, noise_target.to(noise_pred.device))
 
-    loss = F.mse_loss(noise_pred, noise_target)
-    
-    return loss
 
 def main(args: Arguments):
     
@@ -125,7 +123,6 @@ def main(args: Arguments):
     print(f"Finetuning parameters: {num_train_param} / {num_total_param} ({num_train_param / num_total_param:.2%})")
 
     # Create optimizer and scheduler
-    # use default values except lr
     optimizer = optim.Adam(parameters, lr=args.esd_lr)
     lr_scheduler: LambdaLR = get_scheduler(
         name=args.lr_scheduler,
@@ -167,9 +164,7 @@ def main(args: Arguments):
             unet_student=unet_student,
             devices=devices,
         )
-        
         train_loss.backward()
-        
         if args.max_grad_norm > 0:
             clip_grad_norm_(parameters, args.max_grad_norm)
         optimizer.step()
@@ -179,4 +174,3 @@ def main(args: Arguments):
         progress_bar.set_description(f"Training: {train_loss.item():.4f}")
         
     unet_student.save_pretrained(args.save_dir)
-

@@ -163,7 +163,7 @@ def training(args: Arguments):
         loss.backward()
         pbar.set_postfix({"loss": loss.item()})
         opt.step()
-                
+
         if loss > 500.:
             raise ValueError('Loss is too high, training is not working')
         

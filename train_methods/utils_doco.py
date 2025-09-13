@@ -117,7 +117,6 @@ class CustomDiffusionPipeline(StableDiffusionPipeline):
 
     def load_model(self, save_path):
         st = torch.load(save_path)
-        print(st.keys())
         if 'text_encoder' in st:
             self.text_encoder.load_state_dict(st['text_encoder'])
         for name, params in self.unet.named_parameters():

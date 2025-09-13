@@ -24,7 +24,7 @@ def high_level_layers(unet: UNet2DConditionModel):
     return attn_list
 
 # Model Editing Function - Non-SDXL models
-def train_edit(args: Arguments, layer_edit_modules, key_embeddings, value_embeddings):
+def train_edit(args: Arguments, layer_edit_modules, key_embeddings: torch.Tensor, value_embeddings: torch.Tensor):
     
     # Iterate through each of the modules and then update the modules based on the closed-form expression
     for layer_num in range(0, len(layer_edit_modules)):
@@ -34,13 +34,12 @@ def train_edit(args: Arguments, layer_edit_modules, key_embeddings, value_embedd
             # Current Weight Matrix; 
             curr_weight_matrix = layer_edit_modules[layer_num].weight
 
-            ############  First part of the solution ############
+            #  First part of the solution
             id_matrix_mat_1 = args.reg_key * torch.eye(layer_edit_modules[layer_num].weight.shape[1], device = layer_edit_modules[layer_num].weight.device)
             x_matrix = torch.matmul(key_embeddings.T, key_embeddings)
             mat1 = torch.inverse(x_matrix + id_matrix_mat_1)
 
-            ############  Second part of the solution ###########
-            # X^{T}Y
+            #  Second part of the solution (X^{T}Y)
             x_matrix_mat_2 = torch.matmul(key_embeddings.T, torch.matmul(value_embeddings, curr_weight_matrix.T))
             additional_reg = args.reg_key * curr_weight_matrix.T 
             mat2 = x_matrix_mat_2 + additional_reg
@@ -50,8 +49,7 @@ def train_edit(args: Arguments, layer_edit_modules, key_embeddings, value_embedd
 
             # Update the layer 
             layer_edit_modules[layer_num].weight = torch.nn.Parameter(final_update.T)
-            
-    return 
+
 
 # LocoEdit function
 def train(args: Arguments):
@@ -118,7 +116,6 @@ def train(args: Arguments):
                 
                 else:
                     # EOS function
-                    print(f'Using EOS')
                     for k in range(pos-1, pos):
                         rel_embedding = txt_embedding[k]
                         final_key_embeddings.append(rel_embedding.reshape(1,-1))

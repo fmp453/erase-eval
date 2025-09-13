@@ -19,7 +19,7 @@ from train_methods.train_utils import apply_model, sample_until, get_vocab, save
 from train_methods.consts import ddim_alphas, LEN_TOKENIZER_VOCAB
 
 
-def save_to_dict(var, name, dict):
+def save_to_dict(var, name, dict: dict[str, list]):
     if var is not None:
         if isinstance(var, torch.Tensor):
             var = var.cpu().detach().numpy()
@@ -34,7 +34,7 @@ def save_to_dict(var, name, dict):
     dict[name].append(var)
     return dict
 
-def retrieve_embedding_token(model_name, query_token, vocab='EN3K'):
+def retrieve_embedding_token(model_name, query_token, vocab='EN3K') -> torch.Tensor:
     if vocab == 'CLIP':
         for start in range(0, LEN_TOKENIZER_VOCAB, 5000):
             end = min(LEN_TOKENIZER_VOCAB, start+5000)
@@ -68,7 +68,6 @@ def create_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextMode
         for token in tokenizer_vocab:
             if tokenizer_vocab[token] < start or tokenizer_vocab[token] >= end:
                 continue
-            # print(token, tokenizer_vocab[token])
             if remove_end_token:
                 token_ = token.replace('</w>','')
             else:
@@ -81,7 +80,6 @@ def create_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextMode
         for token in tokenizer_vocab:
             if tokenizer_vocab[token] < start or tokenizer_vocab[token] >= end:
                 continue
-            # print(token, tokenizer_vocab[token])
             if remove_end_token:
                 token_ = token.replace('</w>','')
             else:
@@ -92,7 +90,7 @@ def create_embedding_matrix(tokenizer: CLIPTokenizer, text_encoder: CLIPTextMode
     else:
         raise ValueError("save_mode should be either 'array' or 'dict'")
 
-def detect_special_tokens(text):
+def detect_special_tokens(text: str) -> bool:
     text = text.lower()
     for i in range(len(text)):
         if text[i] not in 'abcdefghijklmnopqrstuvwxyz</>':
@@ -105,10 +103,8 @@ def make_ddim_sampling_parameters(alphacums, ddim_timesteps):
     return alphas
 
 def train(args: Arguments):
-    
-    prompt = args.concepts
 
-    # prompt
+    prompt = args.concepts
     preserved = ""
 
     if args.seperator is not None:
@@ -158,10 +154,7 @@ def train(args: Arguments):
         if retrieve:
             return retrieve_embedding_token(model_name='SD-v1-4', query_token=word, vocab=args.vocab)
         else:
-            prompt = f'{word}'
-            emb = get_condition([prompt], tokenizer, text_encoder)
-            init = emb
-            return init
+            return get_condition([word], tokenizer, text_encoder)
 
     """
     Algorithm description: 
@@ -174,7 +167,6 @@ def train(args: Arguments):
     """
 
     # create embedding matrix for all tokens in the dictionary
-    
     if not os.path.exists('models/embedding_matrix_dict_EN3K.pt'):
         save_embedding_matrix(tokenizer, text_encoder, model_name='SD-v1-4', save_mode='dict', vocab='EN3K')
 
@@ -202,8 +194,8 @@ def train(args: Arguments):
 
     # create a matrix of embeddings for the preserved set
     print('Creating preserved matrix')
-    one_hot_dict = dict()
-    preserved_matrix_dict = dict()
+    one_hot_dict: dict[str, torch.Tensor] = {}
+    preserved_matrix_dict: dict[str, torch.Tensor] = {}
     for erase_word in erased_words:
         preserved_set = preserved_dict[erase_word]
         for i, word in enumerate(preserved_set):
@@ -293,7 +285,7 @@ def train(args: Arguments):
 
         if i % args.pgd_num_steps == 0:
             # for erased concepts, output aligns with target concept with or without prompt
-            loss= criteria(z_n_wo_prompt_pred.to(devices[0]), z_0_org_pred.to(devices[0]) - (args.negative_guidance * (z_n_org_pred.to(devices[0]) - z_0_org_pred.to(devices[0]))))
+            loss: torch.Tensor = criteria(z_n_wo_prompt_pred.to(devices[0]), z_0_org_pred.to(devices[0]) - (args.negative_guidance * (z_n_org_pred.to(devices[0]) - z_0_org_pred.to(devices[0]))))
             loss += criteria(z_r_wo_prompt_pred.to(devices[0]), z_r_org_pred.to(devices[0])) # for preserved concepts, output are the same without prompt
 
             # update weights to erase the concept

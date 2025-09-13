@@ -193,13 +193,13 @@ def train_age(args: Arguments) -> None:
             z_c_t = quick_sample_till_t(emb_c_t.to(unet.device), args.start_guidance, start_code, int(t_enc))
 
             # get conditional and unconditional scores from frozen model at time step t and image z_c_e
-            eps_0_org = apply_model(orig_unet, z_c_e.to(orig_unet.device), t_enc_ddpm.to(orig_unet.device), emb_0.to(orig_unet.device))
-            eps_e_org = apply_model(orig_unet, z_c_e.to(orig_unet.device), t_enc_ddpm.to(orig_unet.device), emb_c_e.to(orig_unet.device))
-            eps_t_org = apply_model(orig_unet, z_c_t.to(orig_unet.device), t_enc_ddpm.to(orig_unet.device), emb_c_t.to(orig_unet.device))
+            eps_0_org = apply_model(orig_unet, z_c_e, t_enc_ddpm, emb_0)
+            eps_e_org = apply_model(orig_unet, z_c_e, t_enc_ddpm, emb_c_e)
+            eps_t_org = apply_model(orig_unet, z_c_t, t_enc_ddpm, emb_c_t)
 
         # get conditional score
-        eps_e = apply_model(unet, z_c_e.to(unet.device), t_enc_ddpm.to(unet.device), emb_c_e.to(unet.device))
-        eps_t = apply_model(unet, z_c_t.to(unet.device), t_enc_ddpm.to(unet.device), emb_c_t.to(unet.device))
+        eps_e = apply_model(unet, z_c_e, t_enc_ddpm, emb_c_e)
+        eps_t = apply_model(unet, z_c_t, t_enc_ddpm, emb_c_t)
 
         eps_0_org.requires_grad = False
         eps_e_org.requires_grad = False

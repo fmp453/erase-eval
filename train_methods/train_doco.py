@@ -18,6 +18,7 @@ from tqdm.auto import tqdm
 from diffusers import (
     DiffusionPipeline,
     DPMSolverMultistepScheduler,
+    StableDiffusionPipeline,
     UNet2DConditionModel,
 )
 from diffusers.models.attention_processor import Attention
@@ -119,7 +120,7 @@ def main(args: Arguments):
         # we need to generate training images
         if (len(list(Path(os.path.join(class_images_dir, "images")).iterdir())) < args.doco_num_class_images):
 
-            pipeline = DiffusionPipeline.from_pretrained(args.sd_version)
+            pipeline: StableDiffusionPipeline = DiffusionPipeline.from_pretrained(args.sd_version)
             pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
             pipeline.safety_checker = None
             pipeline.set_progress_bar_config(disable=True)
@@ -213,8 +214,7 @@ def main(args: Arguments):
         text_encoder.requires_grad_(False)
 
     unet = create_custom_diffusion(unet, args.doco_parameter_group)
-    weight_dtype = torch.float32
-    vae.to(device, dtype=weight_dtype)
+    vae.to(device)
 
     # Adding a modifier token which is optimized ####
     # Code taken from https://github.com/huggingface/diffusers/blob/main/examples/textual_inversion/textual_inversion.py
@@ -299,7 +299,7 @@ def main(args: Arguments):
         for step, batch in enumerate(train_dataloader):
 
             # Convert images to latent space
-            latents: torch.Tensor = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
+            latents: torch.Tensor = vae.encode(batch["pixel_values"].to(vae.device)).latent_dist.sample()
             latents = latents * vae.config.scaling_factor
 
             noise = torch.randn_like(latents).to(latents.device)

@@ -117,9 +117,7 @@ def normalized_compositional_guidance(
 
     return pred_uncond + positive_update + negative_update
 
-# ESDのdiffusers実装と同じ
-# StableDiffuserの解体が必要
-# unetのみ更新するのでunetを返す
+
 def train_erasing(
     args: Arguments,
     tokenizer: CLIPTokenizer,
@@ -140,7 +138,6 @@ def train_erasing(
 
     nsteps = 50
 
-    # finetuner = FineTunedModel(diffuser, train_method=train_method)
     parameters = gather_parameters(args.stereo_method, unet)
 
     optimizer = optim.AdamW(parameters, lr=args.stereo_ste_lr)
@@ -190,7 +187,7 @@ def train_erasing(
             torch.cuda.empty_cache()
 
         negative_latents = predict_noise(unet, noise_scheduler, timestep, latents_steps, target_text_embeddings)
-     
+
         # ----------- NG + APG ------------
         # Using the negative guidance GT with the APG (https://arxiv.org/pdf/2410.02416) formulation.
         pred_neg_guidance = normalized_guidance(positive_latents, neutral_latents, args.negative_guidance)
@@ -207,7 +204,6 @@ def train_erasing(
     return unet
 
 
-# text encoderのみを更新するのでtext encoderを返す
 def train_concept_inversion(
     args: Arguments,
     placeholder_token, 
@@ -425,8 +421,9 @@ def search_thoroughly_enough(
     # Initialize variables for loop
     current_concept = args.concepts
     saved_tokens = {}
+    save_dir = Path(args.save_dir)
 
-    os.makedirs(args.save_dir, exist_ok=True)
+    save_dir.mkdir(exist_ok=True)
     
     # Begin iterative erasure and attack
     for iteration in range(args.stereo_n_iters):
@@ -435,14 +432,14 @@ def search_thoroughly_enough(
         saved_tokens[f'{iteration}'] = placeholder_token
 
         # Set save paths for intermediate models
-        erased_unet_dir = Path(args.save_dir / f"{iteration}" / "erased_unet")
-        attack_model_dir = Path(args.save_dir / f"{iteration}" / "ci_attack_text_encoder")
-        attack_tokenizer_dir = Path(args.save_dir / f"{iteration}" / "ci_attack_tokenizer")
+        erased_unet_dir = save_dir / f"{iteration}" / "erased_unet"
+        attack_model_dir = save_dir / f"{iteration}" / "ci_attack_text_encoder"
+        attack_tokenizer_dir = save_dir / f"{iteration}" / "ci_attack_tokenizer"
 
         print(f"Erasing concept: {current_concept} -> Placeholder token: '{placeholder_token}' (initialized from '{args.stereo_initializer_token}')")
 
         # 1. Erase the current concept
-        # saved_unetがsave_dirに保存される
+        # saved_unet is saved at save_dir
         saved_unet = train_erasing(
             args=args,
             text_encoder=text_encoder,
@@ -455,8 +452,8 @@ def search_thoroughly_enough(
         )
 
         # 2. Perform textual inversion with the erased model to attack
-        # text_encoderがattack_model_dirに保存される
-        # tokenizerがattack_tokenizer_dirに保存される
+        # text_encoder is saved at attack_model_dir
+        # tokenizer is saved at attack_tokenizer_dir
         tokenizer, text_encoder = train_concept_inversion(
             args=args,
             placeholder_token=placeholder_token,
@@ -492,7 +489,7 @@ def search_thoroughly_enough(
         print(f"Iteration {iteration + 1}/{args.stereo_n_iters} complete.")
 
     # Final model and token saving after all iterations
-    final_model_path = os.path.join(args.save_dir, "ste_stage_model.pt")
+    final_model_path = save_dir / "ste_stage_model.pt"
     torch.save({
         'saved_tokens': saved_tokens
     }, final_model_path)
@@ -508,19 +505,19 @@ def robustly_erase_once(
     text_encoder: CLIPTextModel,
     noise_scheduler: DDIMScheduler,
     unet: UNet2DConditionModel,
-    erase_concepts,
+    erase_concepts: list,
     save_path,
 ):
     nsteps = 50
 
-    with open(args.stereo_anchor_concepts_path, 'r') as f:
-        all_anchor_concepts = json.load(f)[erase_concepts[0]]
+    with open(args.stereo_anchor_concept_path, 'r') as f:
+        all_anchor_concepts: list = json.load(f)[erase_concepts[0]]
 
     _, parameters = gather_parameters(args.stereo_method, unet)
 
     optimizer = optim.AdamW(parameters, lr=args.stereo_reo_lr)
     criteria = nn.MSELoss()
-    
+
     torch.cuda.empty_cache()
 
     # ------- Stratified sampling of the anchor concepts ------
@@ -712,7 +709,7 @@ def inference_attack(
     pipe.unet = unet
     pipe.eval()
     pipe.to(device)
-    
+
     generator = torch.Generator().manual_seed(args.seed)
 
     iteration_dir = Path(args.save_dir / "eval_ci_iteration")

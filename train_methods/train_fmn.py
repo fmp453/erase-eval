@@ -103,7 +103,7 @@ def main(args: Arguments):
 
     generation(args)
 
-    # Ti -> Attn の順で行う
+    # execute in order of Ti -> Attn
     ti_component(
         args=args,
         output_dir=f"{args.save_dir}/{args.concepts}-ti",

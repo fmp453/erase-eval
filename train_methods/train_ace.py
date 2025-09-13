@@ -1,11 +1,10 @@
 # ACE: Anti-Editing Concept Erasure in Text-to-Image Models
 
-import argparse
-import copy
 import gc
 import json
 import os
 import random
+from copy import deepcopy
 from typing import Optional
 
 import numpy as np
@@ -241,7 +240,7 @@ def train(args: Arguments):
 
     unet.to(devices[0])
     text_encoder.to(devices[1])
-    scheduler_ori = copy.deepcopy(noise_scheduler)
+    scheduler_ori = deepcopy(noise_scheduler)
     scheduler_ori.set_timesteps(1000)
     unet.requires_grad_(False)
     unet.eval()

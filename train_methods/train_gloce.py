@@ -479,8 +479,6 @@ def prepare_text_embedding_token(
     else:
         print("compute text emb cache...")
 
-        # compute concept embeddings
-        
         # compute target and update concept embeddings
         simWords_target = [prompt.target for prompt in prompts_target]
         prmpt_sel_base_target = [prmpt_temp_sel_base.replace(replace_word, word) for word in simWords_target] 
@@ -534,8 +532,7 @@ def prepare_text_embedding_token(
             simWords_surrogate = [prompts_target[0].neutral]
             prmpt_sel_base_surrogate = [prmpt_temp_sel_base.replace(replace_word, word) for word in simWords_surrogate] 
             embeddings_surrogate_sel_base = get_condition(prmpt_sel_base_surrogate, tokenizer, text_encoder)
-        
-        # compute concept embeddings
+
         # Prepare for surrogate token cache
         print("compute emb cache...")
         
@@ -706,7 +703,6 @@ def get_modules_list(
                     if f"{module_name}.to_v" in n:
                         module_name_list.append(n)
                         org_modules[n] = m
-                        
 
         case "unet_sa_out":
             return_ok = True
@@ -751,14 +747,13 @@ def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules:
 
         for k, m in org_modules.items():
             if m.__class__.__name__ == "Linear":
-                U,S,Vh = torch.linalg.svd(m.weight, full_matrices=False) 
+                _, S, Vh = torch.linalg.svd(m.weight, full_matrices=False) 
                 param_vh_cache_dict[k] = Vh.detach().cpu()
                 param_s_cache_dict[k] = S.detach().cpu()        
 
             elif m.__class__.__name__ == "Conv2d":
                 module_weight_flatten = m.weight.view(m.weight.size(0), -1)
-
-                U, S, Vh = torch.linalg.svd(module_weight_flatten, full_matrices=False) 
+                _, S, Vh = torch.linalg.svd(module_weight_flatten, full_matrices=False) 
                 param_vh_cache_dict[k] = Vh.detach().cpu()
                 param_s_cache_dict[k] = S.detach().cpu()                
 
@@ -1113,4 +1108,5 @@ def train(args: Arguments):
     print("Done.")
 
 def main(args: Arguments):    
-    train(args)
+    # train(args)
+    raise NotImplementedError("under construction of train function")

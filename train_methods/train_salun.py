@@ -8,6 +8,7 @@ import shutil
 import warnings
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
@@ -24,7 +25,7 @@ from diffusers.optimization import get_scheduler
 from utils import Arguments
 from train_methods.consts import imagenette_labels
 from train_methods.data import Imagenette, NSFW, SalUnDataset
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize, get_devices, get_models
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize, get_devices, get_models, get_condition
 
 warnings.filterwarnings("ignore")
 
@@ -39,7 +40,6 @@ def train_step(
     tokenizer: CLIPTokenizer,
     unet_teacher: UNet2DConditionModel,
     unet_student: UNet2DConditionModel,
-    devices: list[torch.device]
 ) -> torch.Tensor:
 
     unet_student.train()
@@ -48,22 +48,22 @@ def train_step(
         removing_prompt=removing_prompt,
         text_encoder=text_encoder, 
         tokenizer=tokenizer,
-        device=devices[1],
+        device=text_encoder.device,
     )
-    
+
     uncond_emb, cond_emb, safety_emb = torch.chunk(prompt_embeds, 3, dim=0)
     batch_size = cond_emb.shape[0]
 
-    noise_scheduler.set_timesteps(args.ddpm_steps, devices[1])
+    noise_scheduler.set_timesteps(args.ddpm_steps, unet_student.device)
 
     latent_shape = (batch_size, unet_teacher.config.in_channels, 64, 64)
-    latents = torch.randn(latent_shape, generator=generator, device=devices[0])
+    latents = torch.randn(latent_shape, generator=generator)
     latents = latents * ddim_scheduler.init_noise_sigma # z_T
 
     t_ddim = torch.randint(0, args.ddim_steps, (1,))
     t_ddpm_start = round((1 - (int(t_ddim) + 1) / args.ddim_steps) * args.ddpm_steps)
-    t_ddpm_end   = round((1 - int(t_ddim)       / args.ddim_steps) * args.ddpm_steps)
-    t_ddpm = torch.randint(t_ddpm_start, t_ddpm_end, (batch_size,),)
+    t_ddpm_end   = round((1 - int(t_ddim) / args.ddim_steps) * args.ddpm_steps)
+    t_ddpm = torch.randint(t_ddpm_start, t_ddpm_end, (batch_size,))
     
     extra_step_kwargs = prepare_extra_step_kwargs(noise_scheduler, generator, args.salun_eta)
 
@@ -74,7 +74,7 @@ def train_step(
 
         latents = sample_until(
             until=int(t_ddim),
-            latents=latents,
+            latents=latents.to(unet_student.device),
             unet=unet_student,
             scheduler=ddim_scheduler,
             prompt_embeds=prompt_embeds,
@@ -83,21 +83,19 @@ def train_step(
         )
 
         # Stop-grad and send to the second device
-        _latents = latents.to(devices[1])
-        e_0 = unet_teacher(_latents, t_ddpm.to(devices[1]), encoder_hidden_states=uncond_emb).sample
-        e_p = unet_teacher(_latents, t_ddpm.to(devices[1]), encoder_hidden_states=safety_emb).sample
+        e_0: torch.Tensor = unet_teacher(latents.to(unet_teacher.device), t_ddpm.to(unet_teacher.device), encoder_hidden_states=uncond_emb.to(unet_teacher.device)).sample
+        e_p: torch.Tensor = unet_teacher(latents.to(unet_teacher.device), t_ddpm.to(unet_teacher.device), encoder_hidden_states=safety_emb.to(unet_teacher.device)).sample
 
-        e_0 = e_0.detach().to(devices[0])
-        e_p = e_p.detach().to(devices[0])
+        e_0 = e_0.detach()
+        e_p = e_p.detach()
 
         # args.concept_scale: s_s in the paper
         noise_target = e_0 - args.negative_guidance * (e_p - e_0)
 
-    noise_pred = unet_student(latents, t_ddpm.to(devices[0]), encoder_hidden_states=safety_emb.to(devices[0])).sample
+    noise_pred = unet_student(latents.to(unet_student.device), t_ddpm.to(unet_student.device), encoder_hidden_states=safety_emb.to(unet_student.device)).sample
 
-    loss = F.mse_loss(noise_pred, noise_target)
-    
-    return loss
+    return F.mse_loss(noise_pred, noise_target.to(unet_student.device))
+
 
 def salun(args: Arguments, mask_path: str):
     # You may provide a single file path, or a list of concepts
@@ -159,7 +157,6 @@ def salun(args: Arguments, mask_path: str):
             tokenizer=tokenizer,
             unet_teacher=unet_teacher,
             unet_student=unet_student,
-            devices=devices,
         )
         
         train_loss.backward()
@@ -195,7 +192,7 @@ def get_transform(interpolation=InterpolationMode.BICUBIC, size=512):
     )
     return transform
 
-def get_imagenette_label_from_concept(concept):
+def get_imagenette_label_from_concept(concept) -> int:
     d = {}
     for i in range(len(imagenette_labels)):
         d[imagenette_labels[i]] = i
@@ -248,10 +245,10 @@ def generate_mask(args: Arguments):
     text_encoder.to(device)
     unet.to(device)
 
-    criteria = torch.nn.MSELoss()
-    optimizer = torch.optim.Adam(unet.parameters(), lr=args.salun_masking_lr)
+    criteria = nn.MSELoss()
+    optimizer = optim.Adam(unet.parameters(), lr=args.salun_masking_lr)
 
-    gradients: dict[str, torch.nn.Parameter] = {}
+    gradients: dict[str, nn.Parameter] = {}
     for name, param in unet.named_parameters():
         gradients[name] = 0
 
@@ -274,10 +271,8 @@ def generate_mask(args: Arguments):
     
         with torch.no_grad():
             forget_input = vae.encode(images).latent_dist.sample()
-            forget_ids = tokenize(prompts, tokenizer).input_ids
-            forget_emb = text_encoder(forget_ids.to(text_encoder.device))[0]
-            null_ids = tokenize(null_prompts, tokenizer).input_ids
-            null_emb = text_encoder(null_ids.to(text_encoder.device))[0]
+            forget_emb = get_condition(prompts, tokenizer, text_encoder)
+            null_emb = get_condition(null_prompts, tokenizer, text_encoder)
 
         t = torch.randint(0, scheduler.config.num_train_timesteps, (1, )).long()
         t = t.to(device)
@@ -332,7 +327,7 @@ def generate_mask(args: Arguments):
             hard_dict[key] = threshold_tensor
             start_index += num_elements
         torch.save(hard_dict, res:=os.path.join(mask_path, f"with_{str(threshold)}.pt"))
-    
+
     return res
 
 def generate_nsfw_mask(args: Arguments):
@@ -342,18 +337,18 @@ def generate_nsfw_mask(args: Arguments):
     scheduler: DDIMScheduler = DDIMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     vae: AutoencoderKL = AutoencoderKL.from_pretrained(args.sd_version, subfolder="vae")
-    
+
     forget_set = NSFW(transform=get_transform(size=args.image_size))
     train_dl = DataLoader(forget_set, batch_size=args.salun_masking_batch_size)
-    
+
     text_encoder.eval()
     vae.eval()
 
-    criteria = torch.nn.MSELoss()
-    optimizer = torch.optim.Adam(unet.parameters(), lr=args.salun_masking_lr)
+    criteria = nn.MSELoss()
+    optimizer = optim.Adam(unet.parameters(), lr=args.salun_masking_lr)
     word_nude = "a photo of a nude person"
 
-    gradients = {}
+    gradients: dict[str, torch.Tensor] = {}
     for name, param in unet.named_parameters():
         gradients[name] = 0
 
@@ -370,10 +365,8 @@ def generate_nsfw_mask(args: Arguments):
         
         with torch.no_grad():
             forget_input = vae.encode(images).latent_dist.sample()
-            forget_ids = tokenize(prompts, tokenizer).input_ids[0]
-            forget_emb = text_encoder(forget_ids.to(text_encoder.device))[0]
-            null_ids = tokenize(null_prompts, tokenizer).input_ids[0]
-            null_emb = text_encoder(null_ids.to(text_encoder.device))[0]
+            forget_emb = get_condition(prompts, tokenizer, text_encoder)
+            null_emb = get_condition(null_prompts, tokenizer, text_encoder)
 
         noise = torch.randn_like(forget_input, device=device)
         forget_noisy = scheduler.add_noise(forget_input, noise, t)
@@ -411,7 +404,6 @@ def generate_nsfw_mask(args: Arguments):
         start_index = 0
         for key, tensor in gradients.items():
             num_elements = tensor.numel()
-            # tensor_positions = positions[start_index: start_index + num_elements]
             tensor_ranks = ranks[start_index : start_index + num_elements]
 
             sorted_positions = tensor_ranks.reshape(tensor.shape)

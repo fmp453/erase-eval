@@ -12,15 +12,14 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from einops import rearrange
 
-from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL
+from diffusers import UNet2DConditionModel
 from diffusers.models.attention_processor import Attention, AttnProcessor
 from diffusers.models.attention import BasicTransformerBlock
-from transformers import CLIPTextModel, CLIPTokenizer
 
 from train_methods.train_utils import sample_until, apply_model, get_condition, get_devices, get_models
 from utils import Arguments
 
-def get_mask(attn_maps, word_indices, thres):
+def get_mask(attn_maps: dict[str, tuple[int]], word_indices, thres):
     """
     attn_maps: {name: attns in shape (bs, heads, h*w, text_len)}
     word_indices: (num_tokens,)
@@ -280,7 +279,6 @@ def setup_unet_adapter_eraser(unet: UNet2DConditionModel, eraser_rank, device):
     return erasers
 
 def train_receler(args: Arguments):
-    
     device = get_devices(args)[0]
 
     # extend specific concept
@@ -321,7 +319,7 @@ def train_receler(args: Arguments):
         prompt_embeds=x,
         guidance_scale=s
     )
-    
+
     # dicts to store captured attention maps and eraser outputs
     attn_maps = {}
     eraser_outs = {}
@@ -336,15 +334,14 @@ def train_receler(args: Arguments):
     pbar = tqdm(range(args.receler_iterations))
     for it in pbar:
         unet.train()
-        
+
         word_idx, word = random.sample(list(enumerate(words)),1)[0]
-        # get text embeddings for unconditional and conditional prompts
         emb_0 = get_condition([''], tokenizer, text_encoder)
-        emb_p = get_condition([f'{word}'], tokenizer, text_encoder)
-        emb_n = get_condition([f'{word}'], tokenizer, text_encoder)
+        emb_p = get_condition([word], tokenizer, text_encoder)
+        emb_n = get_condition([word], tokenizer, text_encoder)
 
         # hacking the indices of targeted word and adversarial prompts
-        text_len = len(tokenizer(f'{word}', add_special_tokens=False)['input_ids'])
+        text_len = len(tokenizer(word, add_special_tokens=False)['input_ids'])
         word_indices = torch.arange(1, 1 + text_len, device=device)
         advrs_indices = torch.arange(1 + text_len, 1 + text_len + args.num_advrs_prompts, device=device)
 
@@ -352,9 +349,7 @@ def train_receler(args: Arguments):
         t_enc = torch.randint(args.ddim_steps, (1,), device=device)
         og_num = round((int(t_enc) / args.ddim_steps) * 1000)
         og_num_lim = round((int(t_enc + 1) / args.ddim_steps) * 1000)
-
         t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=device)
-
         start_code = torch.randn((1, 4, 64, 64)).to(device)
 
         with torch.no_grad():
@@ -362,9 +357,9 @@ def train_receler(args: Arguments):
             z = quick_sample_till_t(torch.cat([emb_0, emb_p], dim=0), args.start_guidance, start_code, int(t_enc)) 
             # get conditional and unconditional scores from frozen model at time step t and image z
             with DisableEraser(unet, train=False):
-                e_0 = apply_model(unet, z.to(device), t_enc_ddpm.to(device), emb_0.to(device))
+                e_0 = apply_model(unet, z, t_enc_ddpm, emb_0)
                 with AttnMapsCapture(unet, attn_maps=attn_maps):
-                    e_p = apply_model(unet, z.to(device), t_enc_ddpm.to(device), emb_p.to(device))
+                    e_p = apply_model(unet, z, t_enc_ddpm, emb_p)
 
         attn_masks = get_mask(attn_maps, word_indices, args.receler_mask_thres)
 
@@ -376,7 +371,7 @@ def train_receler(args: Arguments):
 
             # get conditional score from model
             with EraserOutputsCapture(unet, erasers, eraser_outs=eraser_outs):
-                e_n = apply_model(unet, z.to(device), t_enc_ddpm.to(device), emb_n.to(device))
+                e_n = apply_model(unet, z, t_enc_ddpm, emb_n)
 
             # perform advrs attack
             loss_adv = F.mse_loss(e_n, e_p, reduction='mean')

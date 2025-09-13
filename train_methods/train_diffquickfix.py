@@ -116,7 +116,6 @@ def train(args: Arguments):
 
     # Regularization for the optimization
     reg = 0.01 
-    # Train Flag
 
     # Use EOS # : This is a flag variable which lets you use the EOS tokens also in the editing optimization step
     use_eos = 1
@@ -140,8 +139,7 @@ def train(args: Arguments):
     params = 0
     for l in projection_matrices:
         params += l.in_features * l.out_features
-        
-    # Parameters to update
+
     print(f'Params to update : {params}')
     print(f"Total params: {count_parameters(sd_pipeline.unet)}")
     print(f"Percentage: {(params / count_parameters(sd_pipeline.unet)) * 100}%")
@@ -244,7 +242,7 @@ def train(args: Arguments):
 
         # Call the text-embedding model so that the relevant tokens are saved # 
         with torch.no_grad():
-            text_embeddings = text_encoder(tokens.to(device))[0]
+            _ = text_encoder(tokens.to(device))[0]
 
         t_c += 1
 
@@ -299,10 +297,8 @@ def train(args: Arguments):
 
             valuess.append(values_k[i][values_indexes])
 
-            
+
     #  END OF OBTAINING THE RELEVANT TOKEN EMBEDDINGS
-
-
     # Check the number of keys and values 
     print(f'Length of Keys: {len(refined_context_k)}')
     print(f'Length of Values: {len(refined_values_k)}')

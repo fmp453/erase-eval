@@ -33,7 +33,7 @@ EMBED_FLAG = "<embed>"
 
 def get_models(pretrained_model_name_or_path: str, placeholder_tokens: list[str], initializer_tokens: list[str], device="cuda:0"):
 
-    tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_name_or_path, subfolder="tokenizer")
+    tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(pretrained_model_name_or_path, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(pretrained_model_name_or_path, subfolder="text_encoder")
 
     placeholder_token_ids = []
@@ -136,9 +136,9 @@ def text2img_dataloader(train_dataset, train_batch_size: int, tokenizer: CLIPTok
     return train_dataloader
 
 
-def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encoder: CLIPTextModel, scheduler: DDPMScheduler, t_mutliplier=1.0):
+def loss_step(batch: dict[str, torch.Tensor], unet: UNet2DConditionModel, vae: AutoencoderKL, text_encoder: CLIPTextModel, scheduler: DDPMScheduler, t_mutliplier=1.0):
 
-    latents = vae.encode(batch["pixel_values"].to(unet.device)).latent_dist.sample()
+    latents: torch.Tensor = vae.encode(batch["pixel_values"].to(unet.device)).latent_dist.sample()
     latents = latents * 0.18215
 
     noise = torch.randn_like(latents)
@@ -150,7 +150,7 @@ def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encode
     noisy_latents = scheduler.add_noise(latents, noise, timesteps)
 
     encoder_hidden_states = text_encoder(batch["input_ids"].to(text_encoder.device))[0]
-    model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+    model_pred: torch.Tensor = unet(noisy_latents, timesteps, encoder_hidden_states).sample
         
     if scheduler.config.prediction_type == "epsilon":
         target = noise
@@ -159,7 +159,7 @@ def loss_step(batch, unet: UNet2DConditionModel, vae: AutoencoderKL, text_encode
     else:
         raise ValueError(f"Unknown prediction type {scheduler.config.prediction_type}")
 
-    if batch.get("mask", None) is not None:
+    if "mask" in batch:
         mask = batch["mask"].to(model_pred.device).reshape(model_pred.shape[0], 1, batch["mask"].shape[2], batch["mask"].shape[3])
     
         # resize to match model_pred
@@ -301,7 +301,6 @@ def ti_component(
         size=args.image_size,
     )
 
-    train_dataset.blur_amount = 20
     train_dataloader = text2img_dataloader(train_dataset, args.fmn_train_batch_size, tokenizer)
     index_no_updates = torch.arange(len(tokenizer)) != placeholder_token_ids[0]
 
@@ -592,14 +591,9 @@ def attn_component(
     progress_bar = trange(global_step, max_train_steps)
     progress_bar.set_description("Steps")
 
-    debug_once = True
     for epoch in range(first_epoch, num_train_epochs):
         unet.train()
         for step, batch in enumerate(train_dataloader):
-            # show
-            if debug_once:
-                print(batch["instance_prompts"][0])
-                debug_once = False
             
             with torch.no_grad():
                 latents: torch.Tensor = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()

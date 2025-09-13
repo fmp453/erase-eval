@@ -500,8 +500,10 @@ class FMNPivotalTuningDataset(Dataset):
         token_map: Optional[dict]=None,
         use_template: Optional[str]=None,
         size: int=512,
+        blur_amount: int=20,
     ):
         self.size = size
+        self.blur_amount = blur_amount
         self.tokenizer = tokenizer
         self.instance_data_root = Path(instance_data_root)
         if not self.instance_data_root.exists():

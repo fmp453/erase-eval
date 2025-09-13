@@ -244,26 +244,22 @@ def collate_fn(examples):
     return batch
 
 def cfr_lora_training(args: Arguments):
-    
     device = get_devices(args)[0]
     mapping_concept = args.anchor_concept.split(",")
     multi_concept = []
     concepts = args.concepts.split(",")
     concept_types = args.mace_concept_type.split(",")
-    
+
     assert len(concepts) == len(concept_types)
     for i in range(len(concept_types)):
         multi_concept.append([concepts[i], concept_types[i]])
-    
-    if args.seed is not None:
-        set_seed(args.seed)
 
+    set_seed(args.seed)
     tokenizer, text_encoder, vae, unet, _, noise_scheduler = get_models(args)
-    
     unet.to(device)
     vae.requires_grad_(False)
     unet.requires_grad_(False)
-    
+
     train_dataset = MACEDataset(
         tokenizer=tokenizer,
         size=args.image_size,
@@ -281,46 +277,40 @@ def cfr_lora_training(args: Arguments):
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.mace_dataloader_num_workers,
     )
-    
-    # Scheduler and math around the number of training steps.
-    num_update_steps_per_epoch = len(train_dataloader)
+
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = len(train_dataloader)
-        
-    # Afterwards we recalculate our number of training epochs
     args.mace_num_train_epochs = math.ceil(args.mace_max_train_steps / num_update_steps_per_epoch)
-        
-    # Move vae and text_encoder to device and cast to weight_dtype
+
     vae.to(device)
     text_encoder.to(device)
 
     # stage 1: closed-form refinement
     projection_matrices, ca_layers, og_matrices = get_ca_layers(unet, with_to_k=True)
-    
+
     # to save memory
     CFR_dict = {}
     max_concept_num = args.mace_max_memory # the maximum number of concept that can be processed at once
     if len(train_dataset.dict_for_close_form) > max_concept_num:
-        
         for layer_num in tqdm(range(len(projection_matrices))):
             CFR_dict[f'{layer_num}_for_mat1'] = None
             CFR_dict[f'{layer_num}_for_mat2'] = None
-            
+
         for i in tqdm(range(0, len(train_dataset.dict_for_close_form), max_concept_num)):
             contexts_sub, valuess_sub = prepare_k_v(text_encoder, projection_matrices, ca_layers, og_matrices, train_dataset.dict_for_close_form[i:i+5], tokenizer, all_words=False)
             closed_form_refinement(projection_matrices, contexts_sub, valuess_sub, cache_dict=CFR_dict, cache_mode=True)
-            
+
             del contexts_sub, valuess_sub
             gc.collect()
             torch.cuda.empty_cache()
-            
+
     else:
         for layer_num in tqdm(range(len(projection_matrices))):
             CFR_dict[f'{layer_num}_for_mat1'] = .0
             CFR_dict[f'{layer_num}_for_mat2'] = .0
-            
+
         contexts, valuess = prepare_k_v(text_encoder, projection_matrices, ca_layers, og_matrices, train_dataset.dict_for_close_form, tokenizer, all_words=False)
-    
+
     del ca_layers, og_matrices
 
     # Load cached prior knowledge for preserving
@@ -328,33 +318,32 @@ def cfr_lora_training(args: Arguments):
     for layer_num in tqdm(range(len(projection_matrices))):
         prior_preservation_cache_dict[f'{layer_num}_for_mat1'] = .0
         prior_preservation_cache_dict[f'{layer_num}_for_mat2'] = .0
-            
+
     # Load cached domain knowledge for preserving
     domain_preservation_cache_dict = {}
     for layer_num in tqdm(range(len(projection_matrices))):
         domain_preservation_cache_dict[f'{layer_num}_for_mat1'] = .0
         domain_preservation_cache_dict[f'{layer_num}_for_mat2'] = .0
-    
+
     # integrate the prior knowledge, domain knowledge and closed-form refinement
     cache_dict = {}
     for key in CFR_dict:
         cache_dict[key] = args.mace_train_preserve_scale * (prior_preservation_cache_dict[key] + args.mace_preserve_weight * domain_preservation_cache_dict[key]) + CFR_dict[key]
-    
+
     # closed-form refinement
     projection_matrices, _, _ = get_ca_layers(unet, with_to_k=True)
-    
+
     if len(train_dataset.dict_for_close_form) > max_concept_num:
         closed_form_refinement(projection_matrices, lamb=args.mace_lamb, preserve_scale=1, cache_dict=cache_dict)
     else:
         closed_form_refinement(projection_matrices, contexts, valuess, lamb=args.mace_lamb, preserve_scale=args.mace_train_preserve_scale, cache_dict=cache_dict)
-    
+
     del contexts, valuess, cache_dict
     gc.collect()
     torch.cuda.empty_cache()
-    
+
     # stage 2: multi-lora training
     for i in range(train_dataset._concept_num): # the number of concept/lora
-        
         attn_controller = AttnController()
         if i != 0:
             unet.set_default_attn_processor()
@@ -385,7 +374,7 @@ def cfr_lora_training(args: Arguments):
             if key.endswith("attn2.processor"):
                 lora_attn_procs[f'{key}.to_k_lora'] = value.to_k_lora
                 lora_attn_procs[f'{key}.to_v_lora'] = value.to_v_lora
-                
+
         lora_layers = AttnProcsLayers(lora_attn_procs)
 
         # values from the original implementation
@@ -394,7 +383,7 @@ def cfr_lora_training(args: Arguments):
             lr=args.mace_lr,
             weight_decay=0.01,
         )
-        
+
         lr_scheduler = get_scheduler(
             args.lr_scheduler,
             optimizer=optimizer,
@@ -403,15 +392,12 @@ def cfr_lora_training(args: Arguments):
             num_cycles=args.mace_lr_num_cycles,
             power=args.mace_lr_power,
         )
-        
-        # Train
+
         print("Running training")
         global_step = 0
         first_epoch = 0
 
         if args.mace_importance_sampling:
-            print("Using relation-focal importance sampling, which can make training more efficient and is particularly beneficial in erasing mass concepts with overlapping terms.")
-            
             list_of_candidates = [x for x in range(noise_scheduler.config.num_train_timesteps)]
             prob_dist = [importance_sampling_fn(x) for x in list_of_candidates]
             prob_sum = 0
@@ -419,38 +405,27 @@ def cfr_lora_training(args: Arguments):
             for j in prob_dist:
                 prob_sum += j
             prob_dist = [x / prob_sum for x in prob_dist]
-        
+
         # Only show the progress bar once on each machine.
         progress_bar = tqdm(range(global_step, args.mace_max_train_steps))
         progress_bar.set_description("Steps")
-    
-        debug_once = True
-                
+
         if args.mace_train_seperate:
             train_dataset.concept_number = i 
-        
+
         for epoch in range(first_epoch, args.mace_num_train_epochs):
             unet.train()
-                
             torch.cuda.empty_cache()
             gc.collect()
-            
             for step, batch in enumerate(train_dataloader):
-        
-                # show
-                if debug_once:
-                    print('====================')
-                    print(f'Concept {i}: {batch["instance_prompts"][0]}')
-                    print('====================')
-                    debug_once = False
                     
                 # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
+                latents: torch.Tensor = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
-                
+
                 if args.mace_importance_sampling:
                     timesteps = np.random.choice(list_of_candidates, size=bsz, replace=True, p=prob_dist)
                     timesteps = torch.tensor(timesteps).to(device)
@@ -464,28 +439,19 @@ def cfr_lora_training(args: Arguments):
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"].to(device))[0]
-                
+
                 # set concept_positions for this batch 
                 if args.use_gsam_mask:
                     GSAM_mask = batch['masks']
                 else:
                     GSAM_mask = None
-                
+
                 attn_controller.set_concept_positions(batch["concept_positions"].to(device), GSAM_mask, use_gsam_mask=args.use_gsam_mask)
 
                 # Predict the noise residual
                 _ = unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
-                # Get the target for loss depending on the prediction type
-                if noise_scheduler.config.prediction_type == "epsilon":
-                    target = noise
-                elif noise_scheduler.config.prediction_type == "v_prediction":
-                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                else:
-                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
-                
                 loss = attn_controller.loss()
-                
                 loss.backward()
                 nn.utils.clip_grad_norm_(lora_layers.parameters(), args.max_grad_norm)
                 optimizer.step()
@@ -493,13 +459,12 @@ def cfr_lora_training(args: Arguments):
                 optimizer.zero_grad(set_to_none=False)
                 attn_controller.zero_attn_probs()
 
-                # Checks if the accelerator has performed an optimization step behind the scenes
                 progress_bar.update(1)
                 global_step += 1
-                    
+
                 logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
-                
+
                 if global_step >= args.mace_max_train_steps:
                     break
 
@@ -508,7 +473,7 @@ def cfr_lora_training(args: Arguments):
 
         if not args.mace_train_seperate:
             break
-    
+
     unet.save_pretrained(args.save_dir)
     
 def main(args: Arguments):

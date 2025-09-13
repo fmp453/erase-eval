@@ -13,6 +13,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, model_validator
 
 import torch
+import torch.nn as nn
 import bitsandbytes as bnb
 from tqdm import tqdm
 
@@ -247,7 +248,7 @@ def sample(prompt_pair: PromptEmbedsPair):
 
 def train(
     args: Arguments,
-    save_path: str,
+    save_path: Path,
     network_rank: int=1,
     network_alpha: float=1.0,
     text_encoder_lr: float = 5e-5,
@@ -272,10 +273,8 @@ def train(
     noise_scheduler: PNDMScheduler = PNDMScheduler.from_pretrained(args.sd_version, subfolder="scheduler")
     tokenizer, text_encoder, _, unet, _, _ = get_models(args)
     device = get_devices(args)[0]
-    
     text_encoder.to(device)
     text_encoder.eval()
-
     unet.to(device)
     unet.requires_grad_(False)
     unet.eval()
@@ -291,7 +290,7 @@ def train(
     trainable_params = network.prepare_optimizer_params(text_encoder_lr, unet_lr, lr)
     optimizer = bnb.optim.AdamW8bit(trainable_params, lr=lr)
     lr_scheduler = get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_steps)
-    criteria = torch.nn.MSELoss()
+    criteria = nn.MSELoss()
 
     cache = PromptEmbedsCache()
     prompt_pairs: list[PromptEmbedsPair] = []
@@ -443,7 +442,7 @@ def main(args: Arguments):
     args.concepts = args.concepts.split(",")[0]
     train(
         args,
-        save_path=f"{args.save_dir}/{args.concepts.replace(' ', '-')}",
+        save_path=Path(f"{args.save_dir}/{args.concepts.replace(' ', '-')}"),
         save_name=args.concepts.replace(" ", "-"),
         prompts=[PromptSettings(
             target=args.concepts,
