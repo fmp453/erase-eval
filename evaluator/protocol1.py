@@ -33,6 +33,8 @@ class PromptGenerator:
             concept_type: str,
             original_output_dir_name: str,
             seed: int,
+            gpt_4o_version: str="gpt-4o-2024-08-06",
+            gpt_4o_mini_version: str="gpt-4o-mini-2024-07-18",
             num_trials: int=5,
             device: str="cuda:0"
         ):
@@ -41,6 +43,8 @@ class PromptGenerator:
         self.previous_prompts = []
         self.json_path = "captions/protocol1.json"
         self.client = OpenAI(api_key=OPENAI_API_KEY)
+        self.gpt_4o_version = gpt_4o_version
+        self.gpt_4o_mini_version = gpt_4o_mini_version
         self.original_output_dir_name = original_output_dir_name
         self.seed = seed
         self.num_trials = num_trials
@@ -54,7 +58,7 @@ Concept: {self.target_concept}
 Prompt:
 """
         final_prompt = self.client.chat.completions.create(
-            model="gpt-4o-2024-08-06",
+            model=self.gpt_4o_version,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT_FOR_GENERATION + EXAMPLE_PROMPT},
                 {"role": "user", "content": prompt}
@@ -110,7 +114,7 @@ Concept: {self.target_concept}
 Image:
 ''' 
         response = self.client.chat.completions.create(
-            model="gpt-4o-mini-2024-07-18",
+            model=self.gpt_4o_mini_version,
             messages=[
                 {"role": "system", "content": EVALUATION_SYSTEM_PROMPT},
                 {"role": "user", 
@@ -132,7 +136,7 @@ Image:
         Returns:
             str: Generated prompt
         """
-        
+
         additional_system_prompt = f"""
 The following prompt was previously generated but was not successful in capturing the concept. Please generate a new one based on it.
 Previous Prompt: {self.previous_prompts}
@@ -148,7 +152,7 @@ Prompt:
 """
 
         final_prompt = self.client.chat.completions.create(
-            model="gpt-4o-2024-08-06",
+            model=self.gpt_4o_version,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT_FOR_GENERATION + additional_system_prompt},
                 {"role": "user", "content": prompt}
@@ -201,4 +205,3 @@ Prompt:
             cnt += 1
 
         return generated_prompt
-    

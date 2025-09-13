@@ -48,6 +48,8 @@ class Arguments(BaseModel):
     protocol: Literal["1", "2", "3", "all"] = Field("3")
     encoding_method: Literal["t5-xxl", "modern-bert"] = Field("modern-bert")
     base_version: Optional[str] = Field("compvis/stable-diffusion-v1-4")
+    gpt_4o_version: Optional[str] = Field("gpt-4o-2024-11-20")
+    gpt_4o_mini_version: Optional[str] = Field("gpt-4o-mini-2024-07-18")
     device: Optional[str] = Field("0")
 
     @classmethod
@@ -62,7 +64,7 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
-def generate_caption(client: OpenAI, img_path: str) -> str:
+def generate_caption(client: OpenAI, img_path: str, gpt_version: str) -> str:
     base64_image = encode_image(img_path)
 
     system_prompt = '''
@@ -74,7 +76,7 @@ Image:
 """
 
     caption = client.chat.completions.create(
-        model="gpt-4o-2024-08-06",
+        model=gpt_version,
         messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", 
@@ -168,7 +170,8 @@ def check_erased_image_with_implicit_prompt(
         client: OpenAI,
         model: PaliGemmaForConditionalGeneration, 
         processor: AutoProcessor,
-        prompt: str
+        prompt: str,
+        gpt_version: str
     ) -> bool:
     img = Image.open(erased_image_path)
     inputs = processor(text=prompt, images=img, return_tensors="pt").to(model.device)
@@ -193,7 +196,7 @@ The target concept: {concept}
 Image:
 """     
     response = client.chat.completions.create(
-        model="gpt-4o-mini-2024-07-18",
+        model=gpt_version,
         messages=[
             {"role": "system", "content": EVALUATION_SYSTEM_PROMPT},
             {"role": "user", 
@@ -210,31 +213,36 @@ Image:
     
     return True
 
-def generate_prompt_for_protocol1(target_concept: str, original_output_dir_name: str, seed: int, device: str="cuda:0") -> str:
+def generate_prompt_for_protocol1(args: Arguments, original_output_dir_name: str) -> str:
     generator = protocol1.PromptGenerator(
-        target_concept=target_concept,
+        target_concept=args.concept,
         original_output_dir_name=original_output_dir_name,
-        seed=seed,
-        device=device
+        seed=args.seed,
+        gpt_version=args.gpt_4o_version,
+        gpt_4o_mini_version=args.gpt_4o_mini_version,
+        device=args.device
     )
     print("Generating Caption...")
     return generator.run()
 
-def generate_prompt_for_protocol2(target_concept: str, original_output_dir_name: str, seed: int, device: str="cuda:0") -> str:
+def generate_prompt_for_protocol2(args: Arguments, original_output_dir_name: str) -> str:
     generator = protocol2.JailBreakingExecutor(
-        target_concept=target_concept,
+        target_concept=args.concept,
         original_output_dir_name=original_output_dir_name,
-        seed=seed,
-        device=device
+        seed=args.seed,
+        gpt_version=args.gpt_4o_version,
+        gpt_4o_mini_version=args.gpt_4o_mini_version,
+        device=args.device
     )
     print("Generating Caption...")
     return generator.run()
 
-def make_prompt(protocol_number: int, concept: str, out_dir="", seed=2024, device="cuda:0") -> str:
+def make_prompt(args: Arguments, protocol_number: int, out_dir="") -> str:
+    concept = args.concept
     if protocol_number == 1:
         if not Path("captions/protocol1.json").exists():
             print("generating caption for protocol 1")
-            return generate_prompt_for_protocol1(concept, out_dir, seed, device)
+            return generate_prompt_for_protocol1(args, out_dir)
         
         with open("captions/protocol1.json", "r", encoding="utf-8") as json_file:
             existing_data = json.load(json_file)
@@ -242,12 +250,12 @@ def make_prompt(protocol_number: int, concept: str, out_dir="", seed=2024, devic
                 return existing_data[concept]
             else:
                 print("generating caption for protocol 1")
-                return generate_prompt_for_protocol1(concept, out_dir, seed, device)
+                return generate_prompt_for_protocol1(args, out_dir)
     
     elif protocol_number == 2:
         if not Path("captions/protocol2.json").exists():
             print("generating caption for protocol 2")
-            return generate_prompt_for_protocol2(concept, out_dir, seed, device)
+            return generate_prompt_for_protocol2(args, out_dir)
         
         with open("captions/protocol2.json", "r", encoding="utf-8") as json_file:
             existing_data = json.load(json_file)
@@ -255,7 +263,7 @@ def make_prompt(protocol_number: int, concept: str, out_dir="", seed=2024, devic
                 return existing_data[concept]
             else:
                 print("generating caption for protocol 2")
-                return generate_prompt_for_protocol2(concept, out_dir, seed, device)
+                return generate_prompt_for_protocol2(args, out_dir)
 
 class Evalution:
     def __init__(self, args: Arguments):
@@ -279,7 +287,7 @@ class Evalution:
             raise ValueError(f"No match protocols : {self.args.protocol}")
 
     def protocol_1(self):
-        prompt = make_prompt(1, self.args.concept, f"{self.args.original_output_dir_name}/for_caption", self.args.seed, self.device)
+        prompt = make_prompt(self.args, 1, f"{self.args.original_output_dir_name}/for_caption")
         # for comparing multiple methods, the generated images from original SD will be stored.
         os.makedirs(self.args.original_output_dir_name, exist_ok=True)
         original_dir = f"{self.args.original_output_dir_name}/{self.concept_name}_{self.args.protocol}"
@@ -304,7 +312,7 @@ class Evalution:
 
         if not os.path.exists(f"{original_dir}/protocol1-captions.csv"):
             for orig_img_path in glob(f"{original_dir}/*.png"):
-                caption = generate_caption(client=client, img_path=orig_img_path)
+                caption = generate_caption(client=client, img_path=orig_img_path, gpt_version=self.args.gpt_4o_version)
                 original_images_path_list.append(orig_img_path)
                 original_captions.append(caption)
                 embedding = text_encoding(self.args.encoding_method, caption, device=self.device)
@@ -362,7 +370,7 @@ class Evalution:
             self.scores[0] = score
 
     def protocol_2(self):
-        prompt = make_prompt(2, self.args.concept, f"{self.args.original_output_dir_name}/for_caption", self.args.seed, self.device)
+        prompt = make_prompt(self.args, 2, f"{self.args.original_output_dir_name}/for_caption")
         original_dir = f"{self.args.original_output_dir_name}/{self.concept_name}_{self.args.protocol}"
         os.makedirs(original_dir, exist_ok=True)
 
@@ -418,7 +426,7 @@ class Evalution:
                         erased_embedding /= erased_embedding.clone().norm(dim=-1, keepdim=True)
                         erased_embedding = erased_embedding.cpu()
                         
-                        if check_erased_image_with_implicit_prompt(erased_image_path, self.args.concept, self.args.concept_type, client, model, processor, detection_prompt):
+                        if check_erased_image_with_implicit_prompt(erased_image_path, self.args.concept, self.args.concept_type, client, model, processor, detection_prompt, self.args.gpt_4o_mini_version):
                             scores.append(0)
                         else:
                             scores.append(F.cosine_similarity(original_embedding, erased_embedding, dim=1).mean().item())
