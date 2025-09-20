@@ -25,4 +25,3 @@ def infer(args: Arguments):
 
 def main(args: Arguments):
     infer(args)
-

@@ -103,6 +103,7 @@ We reimplemented methods listed below using [🤗 Diffusers](https://github.com/
 - [Concept Pinpoint Eraser for Text-to-image Diffusion Models via Residual Attention Gate (CPE)](https://github.com/Hyun1A/CPE)
 - [A Two-Stage Framework for Adversarially Robust Concept Erasing from Text-to-Image Diffusion Models (STEREO)](https://github.com/koushiksrivats/robust-concept-erasing)
 - [Robust Adversarial Concept Erasure for Secure Text-to-Image Diffusion Model (R.A.C.E)](https://github.com/chkimmmmm/R.A.C.E.)
+- [Automatically guides deNoising Trajectories (ANT)](https://github.com/lileyang1210/ANT/)
 
 File Stracture is followed by [TabSyn](https://github.com/amazon-science/tabsyn). 
 

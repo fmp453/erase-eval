@@ -1107,6 +1107,6 @@ def train(args: Arguments):
     network.save_weights(save_path / f"ckpt.safetensors", metadata=model_metadata)
     print("Done.")
 
-def main(args: Arguments):    
+def main(args: Arguments):
     # train(args)
     raise NotImplementedError("under construction of train function")
