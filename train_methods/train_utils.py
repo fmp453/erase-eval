@@ -193,14 +193,11 @@ def gather_parameters(method: str, unet: UNet2DConditionModel) -> tuple[list[str
                 parameters.append(param)
         elif method == "noxattn":
             # Train all layers except the cross attention and time_embedding layers.
-            if name.startswith("conv_out.") or ("time_embed" in name):
-                # Skip the time_embedding layer.
+            if name.startswith("conv_out.") or ("time_embed" in name) or ("attn2" in name):
                 continue
-            elif "attn2" in name:
-                # Skip the cross attention layer.
-                continue
-            names.append(name)
-            parameters.append(param)
+            else:
+                names.append(name)
+                parameters.append(param)
         elif method == "notime":
             # Train all layers except the time_embedding layer.
             if name.startswith("conv_out.") or ("time_embed" in name):

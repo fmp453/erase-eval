@@ -129,4 +129,3 @@ def main(args: Arguments):
     generation(args)
     # main part of Ablating Concepts
     train(args)
-

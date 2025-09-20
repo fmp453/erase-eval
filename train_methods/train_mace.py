@@ -494,4 +494,3 @@ def main(args: Arguments):
 
     if os.path.isdir("mace-data-mask"):
         shutil.rmtree("mace-data-mask")
-

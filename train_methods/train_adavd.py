@@ -315,9 +315,6 @@ def main(args: Arguments):
 
     global ORTHO_DECOMP_STORAGE
 
-    # # Erasing Config
-    # parser.add_argument('--contents', type=str, default='')  --contents 'erase, retention'
-
     device = get_devices(args)[0]
     mode_list = args.adavd_mode.replace(' ', '').split(',')
 
@@ -395,6 +392,3 @@ def main(args: Arguments):
             decomp_timestep=args.adavd_decomp_timestep,
         )
         unet_erase.save_pretrained(f"{args.save_dir}/adavd/retain")
-
-if __name__ == '__main__':
-    main()
