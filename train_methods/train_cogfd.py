@@ -293,19 +293,13 @@ def train(
                 latents: torch.Tensor = vae.encode(batch["pixel_values"].to(vae.device)).latent_dist.sample()
             latents = latents * vae.config.scaling_factor
 
-            # Sample noise that we'll add to the latents
             noise = torch.randn_like(latents)
             bsz = latents.shape[0]
-            # Sample a random timestep for each image
-            timesteps = torch.randint(args.cogfd_start, args.cogfd_end, (bsz, ), device=latents.device)
+            timesteps: torch.Tensor = torch.randint(args.cogfd_start, args.cogfd_end, (bsz, ), device=latents.device)
             timesteps = timesteps.long()
 
-            # Add noise to the latents according to the noise magnitude at each timestep
-            # (this is the forward diffusion process)
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-
-            # Get the text embedding for conditioning
-            encoder_hidden_states_source = text_encoder(batch["source_ids"].to(text_encoder.device), attention_mask=batch["source_mask"])[0]
+            encoder_hidden_states_source: torch.Tensor = text_encoder(batch["source_ids"].to(text_encoder.device), attention_mask=batch["source_mask"])[0]
 
             # set concept_positions for this batch
             attn_controller.set_encoder_attn_mask(batch["source_mask"])

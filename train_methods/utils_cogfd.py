@@ -8,16 +8,18 @@ import json
 import re
 import pprint
 from dataclasses import dataclass
+from json import JSONDecodeError
 from typing import Optional, Any
 
 
 import torch
-import autogen
-from autogen import ConversableAgent, GroupChat
+
 from torch import nn
 from transformers import RobertaPreTrainedModel, XLMRobertaConfig, XLMRobertaModel
 from transformers.utils import ModelOutput
 
+from train_methods.legacy_autogen import GroupChat
+from train_methods.legacy_autogen_conversable_agent import ConversableAgent
 
 @dataclass
 class TransformationModelOutput(ModelOutput):
@@ -146,14 +148,14 @@ def generate_and_save_concept_graph(
     combination_theme_y: str,
     output_filename: str = "concept_logic_graph.json"
 ) -> dict | None:
-    """根据输入的文本概念组合生成概念逻辑图, 保存为JSON并返回解析后的图谱。
+    """Generates a conceptual logic graph based on the given text concept combination, saves it as JSON, and returns the parsed graph.
 
     Args:
-        concept_combination_x: 形如 "A child is drinking wine" 的概念组合字符串。
-        output_filename: 保存 JSON 图谱的文件名。
+        concept_combination_x: A string representing a concept combination, e.g., "A child is drinking wine".
+        output_filename: The filename to save the JSON graph.
 
     Returns:
-        解析后的概念逻辑图 (dict)，如果失败则返回 None。
+        The parsed conceptual logic graph as a dict, or None if the process fails.
     """
 
 
@@ -201,11 +203,11 @@ def generate_and_save_concept_graph(
             If you receive instructions on how to fix mistakes, follow them and regenerate the corrected JSON response in the same strict format.
         ''',
         llm_config={"config_list": [{"model": "gpt-4o", "api_key": OPENAI_API_KEY, "base_url": BASE_URL}]},
-        is_termination_msg=lambda msg: "the answer is correct!" in msg.get("content", "").lower(), # Use .get for safety
-        human_input_mode="NEVER",  # 设置为 "NEVER" 以避免提示用户输入
+        is_termination_msg=lambda msg: "the answer is correct!" in msg.get("content", "").lower(),
+        human_input_mode="NEVER",
     )
 
-    reviewer = autogen.AssistantAgent(
+    reviewer = AssistantAgent(
         name="Reviewer",
         llm_config={"config_list": [{"model": "gpt-4o", "api_key": OPENAI_API_KEY, "base_url": BASE_URL}]},
         system_message="""
@@ -215,16 +217,15 @@ def generate_and_save_concept_graph(
             If there are some mistakes in the generated graph, please point them out and tell the Generator how to fix them. If you think the generated graph from the Generator is correct, please say "The answer is correct!" and close the chat.  
             You must check carefully!!!
         """,
-        human_input_mode="NEVER",  # 设置为 "NEVER" 以避免提示用户输入
+        human_input_mode="NEVER",
     )
 
-    # --- 群聊和管理器设置 ---
     group_chat_with_introductions = GroupChat(
         agents=[Concept_logic_graph_Agent, reviewer],
         messages=[],
         max_round=8,
         send_introductions=True,
-        speaker_selection_method='round_robin', # 确保轮流发言
+        speaker_selection_method='round_robin',
     )
 
     # --- 启动聊天 ---
@@ -242,7 +243,6 @@ def generate_and_save_concept_graph(
     auto_end_chat()
 
 
-    # --- 提取、解析和保存结果 ---
     final_graph_string = None
     parsed_graph = None
 
@@ -283,10 +283,10 @@ def generate_and_save_concept_graph(
                     with open(output_filename, 'w', encoding='utf-8') as f:
                        json.dump(parsed_graph, f, ensure_ascii=False, indent=4)
                     print(f"\n--- Saved graph to {output_filename} (from direct parse) ---")
-                except json.JSONDecodeError:
+                except JSONDecodeError:
                     print("\nCould not parse the final_graph string directly as JSON either.")
 
-        except json.JSONDecodeError as e:
+        except JSONDecodeError as e:
             print(f"\nError decoding JSON: {e}")
             print("String content was likely not valid JSON.")
         except ImportError:
@@ -297,38 +297,36 @@ def generate_and_save_concept_graph(
     return parsed_graph
 
 
-def extract_concept_from_graph(parsed_graph: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """从解析的图谱中提取概念组合和子概念。
+def extract_concept_from_graph(parsed_graph: dict[str, dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """extract combination of concepts and child-concept from analyzed image
     
     Args:
-        parsed_graph: 包含一个或多个迭代的图谱字典
+        parsed_graph: graph dictionary includes at least one iteration
         
     Returns:
-        tuple[List[str], List[str]]: 包含概念组合列表和子概念列表的元组
+        tuple[list[str], list[str]]: tuple of combination of list of concepts and list of sub-concepts
     """
     concept_combination = []
     sub_concept = []
 
-    # 检查是否是迭代格式的图谱
     if any(key.startswith('iteration_') for key in parsed_graph.keys()):
-        # 处理迭代格式
+
         for iteration_graph in parsed_graph.values():
-            # 获取当前迭代的主要概念
+            iteration_graph: dict[str, dict[str, Any]]
+
             main_concept = list(iteration_graph.keys())[0].replace("_", " ")
             concept_combination.append(main_concept)
 
-            # 处理当前迭代的图谱
             current_graph = iteration_graph[main_concept]
             
-            # 添加蕴含关系
+            # 包含関係の追加
             if 'entailment' in current_graph:
                 concept_combination.extend(current_graph['entailment'])
 
-            # 添加等价关系
             if 'equivalence' in current_graph:
                 concept_combination.extend(current_graph['equivalence'])
 
-            # 添加子概念
+            # add child-concept
             for key, value in current_graph.items():
                 if isinstance(value, dict):
                     sub_concept.append(key)
@@ -337,19 +335,16 @@ def extract_concept_from_graph(parsed_graph: dict[str, Any]) -> tuple[list[str],
                     if 'equivalence' in value:
                         sub_concept.extend(value['equivalence'])
     else:
-        # 处理单个图谱格式
+
         main_concept = list(parsed_graph.keys())[0].replace("_", " ")
         concept_combination.append(main_concept)
 
-        # 添加蕴含关系
         if 'entailment' in parsed_graph[main_concept]:
             concept_combination.extend(parsed_graph[main_concept]['entailment'])
 
-        # 添加等价关系
         if 'equivalence' in parsed_graph[main_concept]:
             concept_combination.extend(parsed_graph[main_concept]['equivalence'])
 
-        # 添加子概念
         for key, value in parsed_graph[main_concept].items():
             if isinstance(value, dict):
                 sub_concept.append(key)
@@ -358,27 +353,17 @@ def extract_concept_from_graph(parsed_graph: dict[str, Any]) -> tuple[list[str],
                 if 'equivalence' in value:
                     sub_concept.extend(value['equivalence'])
 
-    # 去重并返回
     return list(set(concept_combination)), list(set(sub_concept))
+
 
 def generate_and_save_iterative_graphs(
     concept_combination_x: str,
     combination_theme_y: str, 
     output_path: str,
     iterate_n: int = 3
-) -> dict[str, Any]:
-    """生成并保存迭代的概念图谱。
-    
-    Args:
-        concept_combination_x: 初始概念组合
-        combination_theme_y: 主题
-        iterate_n: 迭代次数, 默认为3
-        output_dir: 输出目录路径
-        
-    Returns:
-        dict[str, Any]: 包含所有迭代图谱的字典
-    """
-    all_graphs = {}  # 用于存储所有迭代生成的graph
+) -> dict[str, dict]:
+
+    all_graphs = {}
     current_concept_combination = concept_combination_x
     
     for i in range(iterate_n):
@@ -391,21 +376,17 @@ def generate_and_save_iterative_graphs(
             print(f"concept_combination: {concept_combination}")
             print(f"sub_concept: {sub_concept}")
             
-            # 将当前迭代的graph添加到all_graphs中
             all_graphs[f"iteration_{i}"] = generated_graph
             
-            # 更新下一个迭代的概念
-            if i < iterate_n - 1:  # 如果不是最后一次迭代
+            if i < iterate_n - 1:
                 current_concept_combination = generated_graph[current_concept_combination]['equivalence'][0]
         else:
             print("\n--- Function finished. Failed to generate or parse the graph. ---")
             break
     
-    # 保存所有迭代的graph到JSON文件
-    print(output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
-        print(output_path+f"/{concept_combination_x}.json")
+        print(f"{output_path}/{concept_combination_x}.json")
         json.dump(all_graphs, f, ensure_ascii=False, indent=4)
     print(f"\nAll iteration graphs saved to: {output_path}")
     

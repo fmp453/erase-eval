@@ -79,7 +79,7 @@ def train(args: Arguments):
         batch = next(iter(dataloader))
 
         with torch.no_grad():
-            latents = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
+            latents: torch.Tensor = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
             text_embedding = text_encoder(batch["input_ids"].to(device))[0]
             anchor_embedding = text_encoder(batch["input_anchor_ids"].to(device))[0]
             latents = latents * vae.config.scaling_factor
@@ -95,7 +95,7 @@ def train(args: Arguments):
         with torch.no_grad():
             anchor_pred = unet(noisy_latens[:anchor_embedding.size(0)], timesteps[:anchor_embedding.size(0)], anchor_embedding).sample
         
-        mask = batch["mask"].to(device)
+        mask: torch.Tensor = batch["mask"].to(device)
 
         loss: torch.Tensor = F.mse_loss(noise_pred, anchor_pred, reduction="none")
         loss = ((loss * mask).sum([1, 2, 3]) / mask.sum([1, 2, 3])).mean()

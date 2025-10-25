@@ -804,7 +804,7 @@ class COGFDDataset(Dataset):
     def __len__(self):
         return self._length
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> dict:
         if index >= self._length:
             raise IndexError(f"Index {index} out of range for dataset of length {self._length}")
             
