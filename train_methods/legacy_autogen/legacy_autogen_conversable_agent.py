@@ -13,15 +13,10 @@ from openai import BadRequestError
 from pydantic import BaseModel
 from termcolor import colored
 
-from ..coding.base import CodeExecutor
-from ..coding.factory import CodeExecutorFactory
-from ..function_utils import get_function_schema, load_basemodels_if_needed, serialize_to_str
-from .utils import consolidate_chat_info, gather_usage_summary
-
-
 from train_methods.legacy_autogen.cache import AbstractCache
-from train_methods.legacy_autogen.chat import ChatResult, a_initiate_chats, initiate_chats, _post_process_carryover_item
+from train_methods.legacy_autogen.chat import ChatResult, a_initiate_chats, initiate_chats, _post_process_carryover_item, consolidate_chat_info
 from train_methods.legacy_autogen.client import ModelClient, OpenAIWrapper
+from train_methods.legacy_autogen.coding import CodeExecutor, CodeExecutorFactory
 from train_methods.legacy_autogen.stream import IOStream
 from train_methods.legacy_autogen.utils import (
     check_can_use_docker_or_throw,
@@ -30,6 +25,9 @@ from train_methods.legacy_autogen.utils import (
     execute_code,
     extract_code,
     infer_lang,
+    load_basemodels_if_needed, 
+    serialize_to_str,
+    get_function_schema
 )
 
 __all__ = ("ConversableAgent",)
@@ -186,6 +184,76 @@ class LLMAgent(Agent, Protocol):
         Args:
             system_message (str): system message for inference.
         """
+
+
+def gather_usage_summary(agents: list[Agent]) -> dict[dict[str, dict], dict[str, dict]]:
+    r"""Gather usage summary from all agents.
+
+    Args:
+        agents: (list): List of agents.
+
+    Returns:
+        dictionary: A dictionary containing two keys:
+          - "usage_including_cached_inference": Cost information on the total usage, including the tokens in cached inference.
+          - "usage_excluding_cached_inference": Cost information on the usage of tokens, excluding the tokens in cache. No larger than "usage_including_cached_inference".
+
+    Example:
+
+    ```python
+    {
+        "usage_including_cached_inference" : {
+            "total_cost": 0.0006090000000000001,
+            "gpt-35-turbo": {
+                    "cost": 0.0006090000000000001,
+                    "prompt_tokens": 242,
+                    "completion_tokens": 123,
+                    "total_tokens": 365
+            },
+        },
+
+        "usage_excluding_cached_inference" : {
+            "total_cost": 0.0006090000000000001,
+            "gpt-35-turbo": {
+                    "cost": 0.0006090000000000001,
+                    "prompt_tokens": 242,
+                    "completion_tokens": 123,
+                    "total_tokens": 365
+            },
+        }
+    }
+    ```
+
+    Note:
+
+    If none of the agents incurred any cost (not having a client), then the usage_including_cached_inference and usage_excluding_cached_inference will be `{'total_cost': 0}`.
+    """
+
+    def aggregate_summary(usage_summary: dict[str, Any], agent_summary: dict[str, Any]) -> None:
+        if agent_summary is None:
+            return
+        usage_summary["total_cost"] += agent_summary.get("total_cost", 0)
+        for model, data in agent_summary.items():
+            if model != "total_cost":
+                if model not in usage_summary:
+                    usage_summary[model] = data.copy()
+                else:
+                    usage_summary[model]["cost"] += data.get("cost", 0)
+                    usage_summary[model]["prompt_tokens"] += data.get("prompt_tokens", 0)
+                    usage_summary[model]["completion_tokens"] += data.get("completion_tokens", 0)
+                    usage_summary[model]["total_tokens"] += data.get("total_tokens", 0)
+
+    usage_including_cached_inference = {"total_cost": 0}
+    usage_excluding_cached_inference = {"total_cost": 0}
+
+    for agent in agents:
+        if getattr(agent, "client", None):
+            aggregate_summary(usage_including_cached_inference, agent.client.total_usage_summary)
+            aggregate_summary(usage_excluding_cached_inference, agent.client.actual_usage_summary)
+
+    return {
+        "usage_including_cached_inference": usage_including_cached_inference,
+        "usage_excluding_cached_inference": usage_excluding_cached_inference,
+    }
 
 class ConversableAgent(LLMAgent):
     """(In preview) A class for generic conversable agents which can be configured as assistant or user proxy.
@@ -3113,3 +3181,75 @@ def register_function(
     """
     f = caller.register_for_llm(name=name, description=description)(f)
     executor.register_for_execution(name=name)(f)
+
+
+class AssistantAgent(ConversableAgent):
+    """(In preview) Assistant agent, designed to solve a task with LLM.
+
+    AssistantAgent is a subclass of ConversableAgent configured with a default system message.
+    The default system message is designed to solve a task with LLM,
+    including suggesting python code blocks and debugging.
+    `human_input_mode` is default to "NEVER"
+    and `code_execution_config` is default to False.
+    This agent doesn't execute code by default, and expects the user to execute the code.
+    """
+
+    DEFAULT_SYSTEM_MESSAGE = """You are a helpful AI assistant.
+Solve tasks using your coding and language skills.
+In the following cases, suggest python code (in a python coding block) or shell script (in a sh coding block) for the user to execute.
+    1. When you need to collect info, use the code to output the info you need, for example, browse or search the web, download/read a file, print the content of a webpage or a file, get the current date/time, check the operating system. After sufficient info is printed and the task is ready to be solved based on your language skill, you can solve the task by yourself.
+    2. When you need to perform some task with code, use the code to perform the task and output the result. Finish the task smartly.
+Solve the task step by step if you need to. If a plan is not provided, explain your plan first. Be clear which step uses code, and which step uses your language skill.
+When using code, you must indicate the script type in the code block. The user cannot provide any other feedback or perform any other action beyond executing the code you suggest. The user can't modify your code. So do not suggest incomplete code which requires users to modify. Don't use a code block if it's not intended to be executed by the user.
+If you want the user to save the code in a file before executing it, put # filename: <filename> inside the code block as the first line. Don't include multiple code blocks in one response. Do not ask users to copy and paste the result. Instead, use 'print' function for the output when relevant. Check the execution result returned by the user.
+If the result indicates there is an error, fix the error and output the code again. Suggest the full code instead of partial code or code changes. If the error can't be fixed or if the task is not solved even after the code is executed successfully, analyze the problem, revisit your assumption, collect additional info you need, and think of a different approach to try.
+When you find an answer, verify the answer carefully. Include verifiable evidence in your response if possible.
+Reply "TERMINATE" in the end when everything is done.
+    """
+
+    DEFAULT_DESCRIPTION = "A helpful and general-purpose AI assistant that has strong language skills, Python skills, and Linux command line skills."
+
+    def __init__(
+        self,
+        name: str,
+        system_message: str | None = DEFAULT_SYSTEM_MESSAGE,
+        llm_config: dict | Literal[False] | None = None,
+        is_termination_msg: Callable[[dict], bool] | None = None,
+        max_consecutive_auto_reply: int | None = None,
+        human_input_mode: Literal["ALWAYS", "NEVER", "TERMINATE"] = "NEVER",
+        description: str | None = None,
+        **kwargs,
+    ):
+        """
+        Args:
+            name (str): agent name.
+            system_message (str): system message for the ChatCompletion inference.
+                Please override this attribute if you want to reprogram the agent.
+            llm_config (dict or False or None): llm inference configuration.
+                Please refer to [OpenAIWrapper.create](/docs/reference/oai/client#create)
+                for available options.
+            is_termination_msg (function): a function that takes a message in the form of a dictionary
+                and returns a boolean value indicating if this received message is a termination message.
+                The dict can contain the following keys: "content", "role", "name", "function_call".
+            max_consecutive_auto_reply (int): the maximum number of consecutive auto replies.
+                default to None (no limit provided, class attribute MAX_CONSECUTIVE_AUTO_REPLY will be used as the limit in this case).
+                The limit only plays a role when human_input_mode is not "ALWAYS".
+            **kwargs (dict): Please refer to other kwargs in
+                [ConversableAgent](conversable_agent#__init__).
+        """
+        super().__init__(
+            name,
+            system_message,
+            is_termination_msg,
+            max_consecutive_auto_reply,
+            human_input_mode,
+            llm_config=llm_config,
+            description=description,
+            **kwargs,
+        )
+
+        # Update the provided description if None, and we are using the default system_message,
+        # then use the default description.
+        if description is None:
+            if system_message == self.DEFAULT_SYSTEM_MESSAGE:
+                self.description = self.DEFAULT_DESCRIPTION

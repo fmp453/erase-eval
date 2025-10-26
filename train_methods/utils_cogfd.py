@@ -19,7 +19,7 @@ from transformers import RobertaPreTrainedModel, XLMRobertaConfig, XLMRobertaMod
 from transformers.utils import ModelOutput
 
 from train_methods.legacy_autogen.legacy_autogen import GroupChat
-from train_methods.legacy_autogen.legacy_autogen_conversable_agent import ConversableAgent
+from train_methods.legacy_autogen.legacy_autogen_conversable_agent import ConversableAgent, AssistantAgent
 
 @dataclass
 class TransformationModelOutput(ModelOutput):
@@ -142,10 +142,10 @@ class RobertaSeriesModelWithTransformation(RobertaPreTrainedModel):
 generating concept logic graph
 """
 
-
 def generate_and_save_concept_graph(
     concept_combination_x: str,
     combination_theme_y: str,
+    base_url: str,
     output_filename: str = "concept_logic_graph.json"
 ) -> dict | None:
     """Generates a conceptual logic graph based on the given text concept combination, saves it as JSON, and returns the parsed graph.
@@ -157,7 +157,7 @@ def generate_and_save_concept_graph(
     Returns:
         The parsed conceptual logic graph as a dict, or None if the process fails.
     """
-
+    OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
     Concept_logic_graph_Agent = ConversableAgent(
         name="Concept_logic_graph_Agent",
@@ -202,14 +202,14 @@ def generate_and_save_concept_graph(
             Follow the JSON structure precisely as shown in the example.
             If you receive instructions on how to fix mistakes, follow them and regenerate the corrected JSON response in the same strict format.
         ''',
-        llm_config={"config_list": [{"model": "gpt-4o", "api_key": OPENAI_API_KEY, "base_url": BASE_URL}]},
+        llm_config={"config_list": [{"model": "gpt-4o", "api_key": OPENAI_API_KEY, "base_url": base_url}]},
         is_termination_msg=lambda msg: "the answer is correct!" in msg.get("content", "").lower(),
         human_input_mode="NEVER",
     )
 
     reviewer = AssistantAgent(
         name="Reviewer",
-        llm_config={"config_list": [{"model": "gpt-4o", "api_key": OPENAI_API_KEY, "base_url": BASE_URL}]},
+        llm_config={"config_list": [{"model": "gpt-4o", "api_key": OPENAI_API_KEY, "base_url": base_url}]},
         system_message="""
             You are a well-known expert in the description logic field and a compliance reviewer, known for your thoroughness and commitment to standards. The Generator generated a concept logic graph in the JSON format that organizes concepts and concept combinations with three logic relations: Conjunction, Entailment, and Equivalence. Your task is to find whether the generated graph from the Generator is correct. Here are two aspects of the answer which you need to check carefully:  
             1. Whether the answer is correct and helpful.  

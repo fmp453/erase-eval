@@ -16,6 +16,7 @@ azure-cosmos==4.14.0
 azure-identity==1.25.1
 docker==7.1.0
 flaml==2.3.6
+jupyter-client==8.6.3
 
 open_clip_torch==2.29.0
 bitsandbytes==0.44.1
