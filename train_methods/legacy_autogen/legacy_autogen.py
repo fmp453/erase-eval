@@ -3,155 +3,19 @@
 """
 import json
 import sys
-import logging
 import random
 import re
 from copy import deepcopy
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Union, Protocol, TypedDict, Iterator
+from typing import Any, Callable, Literal, Union
 
 from termcolor import colored
 
-from train_methods.legacy_autogen_conversable_agent import ConversableAgent, Agent
+from train_methods.legacy_autogen.legacy_autogen_conversable_agent import ConversableAgent, Agent
+from train_methods.legacy_autogen.stream import IOStream
+from train_methods.legacy_autogen.client import ModelClient
+from train_methods.legacy_autogen.utils import content_str
 
-logger = logging.getLogger(__name__)
-
-
-class OutputStream(Protocol):
-    def print(self, *objects: Any, sep: str = " ", end: str = "\n", flush: bool = False) -> None:
-        """Print data to the output stream.
-
-        Args:
-            objects (any): The data to print.
-            sep (str, optional): The separator between objects. Defaults to " ".
-            end (str, optional): The end of the output. Defaults to "\n".
-            flush (bool, optional): Whether to flush the output. Defaults to False.
-        """
-        ...  # pragma: no cover
-
-
-class InputStream(Protocol):
-    def input(self, prompt: str = "", *, password: bool = False) -> str:
-        """Read a line from the input stream.
-
-        Args:
-            prompt (str, optional): The prompt to display. Defaults to "".
-            password (bool, optional): Whether to read a password. Defaults to False.
-
-        Returns:
-            str: The line read from the input stream.
-
-        """
-        ...  # pragma: no cover
-
-
-class IOStream(InputStream, OutputStream, Protocol):
-    """A protocol for input/output streams."""
-
-    # ContextVar must be used in multithreaded or async environments
-    _default_io_stream: ContextVar["IOStream" | None] = ContextVar("default_iostream", default=None)
-    _default_io_stream.set(None)
-    _global_default: "IOStream" | None = None
-
-    @staticmethod
-    def set_global_default(stream: "IOStream") -> None:
-        """Set the default input/output stream.
-
-        Args:
-            stream (IOStream): The input/output stream to set as the default.
-        """
-        IOStream._global_default = stream
-
-    @staticmethod
-    def get_global_default() -> "IOStream":
-        """Get the default input/output stream.
-
-        Returns:
-            IOStream: The default input/output stream.
-        """
-        if IOStream._global_default is None:
-            raise RuntimeError("No global default IOStream has been set")
-        return IOStream._global_default
-
-    @staticmethod
-    def get_default() -> "IOStream":
-        """Get the default input/output stream.
-
-        Returns:
-            IOStream: The default input/output stream.
-        """
-        iostream = IOStream._default_io_stream.get()
-        if iostream is None:
-            iostream = IOStream.get_global_default()
-            # Set the default IOStream of the current context (thread/cooroutine)
-            IOStream.set_default(iostream)
-        return iostream
-
-    @staticmethod
-    @contextmanager
-    def set_default(stream: "IOStream" | None) -> Iterator[None]:
-        """Set the default input/output stream.
-
-        Args:
-            stream (IOStream): The input/output stream to set as the default.
-        """
-        global _default_io_stream
-        try:
-            token = IOStream._default_io_stream.set(stream)
-            yield
-        finally:
-            IOStream._default_io_stream.reset(token)
-
-        return
-
-class UserMessageTextContentPart(TypedDict):
-    type: Literal["text"]
-    text: str
-
-class UserMessageImageContentPart(TypedDict):
-    type: Literal["image_url"]
-    image_url: dict[Literal["url"], str]
-
-def content_str(content: str | list[UserMessageTextContentPart| UserMessageImageContentPart] | None) -> str:
-    """Converts the `content` field of an OpenAI message into a string format.
-
-    This function processes content that may be a string, a list of mixed text and image URLs, or None,
-    and converts it into a string. Text is directly appended to the result string, while image URLs are
-    represented by a placeholder image token. If the content is None, an empty string is returned.
-
-    Args:
-        - content (Union[str, List, None]): The content to be processed. Can be a string, a list of dictionaries representing text and image URLs, or None.
-
-    Returns:
-        str: A string representation of the input content. Image URLs are replaced with an image token.
-
-    Note:
-    - The function expects each dictionary in the list to have a "type" key that is either "text" or "image_url".
-      For "text" type, the "text" key's value is appended to the result. For "image_url", an image token is appended.
-    - This function is useful for handling content that may include both text and image references, especially
-      in contexts where images need to be represented as placeholders.
-    """
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        raise TypeError(f"content must be None, str, or list, but got {type(content)}")
-
-    rst = ""
-    for item in content:
-        if not isinstance(item, dict):
-            raise TypeError("Wrong content format: every element should be dict if the content is a list.")
-        assert "type" in item, "Wrong content format. Missing 'type' key in content's dict."
-        if item["type"] == "text":
-            rst += item["text"]
-        elif item["type"] == "image_url":
-            rst += "<image>"
-        else:
-            raise ValueError(f"Wrong content format: unknown type {item['type']} within the content")
-    return rst
 
 class AgentNameConflict(Exception):
     def __init__(self, msg: str = "Found multiple agents with the same name.", *args: Any, **kwargs: Any):
@@ -170,57 +34,6 @@ class UndefinedNextAgent(Exception):
     def __init__(self, message: str = "The provided agents list does not overlap with agents in the group."):
         self.message = message
         super().__init__(self.message)
-
-
-class ModelClient(Protocol):
-    """
-    A client class must implement the following methods:
-    - create must return a response object that implements the ModelClientResponseProtocol
-    - cost must return the cost of the response
-    - get_usage must return a dict with the following keys:
-        - prompt_tokens
-        - completion_tokens
-        - total_tokens
-        - cost
-        - model
-
-    This class is used to create a client that can be used by OpenAIWrapper.
-    The response returned from create must adhere to the ModelClientResponseProtocol but can be extended however needed.
-    The message_retrieval method must be implemented to return a list of str or a list of messages from the response.
-    """
-
-    RESPONSE_USAGE_KEYS = ["prompt_tokens", "completion_tokens", "total_tokens", "cost", "model"]
-
-    class ModelClientResponseProtocol(Protocol):
-        class Choice(Protocol):
-            class Message(Protocol):
-                content: str | None
-
-            message: Message
-
-        choices: list[Choice]
-        model: str
-
-    def create(self, params: dict[str, Any]) -> ModelClientResponseProtocol: ...  # pragma: no cover
-
-    def message_retrieval(
-        self, response: ModelClientResponseProtocol
-    ) -> list[str] | list[ModelClientResponseProtocol.Choice.Message]:
-        """
-        Retrieve and return a list of strings or a list of Choice.Message from the response.
-
-        NOTE: if a list of Choice.Message is returned, it currently needs to contain the fields of OpenAI's ChatCompletion Message object,
-        since that is expected for function or tool calling in the rest of the codebase at the moment, unless a custom agent is being used.
-        """
-        ...  # pragma: no cover
-
-    def cost(self, response: ModelClientResponseProtocol) -> float: ...  # pragma: no cover
-
-    @staticmethod
-    def get_usage(response: ModelClientResponseProtocol) -> dict:
-        """Return usage summary of the response using RESPONSE_USAGE_KEYS."""
-        ...  # pragma: no cover
-
 
 @dataclass
 class GroupChat:
@@ -481,7 +294,7 @@ class GroupChat:
                 "Please add more agents to the GroupChat or use direct communication instead."
             )
         elif n_agents == 2 and speaker_selection_method.lower() != "round_robin" and allow_repeat_speaker:
-            logger.warning(
+            print(
                 f"GroupChat is underpopulated with {n_agents} agents. "
                 "Consider setting speaker_selection_method to 'round_robin' or allow_repeat_speaker to False, "
                 "or use direct communication, unless repeated speaker is desired."
@@ -597,7 +410,7 @@ class GroupChat:
         if len(mentions) == 1:
             name = next(iter(mentions))
         else:
-            logger.warning(
+            print(
                 f"GroupChat select_speaker failed to resolve the next speaker's name. This is because the speaker selection OAI call returned:\n{name}"
             )
 
@@ -968,7 +781,7 @@ class GroupChat:
         roles = []
         for agent in agents:
             if agent.description.strip() == "":
-                logger.warning(
+                print(
                     f"The agent '{agent.name}' has an empty description, and may not work well with GroupChat."
                 )
             roles.append(f"{agent.name}: {agent.description}".strip())
@@ -1192,7 +1005,7 @@ class GroupChatManager(ConversableAgent):
                     raise
             except NoEligibleSpeaker:
                 # No eligible speaker, terminate the conversation
-                logger.warning("No eligible speaker found. Terminating the conversation.")
+                print("No eligible speaker found. Terminating the conversation.")
                 break
 
             if reply is None:
@@ -1274,7 +1087,7 @@ class GroupChatManager(ConversableAgent):
                     raise
             except NoEligibleSpeaker:
                 # No eligible speaker, terminate the conversation
-                logger.warning("No eligible speaker found. Terminating the conversation.")
+                print("No eligible speaker found. Terminating the conversation.")
                 break
 
             if reply is None:
@@ -1553,7 +1366,7 @@ class GroupChatManager(ConversableAgent):
         # Check if the last message meets termination (if it has one)
         if self._is_termination_msg:
             if self._is_termination_msg(last_message):
-                logger.warning("WARNING: Last message meets termination criteria and this may terminate the chat.")
+                print("WARNING: Last message meets termination criteria and this may terminate the chat.")
 
     def messages_from_string(self, message_string: str) -> list[dict]:
         """Reads the saved state of messages in Json format for resume and returns as a messages list
@@ -1641,7 +1454,7 @@ class GroupChatManager(ConversableAgent):
         # preserve last tool call message if clear history called inside of tool response
         if "tool_responses" in reply and not nr_messages_to_preserve:
             nr_messages_to_preserve = 1
-            logger.warning(
+            print(
                 "The last tool call message will be saved to prevent errors caused by tool response without tool call."
             )
         # clear history

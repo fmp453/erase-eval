@@ -18,8 +18,8 @@ from torch import nn
 from transformers import RobertaPreTrainedModel, XLMRobertaConfig, XLMRobertaModel
 from transformers.utils import ModelOutput
 
-from train_methods.legacy_autogen import GroupChat
-from train_methods.legacy_autogen_conversable_agent import ConversableAgent
+from train_methods.legacy_autogen.legacy_autogen import GroupChat
+from train_methods.legacy_autogen.legacy_autogen_conversable_agent import ConversableAgent
 
 @dataclass
 class TransformationModelOutput(ModelOutput):
