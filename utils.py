@@ -381,6 +381,11 @@ class Arguments(BaseModel):
     cogfd_lr_num_cycles: Optional[int] = Field(1)
     cogfd_lr_power: Optional[float] = Field(1.0)
     cogfd_dataloader_num_workers: Optional[int] = Field(9)
+    cogfd_graph_path: Optional[str] = Field("cpgfd-graph/graph.json")
+    cogfd_iterate_n: Optional[int] = Field(2)
+    cogfd_combine_concept_x: Optional[str] = Field("A child is drinking wine")
+    cogfd_combine_theme_y: Optional[str] = Field("underage drinking")
+
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")

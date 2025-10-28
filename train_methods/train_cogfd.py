@@ -24,6 +24,7 @@ import itertools
 import math
 import json
 import os
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -37,7 +38,6 @@ from tqdm.auto import tqdm
 from diffusers.models.attention_processor import Attention
 from transformers import AutoTokenizer, PretrainedConfig
 from transformers import CLIPTextModel
-import argparse
 
 from train_methods.data import COGFDDataset
 from train_methods.utils_cogfd import RobertaSeriesModelWithTransformation, generate_and_save_iterative_graphs, extract_concept_from_graph
@@ -207,6 +207,7 @@ def train(
     )
 
     train_dataset = COGFDDataset(
+        data_dir=args.data_dir,
         tokenizer=tokenizer,
         size=args.image_size,
         center_crop=args.cogfd_center_crop,
@@ -359,49 +360,22 @@ def train(
 
 def main(args: Arguments):
     # first, generate concept logic graph
-    # second, erasing
-    pass
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--theme', type=str)
-    parser.add_argument('--combine_concept_x', type=str, default="A child is drinking wine")
-    parser.add_argument('--combine_theme_y', type=str, default="underage drinking")
-    parser.add_argument('--iterate_n', type=int, default=1)
-
-    args = parser.parse_args()
-    combine_concept = args.combine_concept_x
-    OUTPUT_DIR = ""
-    LOGICGRAPH_DIR = OUTPUT_DIR + "/concept_logic_graph"
-    PREPARED_DATA_DIR = OUTPUT_DIR + "/data"
-    args.prepared_data_dir = PREPARED_DATA_DIR.format(concept_combination=combine_concept)
-    args.graph_output_dir = LOGICGRAPH_DIR.formt(concept_combination=combine_concept)
-
-
-    combine_theme = args.combine_theme_y
-    task_info = [combine_concept, combine_theme]
-
-    graph_path = os.path.join(args.graph_output_dir, f"{combine_concept}.json")
-    # generate concept logic graph
-    try:
+    graph_path = args.cogfd_graph_path
+    if Path(graph_path).exists():
         with open(graph_path, 'r') as f:
             parsed_graph = json.load(f)
-    except FileNotFoundError:
-        print(f"File {graph_path} not found. Generating concept logic graph...")
-        combine_concept_x = args.combine_concept_x.replace("_", " ")
-        combine_theme_y = args.combine_theme_y.replace("_", " ")
-        parsed_graph = generate_and_save_iterative_graphs(combine_concept_x, combine_theme_y, graph_path, iterate_n=args.iterate_n)
-
-
+    else:
+        combine_concept_x = args.cogfd_combine_concept_x.replace("_", " ")
+        combine_theme_y = args.cogfd_combine_theme_y.replace("_", " ")
+        parsed_graph = generate_and_save_iterative_graphs(combine_concept_x, combine_theme_y, graph_path, iterate_n=args.cogfd_iterate_n)
+    
+    # second, erasing
     # extract concepts from graph
     concept_combination, sub_concept = extract_concept_from_graph(parsed_graph)
 
-    concepts = concept_combination + sub_concept
-    labels = [args.p1 for i in concept_combination] + [args.p2 for i in sub_concept]
-    print(concepts)
-    print(labels)
-
-    train(task_info=task_info,
-        concept_combination=concepts,
-        labels=labels,
+    task_info = [args.cogfd_combine_concept_x, args.cogfd_combine_theme_y]
+    train(
+        task_info=task_info,
+        concept_combination=concept_combination,
+        labels=[args.cogfd_p1 for _ in concept_combination] + [args.cogfd_p2 for _ in sub_concept]
     )

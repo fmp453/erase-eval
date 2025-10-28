@@ -228,8 +228,6 @@ def generate_and_save_concept_graph(
         speaker_selection_method='round_robin',
     )
 
-    # --- 启动聊天 ---
-    # 构建传递给 agent 的消息
     initial_message = f"X = {concept_combination_x}, Y = {combination_theme_y}"
     print(f"\n--- Starting chat for: '{initial_message}' ---")
     
@@ -242,11 +240,9 @@ def generate_and_save_concept_graph(
     # Call the function after some condition or time has passed
     auto_end_chat()
 
-
     final_graph_string = None
     parsed_graph = None
 
-    # 检查聊天是否有历史记录
     if group_chat_with_introductions.messages:
         all_messages = group_chat_with_introductions.messages
         for msg in reversed(all_messages):
@@ -258,7 +254,6 @@ def generate_and_save_concept_graph(
         print("\nNo messages found in group chat history.")
 
     if final_graph_string:
-        # 尝试从 final_graph_string 中提取 JSON 部分
         try:
             match = re.search(r"```json\n(.*?)\n```", final_graph_string, re.DOTALL)
             if match:
@@ -268,18 +263,15 @@ def generate_and_save_concept_graph(
                 print("\n--- Parsed Concept Logic Graph --- (from ```json block)")
                 pprint.pprint(parsed_graph)
 
-                # 保存到 JSON 文件
                 with open(output_filename, 'w', encoding='utf-8') as f:
                     json.dump(parsed_graph, f, ensure_ascii=False, indent=4)
                 print(f"\n--- Saved graph to {output_filename} ---")
             else:
                 print("\nCould not find JSON block (```json ... ```) within the final graph string.")
-                # 尝试直接解析整个字符串作为备选
                 try:
                     parsed_graph = json.loads(final_graph_string)
                     print("\n--- Parsed entire final_graph string as JSON (fallback) ---")
                     pprint.pprint(parsed_graph)
-                    # 也可以在这里保存
                     with open(output_filename, 'w', encoding='utf-8') as f:
                        json.dump(parsed_graph, f, ensure_ascii=False, indent=4)
                     print(f"\n--- Saved graph to {output_filename} (from direct parse) ---")
@@ -318,7 +310,7 @@ def extract_concept_from_graph(parsed_graph: dict[str, dict[str, Any]]) -> tuple
             concept_combination.append(main_concept)
 
             current_graph = iteration_graph[main_concept]
-            
+
             # 包含関係の追加
             if 'entailment' in current_graph:
                 concept_combination.extend(current_graph['entailment'])
@@ -392,12 +384,10 @@ def generate_and_save_iterative_graphs(
     
     return all_graphs
 
-# --- 主执行块 --- #
 if __name__ == "__main__":
     concept_combination_x = "A child is drinking wine"
     combination_theme_y = "underage drinking"
     
-    # 使用新函数生成迭代图谱
     all_graphs = generate_and_save_iterative_graphs(concept_combination_x, combination_theme_y)
     combine_list, concept_list = extract_concept_from_graph(all_graphs)
     print(f"combine_list: {combine_list}")
