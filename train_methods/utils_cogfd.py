@@ -145,7 +145,6 @@ generating concept logic graph
 def generate_and_save_concept_graph(
     concept_combination_x: str,
     combination_theme_y: str,
-    base_url: str,
     output_filename: str = "concept_logic_graph.json"
 ) -> dict | None:
     """Generates a conceptual logic graph based on the given text concept combination, saves it as JSON, and returns the parsed graph.
@@ -158,6 +157,7 @@ def generate_and_save_concept_graph(
         The parsed conceptual logic graph as a dict, or None if the process fails.
     """
     OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+    base_url = os.environ["BASE_URL"]
 
     Concept_logic_graph_Agent = ConversableAgent(
         name="Concept_logic_graph_Agent",
