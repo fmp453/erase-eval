@@ -2,6 +2,7 @@
 # EraseFlow (NeurIPS 2025)
 
 import time
+import contextlib
 from pathlib import Path
 
 import torch
@@ -23,7 +24,7 @@ def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     """
     return model._orig_mod if is_compiled_module(model) else model
 
-def save_lora_checkpoint(unet: UNet2DConditionModel, output_dir, epoch):
+def save_lora_checkpoint(unet: UNet2DConditionModel, output_dir: str, epoch: int):
     save_path = Path(output_dir) / Path(f"checkpoint_epoch{epoch}")
     save_path.mkdir(exist_ok=True)
 
@@ -38,12 +39,12 @@ def save_lora_checkpoint(unet: UNet2DConditionModel, output_dir, epoch):
         safe_serialization=True,
     )
 
-def setup_optimizer_and_scaler(unet: UNet2DConditionModel, args):
+def setup_optimizer_and_scaler(unet: UNet2DConditionModel, args: Arguments):
     """
     Create optimizer (8-bit AdamW if requested) over
     LoRA parameters + z_model parameter, plus optional GradScaler.
     """
-    if args.use_8bit_adam:
+    if args.ef_use_8bit_adam:
         try:
             import bitsandbytes as bnb
             optimizer_cls = bnb.optim.AdamW8bit
@@ -60,21 +61,18 @@ def setup_optimizer_and_scaler(unet: UNet2DConditionModel, args):
     # collect LoRA layers
     lora_layers = filter(lambda p: p.requires_grad, unet.parameters())
     param_groups = [
-        {"params": lora_layers, "lr": args.learning_rate},
-        {"params": z_model, "lr": args.flow_learning_rate},
+        {"params": lora_layers, "lr": args.ef_lr},
+        {"params": z_model, "lr": args.ef_flow_lr},
     ]
 
     optimizer = optimizer_cls(
         param_groups,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
+        betas=(args.ef_adam_beta1, args.ef_adam_beta2),
+        weight_decay=args.ef_adam_weight_decay,
+        eps=args.ef_adam_epsilon,
     )
 
-    scaler = None
-
-    return optimizer, scaler, z_model
-
+    return optimizer, z_model
 
 
 def train_eraseflow_step(
@@ -94,7 +92,7 @@ def train_eraseflow_step(
     Returns the scalar loss value (float).
     """
     # build “embeds” for UNet input
-    if args.cfg:
+    if args.start_guidance > 1.0:
         # classifier-free: concat neg + pos prompt embeddings
         embeds = torch.cat([train_neg_prompt_embeds, sample["prompt_embeds"]])
     else:
@@ -110,7 +108,7 @@ def train_eraseflow_step(
         j_latent = sample["latents"][:, j]
         next_j_latent = sample["next_latents"][:, j]
 
-        with args.autocast():
+        with contextlib.nullcontext():
             if args.start_guidance > 1.0:
                 noise_pred = unet(
                     torch.cat([j_latent] * 2),
@@ -132,7 +130,7 @@ def train_eraseflow_step(
                 noise_pred,
                 sample["timesteps"][:, j],
                 j_latent,
-                eta=args.eta,
+                eta=args.ef_eta,
                 prev_sample=next_j_latent,
             )
 
@@ -144,9 +142,9 @@ def train_eraseflow_step(
         torch.cuda.empty_cache()
 
     # compute z‐loss: encourages z_model ≈ log(beta). Here z_model models the log(Z).
-    z_target = args.logbeta
+    z_target = args.ef_logbeta or 2.5
     z_loss = z_model - z_target
-    total_loss = total_loss + z_loss
+    total_loss: torch.Tensor = total_loss + z_loss
 
     # mean‐squared: (sum over batch & timesteps + z_loss).pow(2).mean()
     total_loss = torch.mean(total_loss.pow(2))
@@ -180,14 +178,14 @@ def sample_epoch(
     samples = []
 
     # Anchor prompts → their embeddings
-    prompts = [args.anchor_prompt] * args.batch_size
+    prompts = [args.anchor_concept] * args.ef_batch_size
     anchor_prompt_embeds = get_condition(prompts, tokenizer, text_encoder)
 
     # Expand negative‐prompt embeddings to match batch size
     sample_neg_prompt_embeds = neg_prompt_embed.repeat(len(anchor_prompt_embeds), 1, 1)
 
     # Inform scheduler how many diffusion steps we take this epoch
-    scheduler.set_timesteps(args.num_steps, device=text_encoder.device)
+    scheduler.set_timesteps(args.ddim_steps, device=text_encoder.device)
 
     # Perform one pass of inference‐mode sampling (no gradients)
     with torch.inference_mode():
@@ -196,10 +194,10 @@ def sample_epoch(
             text_encoder,
             unet,
             vae,
-            num_inference_steps=args.num_steps,
+            num_inference_steps=args.ddim_steps,
             guidance_scale=args.start_guidance,
-            num_images_per_prompt=1,
-            eta=args.eta,
+            num_images_per_prompt=args.ef_batch_size,
+            eta=args.ef_eta,
             prompt_embeds=anchor_prompt_embeds,
             negative_prompt_embeds=sample_neg_prompt_embeds,
             output_type="pt",
@@ -210,17 +208,9 @@ def sample_epoch(
     # latents has shape (batch_size, num_steps+1, 4, 64, 64)
     latents = torch.stack(latents, dim=1)
 
-    # Now encode train (target) prompts
-    train_prompts = [args.target_prompt] * args.batch_size
-    train_prompt_ids = tokenizer(
-        train_prompts,
-        return_tensors="pt",
-        padding="max_length",
-        truncation=True,
-        max_length=tokenizer.model_max_length,
-    ).input_ids
-    with torch.no_grad():
-        train_prompt_embeds = text_encoder(train_prompt_ids.to(text_encoder.device))[0]
+    # encode train (target) prompts
+    train_prompts = [args.concepts] * args.ef_batch_size
+    train_prompt_embeds = get_condition(train_prompts, tokenizer, text_encoder)
 
     # Build a timesteps tensor: shape (batch_size, num_steps)
     timesteps = scheduler.timesteps.repeat(len(train_prompt_embeds), 1)
@@ -263,13 +253,13 @@ def train(args: Arguments):
 
 
     # 3) Build optimizer (LoRA + z_model) and potential GradScaler
-    optimizer, _, z_model = setup_optimizer_and_scaler(unet, args)
+    optimizer, z_model = setup_optimizer_and_scaler(unet, args)
 
     # 5) Precompute negative prompt embedding (for classifier‐free guidance)
     neg_prompt = get_condition("", tokenizer, text_encoder)
     train_neg_prompt_embeds = neg_prompt.repeat(1, 1, 1)
 
-    output_dir = Path(args.save_dir) / Path(args.name)
+    output_dir = Path(args.save_dir)
     output_dir.mkdir(exist_ok=True)
 
     global_step = 0
@@ -277,11 +267,11 @@ def train(args: Arguments):
 
     # ──────────── Start timing ────────────
     start_time = time.time()
-    for epoch in range(args.num_epochs):
-        print(f"Starting epoch {epoch}/{args.num_epochs - 1}")
+    for epoch in range(args.ef_num_epochs):
+        print(f"Starting epoch {epoch}/{args.ef_num_epochs - 1}")
 
         # Determine whether to sample fresh latents or reuse previous
-        if args.switch_epoch is None or epoch <= args.switch_epoch:
+        if args.ef_switch_epoch is None or epoch <= args.ef_switch_epoch:
             # SAMPLE PHASE (no gradients)
             unet.zero_grad()
             unet.eval()
@@ -296,7 +286,7 @@ def train(args: Arguments):
             )
         else:
             # Use samples from the last sampling epoch
-            print(f"Epoch {epoch} > switch_epoch ({args.switch_epoch}): reusing previous samples")
+            print(f"Epoch {epoch} > switch_epoch ({args.ef_switch_epoch}): reusing previous samples")
             # last_samples remains unchanged
 
         # TRAIN PHASE
@@ -316,11 +306,8 @@ def train(args: Arguments):
                 if global_step % 10 == 0:
                     print(f"Epoch {epoch} | step {global_step} | loss {loss_val:.4f}")
 
-        # SAVE CHECKPOINT
-        if epoch % args.save_freq == 0 or epoch == args.num_epochs - 1:
-            save_lora_checkpoint(unet, output_dir, epoch)
 
-    # ────────── End timing ──────────
+    save_lora_checkpoint(unet, output_dir, epoch)
     elapsed = time.time() - start_time
     hours = elapsed / 3600
     seconds = elapsed

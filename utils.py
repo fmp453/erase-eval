@@ -356,6 +356,22 @@ class Arguments(BaseModel):
     ant_mask_path: Optional[str] = Field(None)
     ant_if_gradient: Optional[bool] = Field(True)
 
+    # configs for EraseFlow
+    ef_use_8bit_adam: Optional[bool] = Field(False)
+    ef_lr: Optional[float] = Field(3e-4)
+    ef_flow_lr: Optional[float] = Field(3e-4)
+    ef_adam_beta1: Optional[float] = Field(0.9)
+    ef_adam_beta2: Optional[float] = Field(0.999)
+    ef_adam_weight_decay: Optional[float] = Field(0.01)
+    ef_adam_epsilon: Optional[float] = Field(1e-8)
+    ef_eta: Optional[float] = Field(1.0)
+    ef_logbeta: Optional[float] = Field(2.5)
+    ef_batch_size: Optional[int] = Field(1)
+    ef_lora_rank: Optional[int] = Field(4)
+    ef_switch_epoch: Optional[int] = Field(20)
+    ef_num_epochs: Optional[int] = Field(20)
+
+
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
     negative_prompt: Optional[str] = Field("")
