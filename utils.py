@@ -25,7 +25,7 @@ def get_args():
 class Arguments(BaseModel):
     
     mode: Literal["train", "infer"] = Field("train", description="train (erase) or infer")
-    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "original"] = Field("esd")
+    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "original"] = Field("esd")
     sd_version: Optional[str] = Field("compvis/stable-diffusion-v1-4")
     device: Optional[str] = Field("0", description="gpu id. when using two gpus, separated by comma")
     seed: Optional[int] = Field(0)
@@ -371,6 +371,53 @@ class Arguments(BaseModel):
     ef_switch_epoch: Optional[int] = Field(20)
     ef_num_epochs: Optional[int] = Field(20)
 
+    # configs for MCE
+    # mce.data
+    mce_metadata: Optional[str] = Field("datasets/gcc3m/Validation_GCC-1.1.0-Validation.tsv")
+    mce_deconceptmeta: Optional[str] = Field("configs/concept_long.yaml", description="need to merge all the concepts in one config file")
+    mce_only_deconcept_latent: Optional[bool] = Field(True)
+    mce_size: Optional[int] = Field(40)
+    mce_batch_size: Optional[int] = Field(1)
+    mce_style: Literal["concept", "style", "nsfw"] = Field("concept")
+    mce_filter_ratio: Optional[float] = Field(0.9)
+    mce_with_fg_filter: Optional[bool] = Field(False)
+    mce_with_synonyms: Optional[bool] = Field(False)
+
+    # mce.trainer
+    mce_epochs: Optional[int] = Field(5)
+    mce_beta: Optional[float] = Field(0.1)
+    mce_epsilon: Optional[float] = Field(0.0)
+    mce_lr: Optional[float] = Field(0.5)
+    mce_attn_lr: Optional[float] = Field(0)
+    mce_ff_lr: Optional[float] = Field(0.5)
+    mce_n_lr: Optional[float] = Field(0.5)
+    mce_model: Literal["sd1", "sd2", "sdxl", "sd3", "flux", "dit"] = Field("flux")
+    mce_num_intervention_steps: Optional[int] = Field(5)
+    mce_init_lambda: Optional[int] = Field(3)
+    mce_regex: Literal[".*", "^(down_blocks).*", "^(up_blocks).*"] = Field(".*", description="^(down_blocks.[1,2]).* optional are ^(down_blocks).*, ^(up_blocks).*, .* (for all heads)")
+    mce_attn_name: Optional[str] = Field("attn", description="use to filter the attention heads, e.g. attn2 only for cross attention")
+    mce_head_num_filter: Optional[int] = Field(1, description="number of heads to filter, apply lambda to the layter that has more than head_num_filter heads")
+    mce_masking: Literal["sigmoid", "hard_discrete"] = Field("hard_discrete" )
+    mce_masking_eps: Optional[float] = Field(0.5)
+    mce_disable_progress_bar: Optional[bool] = Field(True)
+    mce_accumulate_grad_batches: Optional[int] = Field(4)
+    mce_grad_checkpointing: Optional[bool] = Field(True)
+
+    # mce.lr_scheduler
+    mce_lr_warmup_steps: Optional[int] = Field(10)
+    mce_lr_num_cycles: Optional[int] = Field(1)
+    mce_lr_power: Optional[float] = Field(1.0)
+    mce_lr_decay_steps: Optional[int] = Field(0)
+
+    # mce.loss
+    mce_reg: Literal[0, 1, 2] = Field(1, description="2 for L2 norm, 1 for L1 norm, 0 for L0 norm")
+    mce_reconstruct: Literal[1, 2] = Field(2, description="2 for L2 norm, 1 for L1 norm")
+    mce_mean: Optional[bool] = Field(True)
+    mce_use_attn_reg: Optional[bool] = Field(True)
+    mce_use_ffn_reg: Optional[bool] = Field(True)
+    mce_lambda_reg: Optional[bool] = Field(True)
+    mce_reg_alpha: Optional[float] = Field(0.4)
+    mce_reg_beta: Optional[int] = Field(1, description="no need to use beta for now for testing")
 
     # inference part
     prompt: Optional[str] = Field("a photo of the English springer", description="prompt in inference phase")
