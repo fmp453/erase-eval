@@ -1,5 +1,6 @@
 import os
 from typing import TYPE_CHECKING
+from pathlib import Path
 
 import numpy as np
 import open_clip
@@ -9,6 +10,13 @@ from PIL import Image
 from torch.utils.data import Dataset, Subset
 
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
+
+from train_methods.mce_models.hooks import (
+    CrossAttentionExtractionHook,
+    LinearLayerHooker,
+    NormHooker,
+    FeedForwardHooker,
+)
 
 if TYPE_CHECKING:
     from diffusers import FluxPipeline
@@ -462,3 +470,107 @@ def dataset_filter(dataset: Dataset, args: Arguments, device: torch.device) -> t
     # release GPU memory from clip model
     del clip_dict
     return dataset, len(subset_pos)
+
+
+# hooker
+
+def init_hooker(args: Arguments, pipe, torch_dtype: torch.dtype, project_folder):
+    """
+    Initialize hookers for training
+    return:
+        hookers: list of hookers
+        hookers_tuple: list of tuples of hookers and their names
+        lr_list: list of learning rates
+    """
+    if any(model in args.mce_model for model in ["flux", "sd3"]):
+        # TODO: temporary solusion, fix this in the future
+        if args.mce_model == "sd3":
+            args.mce_n_lr = 0
+        return init_attn_ffn_norm_hooker(args, pipe, torch_dtype, project_folder)
+    else:
+        return init_linear_hooker(args, pipe, torch_dtype, project_folder)
+
+
+
+def init_attn_ffn_norm_hooker(args: Arguments, pipe, torch_dtype, project_folder):
+    """
+    Initialize cross attention, feedforward, and norm hookers for training
+    return:
+        hookers: list of hookers
+        hookers_tuple: list of tuples of hookers and their names
+        lr_list: list of learning rates
+    """
+    cross_attn_hooker = CrossAttentionExtractionHook(
+        pipe,
+        regex=args.mce_regex,
+        dtype=torch_dtype,
+        head_num_filter=args.mce_head_num_filter,
+        masking=args.mce_masking,
+        dst=Path(project_folder, "attn"),
+        epsilon=args.mce_epsilon,
+        model_name=args.mce_model,
+        attn_name=args.mce_attn_name,
+        use_log=False,
+        eps=args.mce_masking_eps,
+    )
+    cross_attn_hooker.add_hooks(init_value=args.mce_init_lambda)
+
+    # initialize feedforward hooks
+    ff_hooker = FeedForwardHooker(
+        pipe,
+        regex=args.mce_regex,
+        dtype=torch_dtype,
+        masking=args.mce_masking,
+        dst=Path(project_folder, "ffn"),
+        epsilon=args.mce_epsilon,
+        eps=args.mce_masking_eps,
+        use_log=False,
+    )
+    ff_hooker.add_hooks(init_value=args.mce_init_lambda)
+    hookers = [cross_attn_hooker, ff_hooker]
+    lr_list = [args.mce_attn_lr, args.mce_ff_lr]
+
+    # initialize norm hooks if lr is not 0
+    if args.mce_n_lr != 0:
+        norm_hooker = NormHooker(
+            pipe,
+            regex=args.mce_regex,
+            dtype=torch_dtype,
+            masking=args.mce_masking,
+            dst=os.path.join(project_folder, "norm"),
+            epsilon=args.mce_epsilon,
+            eps=args.mce_masking_eps,
+            use_log=False,
+        )
+        norm_hooker.add_hooks(init_value=args.mce_init_lambda)
+        hookers.append(norm_hooker)
+        lr_list.append(args.mce_n_lr)
+    return hookers, lr_list
+
+
+def init_linear_hooker(
+    args: Arguments, pipe, torch_dtype, project_folder
+) -> tuple[list[LinearLayerHooker], list[float]]:
+    """
+    Initialize linear hooker for training
+    return:
+        hookers: list of hookers
+        hookers_tuple: list of tuples of hookers and their names
+        lr_list: list of learning rates
+    """
+    linear_hooker = LinearLayerHooker(
+        pipe,
+        regex=args.mce_regex,
+        dtype=torch_dtype,
+        masking=args.mce_masking,
+        dst=Path(project_folder, "ffn"),
+        epsilon=args.mce_epsilon,
+        eps=args.mce_masking_eps,
+        use_log=False,
+    )
+    hookers = [linear_hooker]
+    linear_hooker.add_hooks(init_value=args.mce_init_lambda)
+    assert isinstance(args.mce_ff_lr, float)
+    lr_list = [args.mce_ff_lr]
+    return hookers, lr_list
+

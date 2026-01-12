@@ -3,21 +3,22 @@
 
 
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
-import tqdm
 
 from diffusers import EulerDiscreteScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.utils.testing_utils import enable_full_determinism
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 from utils import Arguments
 from train_methods.train_utils import get_devices
 from train_methods.data import MCEDataset
 from train_methods.templates import VALIDATION_PROMPT
-from train_methods.utils_mce import dataset_filter
+from train_methods.utils_mce import dataset_filter, init_hooker
 from train_methods.mce_models import (
     SD2PipelineForCheckpointing,
     SD3PipelineForCheckpointing,
@@ -25,17 +26,23 @@ from train_methods.mce_models import (
     DiTPipelineForCheckpointing,
     FluxPipelineForCheckpointing,
     ReverseDPMSolverMultistepScheduler,
+    SD2DiffusionPreparaPhasePipelineOutput,
+    SDIBDiffusion3PreparaPhasePipelineOutput,
+    SDIBDiffusionXLPreparaPhasePipelineOutput,
+    DiTDiffusionPreparaPhasePipelineOutput,
+    FluxIBDiffusionPreparaPhasePipelineOutput,
 )
 
-from diffsolver.hooks import init_hooker
 from diffsolver.utils import (
-    save_image_binarize_seed,
     save_image_seed,
 )
 
 enable_full_determinism()
 
-def load_pipeline(model_str: str):
+PipelineOutput = SD2DiffusionPreparaPhasePipelineOutput | SDIBDiffusion3PreparaPhasePipelineOutput | SDIBDiffusionXLPreparaPhasePipelineOutput | DiTDiffusionPreparaPhasePipelineOutput | FluxIBDiffusionPreparaPhasePipelineOutput
+Pipeline = SD2PipelineForCheckpointing | SD3PipelineForCheckpointing | SDXLPipelineForCheckpointing | DiTPipelineForCheckpointing | FluxPipelineForCheckpointing
+
+def load_pipeline(model_str: str) -> Pipeline:
     if model_str == "sd1":
         pipe = SD2PipelineForCheckpointing.from_pretrained("CompVis/stable-diffusion-v1-4", include_entities=False)
     elif model_str == "sd2":
@@ -90,15 +97,15 @@ def load_validation_prompts(args: Arguments):
 
 @torch.no_grad()
 def forward_checkpointing(
-    pipe,
+    pipe: Pipeline,
     prompt,
-    generator,
     num_inference_steps,
+    generator=None,
     output_type="latent",
     keep_last_latent=False,
     width=None,
     height=None,
-):
+) -> tuple[PipelineOutput, list[torch.Tensor], torch.Tensor, torch.Tensor]:
     preparation_phase_output = pipe.inference_preparation_phase(
         prompt,
         generator=generator,
@@ -107,6 +114,7 @@ def forward_checkpointing(
         width=width,
         height=height,
     )
+    assert isinstance(preparation_phase_output, PipelineOutput)
     intermediate_latents = [preparation_phase_output.latents]
     timesteps = preparation_phase_output.timesteps
     for timesteps_idx, t in enumerate(timesteps):
@@ -171,10 +179,8 @@ def train(args: Arguments):
         size=args.mce_size,
         concept=args.concepts,
         neutral_concept=None,
-        # getattr(args.mce_, "neutral_concept", None),
-        only_deconcept_latent=None,
-        # getattr(args.mce_, "only_deconcept_latent", False),
-        style=args.mce_style == "style",
+        only_deconcept_latent=False,
+        style=(args.mce_style == "style"),
         img_size=args.image_size,
         with_synonyms=args.mce_with_synonyms,
     )
@@ -207,11 +213,11 @@ def train(args: Arguments):
         raise ValueError(f"Reconstruction loss {args.mce_reconstruct} not supported")
 
     # initialize hooks
-    hookers, _, lr_list = init_hooker(cfg, pipe, torch_dtype, project_folder)
+    hookers, lr_list = init_hooker(args, pipe, torch_dtype, project_folder)
 
     # dummy generation to initialize the lambda
     print(f"Initializing lambda to be {args.mce_init_lambda}")
-    _ = pipe(validation_prompts, generator=g_cpu, num_inference_steps=1)
+    _ = pipe(validation_prompts, generator=None, num_inference_steps=1)
     trainable_lambs = []
     for hooker in hookers:
         trainable_lambs += hooker.lambs
@@ -241,7 +247,7 @@ def train(args: Arguments):
     torch.cuda.empty_cache()
     optimizer.zero_grad()
     total_step = args.mce_epochs * args.mce_size // args.mce_accumulate_grad_batches
-    with tqdm.tqdm(total=total_step) as pbar:
+    with tqdm(total=total_step) as pbar:
         for i in range(args.mce_epochs):
             for idx, data in enumerate(dataloader):
                 # image_pt contains all latents, the denoise latent is the last one
@@ -254,7 +260,6 @@ def train(args: Arguments):
                 (preparation_phase_output, intermediate_latents, timesteps, latents) = forward_checkpointing(
                     pipe,
                     prompt,
-                    generator=g_cpu,
                     num_inference_steps=args.mce_num_intervention_steps,
                     height=args.image_size,
                     width=args.image_size,
@@ -264,7 +269,7 @@ def train(args: Arguments):
                 with torch.set_grad_enabled(True):
                     prompt_embeds = preparation_phase_output.prompt_embeds
 
-                    image = pipe.inference_aft_denoising(latents, prompt_embeds, g_cpu, "latent", True, device)
+                    image = pipe.inference_aft_denoising(latents, prompt_embeds, None, "latent", True, device)
                     # calculate loss
                     loss, loss_reconstruct = pruning_loss(
                         reconstruction_loss_func,
@@ -275,7 +280,7 @@ def train(args: Arguments):
 
                     if value:  # w unlearn concept
                         # calculate the grad w.r.t. lambda in intermediate range (not z_0)
-                        intermediate_loss = reconstruction_loss_func(
+                        intermediate_loss: torch.Tensor = reconstruction_loss_func(
                             deconcept_image_pt[:, -1, ...], image[0]  # last denoise latent
                         )
                         mean_intermediate_loss += intermediate_loss.item() / args.mce_accumulate_grad_batches
@@ -328,26 +333,8 @@ def train(args: Arguments):
 
             print(f"epoch {i+1}/{args.mce_epochs}")
 
-        # save final image
-        path = Path(project_folder, "images")
-        train_path = Path(path, "train", "final_image")
-        val_path = Path(path, "validation", "final_image")
-        prompts = [validation_prompts, train_dataset[0]["prompt"]]
-        all_imgs = []
-        for path, prompt in zip([val_path, train_path], prompts):
-            img = save_image_binarize_seed(
-                pipe,
-                prompt,
-                args.mce_num_intervention_steps,
-                device,
-                args.seed,
-                save_dir=path,
-                hookers=hookers,
-            )
-            if img is not None:
-                all_imgs += img
-
-    print(f"Training finished with cfg:{args.cfg}")
+    # save final pipe
+    pipe.save_pretrained(args.save_dir)
 
 
 def main(args: Arguments):

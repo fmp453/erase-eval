@@ -21,7 +21,7 @@ class FluxIBDiffusionPreparaPhasePipelineOutput(BaseOutput):
     pooled_prompt_embeds: Any = None
     latent_image_ids: Any = None
     callback_on_step_end_tensor_inputs: Any = None
-    timesteps: Any = None
+    timesteps: torch.Tensor
 
 
 class FluxPipelineForCheckpointing(FluxPipeline, DiffusionModelForCheckpointing):

@@ -12,10 +12,10 @@ from train_methods.mce_models.base import DiffusionModelForCheckpointing
 
 @dataclass
 class SDIBDiffusion3PreparaPhasePipelineOutput(BaseOutput):
-    latents: torch.Tensor | Any
-    prompt_embeds: torch.Tensor | Any
-    pooled_prompt_embeds: torch.Tensor | Any
-    negative_prompt_embeds: torch.Tensor | Any
+    latents: torch.Tensor
+    prompt_embeds: torch.Tensor
+    pooled_prompt_embeds: torch.Tensor
+    negative_prompt_embeds: torch.Tensor
     negative_pooled_prompt_embeds: Any
     callback_on_step_end: Any = None
     callback_on_step_end_tensor_inputs: Any = None

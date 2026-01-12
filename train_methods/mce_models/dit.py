@@ -15,8 +15,8 @@ class DiTDiffusionPreparaPhasePipelineOutput(BaseOutput):
     class_labels_input: Any
     guidance_scale: float
     latent_channels: int
-    timesteps: Any
-    prompt_embeds = None
+    timesteps: torch.Tensor
+    prompt_embeds: torch.Tensor
 
 
 class DiTPipelineForCheckpointing(DiTPipeline, DiffusionModelForCheckpointing):
