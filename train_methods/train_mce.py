@@ -19,7 +19,12 @@ from train_methods.data import MCEDataset
 from train_methods.templates import VALIDATION_PROMPT
 from train_methods.utils_mce import dataset_filter
 from train_methods.mce_models import (
-    SD2PipelineForCheckpointing
+    SD2PipelineForCheckpointing,
+    SD3PipelineForCheckpointing,
+    SDXLPipelineForCheckpointing,
+    DiTPipelineForCheckpointing,
+    FluxPipelineForCheckpointing,
+    ReverseDPMSolverMultistepScheduler,
 )
 
 from diffsolver.hooks import init_hooker
@@ -31,7 +36,6 @@ from diffsolver.utils import (
 enable_full_determinism()
 
 def load_pipeline(model_str: str):
-    """load a diffusion pipeline"""
     if model_str == "sd1":
         pipe = SD2PipelineForCheckpointing.from_pretrained("CompVis/stable-diffusion-v1-4", include_entities=False)
     elif model_str == "sd2":
