@@ -3,7 +3,6 @@
 
 
 from pathlib import Path
-from typing import Any
 
 import torch
 import torch.nn as nn
@@ -18,7 +17,7 @@ from utils import Arguments
 from train_methods.train_utils import get_devices
 from train_methods.data import MCEDataset
 from train_methods.templates import VALIDATION_PROMPT
-from train_methods.utils_mce import dataset_filter, init_hooker
+from train_methods.utils_mce import dataset_filter, init_hooker, save_image_seed
 from train_methods.mce_models import (
     SD2PipelineForCheckpointing,
     SD3PipelineForCheckpointing,
@@ -26,21 +25,19 @@ from train_methods.mce_models import (
     DiTPipelineForCheckpointing,
     FluxPipelineForCheckpointing,
     ReverseDPMSolverMultistepScheduler,
-    SD2DiffusionPreparaPhasePipelineOutput,
-    SDIBDiffusion3PreparaPhasePipelineOutput,
-    SDIBDiffusionXLPreparaPhasePipelineOutput,
-    DiTDiffusionPreparaPhasePipelineOutput,
-    FluxIBDiffusionPreparaPhasePipelineOutput,
+    PipelineOutput,
+    Pipeline
+)
+from train_methods.mce_models.hooks import (
+    CrossAttentionExtractionHook,
+    LinearLayerHooker,
+    FeedForwardHooker,
+    NormHooker,
 )
 
-from diffsolver.utils import (
-    save_image_seed,
-)
 
 enable_full_determinism()
 
-PipelineOutput = SD2DiffusionPreparaPhasePipelineOutput | SDIBDiffusion3PreparaPhasePipelineOutput | SDIBDiffusionXLPreparaPhasePipelineOutput | DiTDiffusionPreparaPhasePipelineOutput | FluxIBDiffusionPreparaPhasePipelineOutput
-Pipeline = SD2PipelineForCheckpointing | SD3PipelineForCheckpointing | SDXLPipelineForCheckpointing | DiTPipelineForCheckpointing | FluxPipelineForCheckpointing
 
 def load_pipeline(model_str: str) -> Pipeline:
     if model_str == "sd1":
@@ -69,7 +66,10 @@ def load_pipeline(model_str: str) -> Pipeline:
     return pipe
 
 
-def calculate_mask_sparsity(hooker, threshold: float | None = None):
+def calculate_mask_sparsity(
+    hooker: CrossAttentionExtractionHook | FeedForwardHooker | LinearLayerHooker | NormHooker,
+    threshold: float | None = None
+):
     total_num_lambs = 0
     num_activate_lambs = 0
     binary = getattr(hooker, "binary", None) # if binary is not present, it will return None for ff_hooks
@@ -154,8 +154,6 @@ def train(args: Arguments):
     validation_prompts = load_validation_prompts(args)
     print(f"Validation prompts: {validation_prompts}")
 
-    torch_dtype = torch.float32
-
     pipe = load_pipeline(args.mce_model)
     pipe.to(device)
 
@@ -213,12 +211,12 @@ def train(args: Arguments):
         raise ValueError(f"Reconstruction loss {args.mce_reconstruct} not supported")
 
     # initialize hooks
-    hookers, lr_list = init_hooker(args, pipe, torch_dtype, project_folder)
+    hookers, lr_list = init_hooker(args, pipe, project_folder)
 
     # dummy generation to initialize the lambda
     print(f"Initializing lambda to be {args.mce_init_lambda}")
     _ = pipe(validation_prompts, generator=None, num_inference_steps=1)
-    trainable_lambs = []
+    trainable_lambs: list[torch.Tensor] = []
     for hooker in hookers:
         trainable_lambs += hooker.lambs
 
@@ -237,13 +235,9 @@ def train(args: Arguments):
         power=args.mce_lr_power,
     )
 
-    # prepare with accelerator
-    # pipe, optimizer, lr_scheduler = accelerator.prepare(pipe, optimizer, lr_scheduler)
     print("Start Training ...")
 
-    # prepare logging metric placeholder list
     mean_loss_reconstruct, mean_intermediate_loss = 0, 0
-
     torch.cuda.empty_cache()
     optimizer.zero_grad()
     total_step = args.mce_epochs * args.mce_size // args.mce_accumulate_grad_batches

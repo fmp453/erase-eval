@@ -13,7 +13,6 @@ class FeedForwardHooker(BaseHooker):
         self,
         pipeline: nn.Module,
         regex: str | list[str],
-        dtype: torch.dtype,
         masking: str,
         dst: str,
         epsilon: float = 0.0,
@@ -23,7 +22,6 @@ class FeedForwardHooker(BaseHooker):
     ):
         self.pipeline = pipeline
         self.net = pipeline.unet if hasattr(pipeline, "unet") else pipeline.transformer
-        self.dtype = dtype
         self.regex = [regex] if isinstance(regex, str) else regex
         self.hook_dict = {}
         self.masking = masking
@@ -31,7 +29,7 @@ class FeedForwardHooker(BaseHooker):
         self.epsilon = epsilon
         self.eps = eps
         self.use_log = use_log
-        self.lambs = []
+        self.lambs: list[torch.Tensor | None] = []
         self.lambs_module_names = []  # store the module names for each lambda block
         self.hook_counter = 0
         self.module_neurons = OrderedDict()
@@ -94,7 +92,7 @@ class FeedForwardHooker(BaseHooker):
             # initialize lambda with acual head dim in the first run
             if self.lambs[self.hook_counter] is None:
                 self.lambs[self.hook_counter] = (
-                    torch.ones(self.module_neurons[name], device=self.pipeline.device, dtype=self.dtype) * init_value
+                    torch.ones(self.module_neurons[name], device=self.pipeline.device) * init_value
                 )
                 self.lambs[self.hook_counter].requires_grad = True
                 # load ff lambda module name for logging

@@ -11,7 +11,7 @@ from train_methods.mce_models.hooks.attn_proc import AttnProcessor2_0_Masking, F
 
 
 class BaseCrossAttentionHooker(BaseHooker):
-    def __init__(self, pipeline, regex, dtype, head_num_filter, masking, model_name, attn_name, use_log, eps):
+    def __init__(self, pipeline, regex, head_num_filter, masking, model_name, attn_name, use_log, eps):
         self.pipeline = pipeline
         # unet for SD2 SDXL, transformer for SD3, FLUX DIT
         self.net: nn.Module = pipeline.unet if hasattr(pipeline, "unet") else pipeline.transformer
@@ -20,7 +20,6 @@ class BaseCrossAttentionHooker(BaseHooker):
         self.masking = masking
         self.hook_dict = {}
         self.regex = [regex] if isinstance(regex, str) else regex
-        self.dtype = dtype
         self.head_num_filter = head_num_filter
         self.attn_name = attn_name
         self.use_log = use_log  # use log parameter to control hard_discrete
@@ -55,7 +54,6 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
     def __init__(
         self,
         pipeline,
-        dtype,
         head_num_filter,
         masking,
         dst,
@@ -71,7 +69,6 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
         super().__init__(
             pipeline,
             regex,
-            dtype,
             head_num_filter,
             masking=masking,
             model_name=model_name,
@@ -85,7 +82,7 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
             self.attention_processor = JointAttnProcessor2_0_Masking()
         else:
             self.attention_processor = AttnProcessor2_0_Masking()
-        self.lambs = []
+        self.lambs: list[torch.Tensor | None] = []
         self.lambs_module_names = []
         self.cross_attn = []
         self.hook_counter = 0
@@ -124,7 +121,7 @@ class CrossAttentionExtractionHook(BaseCrossAttentionHooker):
             # initialize lambda with acual head dim in the first run
             if self.lambs[self.hook_counter] is None:
                 self.lambs[self.hook_counter] = (
-                    torch.ones(module.heads, device=self.pipeline.device, dtype=self.dtype) * init_value
+                    torch.ones(module.heads, device=self.pipeline.device) * init_value
                 )
                 # Only set requires_grad to True when the head number is larger than the filter
                 if self.head_num_filter <= module.heads:

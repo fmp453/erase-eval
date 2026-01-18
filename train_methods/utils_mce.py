@@ -1,4 +1,5 @@
 import os
+import time
 from typing import TYPE_CHECKING
 from pathlib import Path
 
@@ -472,9 +473,11 @@ def dataset_filter(dataset: Dataset, args: Arguments, device: torch.device) -> t
     return dataset, len(subset_pos)
 
 
-# hooker
-
-def init_hooker(args: Arguments, pipe, torch_dtype: torch.dtype, project_folder):
+def init_hooker(
+    args: Arguments,
+    pipe,
+    project_folder
+) -> tuple[list[CrossAttentionExtractionHook | FeedForwardHooker | LinearLayerHooker | NormHooker], list[float]]:
     """
     Initialize hookers for training
     return:
@@ -486,13 +489,17 @@ def init_hooker(args: Arguments, pipe, torch_dtype: torch.dtype, project_folder)
         # TODO: temporary solusion, fix this in the future
         if args.mce_model == "sd3":
             args.mce_n_lr = 0
-        return init_attn_ffn_norm_hooker(args, pipe, torch_dtype, project_folder)
+        return init_attn_ffn_norm_hooker(args, pipe, project_folder)
     else:
-        return init_linear_hooker(args, pipe, torch_dtype, project_folder)
+        return init_linear_hooker(args, pipe, project_folder)
 
 
 
-def init_attn_ffn_norm_hooker(args: Arguments, pipe, torch_dtype, project_folder):
+def init_attn_ffn_norm_hooker(
+    args: Arguments, 
+    pipe, 
+    project_folder
+) -> tuple[list[CrossAttentionExtractionHook | FeedForwardHooker | NormHooker], list[float]]:
     """
     Initialize cross attention, feedforward, and norm hookers for training
     return:
@@ -503,7 +510,6 @@ def init_attn_ffn_norm_hooker(args: Arguments, pipe, torch_dtype, project_folder
     cross_attn_hooker = CrossAttentionExtractionHook(
         pipe,
         regex=args.mce_regex,
-        dtype=torch_dtype,
         head_num_filter=args.mce_head_num_filter,
         masking=args.mce_masking,
         dst=Path(project_folder, "attn"),
@@ -519,7 +525,6 @@ def init_attn_ffn_norm_hooker(args: Arguments, pipe, torch_dtype, project_folder
     ff_hooker = FeedForwardHooker(
         pipe,
         regex=args.mce_regex,
-        dtype=torch_dtype,
         masking=args.mce_masking,
         dst=Path(project_folder, "ffn"),
         epsilon=args.mce_epsilon,
@@ -528,6 +533,9 @@ def init_attn_ffn_norm_hooker(args: Arguments, pipe, torch_dtype, project_folder
     )
     ff_hooker.add_hooks(init_value=args.mce_init_lambda)
     hookers = [cross_attn_hooker, ff_hooker]
+    assert isinstance(args.mce_attn_lr, float)
+    assert isinstance(args.mce_ff_lr, float)
+    assert isinstance(args.mce_n_lr, float)
     lr_list = [args.mce_attn_lr, args.mce_ff_lr]
 
     # initialize norm hooks if lr is not 0
@@ -535,9 +543,8 @@ def init_attn_ffn_norm_hooker(args: Arguments, pipe, torch_dtype, project_folder
         norm_hooker = NormHooker(
             pipe,
             regex=args.mce_regex,
-            dtype=torch_dtype,
             masking=args.mce_masking,
-            dst=os.path.join(project_folder, "norm"),
+            dst=Path(project_folder, "norm"),
             epsilon=args.mce_epsilon,
             eps=args.mce_masking_eps,
             use_log=False,
@@ -549,7 +556,7 @@ def init_attn_ffn_norm_hooker(args: Arguments, pipe, torch_dtype, project_folder
 
 
 def init_linear_hooker(
-    args: Arguments, pipe, torch_dtype, project_folder
+    args: Arguments, pipe, project_folder
 ) -> tuple[list[LinearLayerHooker], list[float]]:
     """
     Initialize linear hooker for training
@@ -561,7 +568,6 @@ def init_linear_hooker(
     linear_hooker = LinearLayerHooker(
         pipe,
         regex=args.mce_regex,
-        dtype=torch_dtype,
         masking=args.mce_masking,
         dst=Path(project_folder, "ffn"),
         epsilon=args.mce_epsilon,
@@ -574,3 +580,47 @@ def init_linear_hooker(
     lr_list = [args.mce_ff_lr]
     return hookers, lr_list
 
+
+def get_file_name(save_dir: str, prompt: str = None, seed: int = 44):
+
+    timestr = time.strftime("%Y%m%d-%H%M%S")
+    if len(prompt) > 30:
+        prompt = prompt[:30].replace(" ", "_")
+    name = f"{prompt}_seed_{seed}_{timestr}.png"
+    return Path(save_dir, name)
+
+@torch.no_grad()
+def save_image_seed(
+    pipe,
+    prompts: str,
+    steps: int,
+    device: torch.device,
+    seed: int,
+    save_dir=None,
+    save_path=None,
+    width=None,
+    height=None,
+    output_type="pil",
+    hookers: list | None = None,
+):
+    assert hookers is None, "hookers is not required for this function"
+    g_cpu = torch.Generator(device).manual_seed(seed)
+    image = pipe(
+        prompts, generator=g_cpu, num_inference_steps=steps, width=width, height=height, output_type=output_type
+    )
+    image: dict[str, list[Image.Image]]
+
+    if save_path is not None:
+        image["images"][0].save(save_path)
+        return
+
+    if save_dir is None:
+        return image["images"]
+    else:
+        if isinstance(prompts, str):
+            prompts = [prompts]
+        for img, prompt in zip(image["images"], prompts):
+            name = get_file_name(save_dir, prompt=prompt, seed=seed)
+            Path(save_dir).mkdir(exist_ok=True)
+            img.save(name)
+        return None

@@ -5,17 +5,12 @@ from .sd3 import SD3PipelineForCheckpointing, SDIBDiffusion3PreparaPhasePipeline
 from .sdxl import SDIBDiffusionXLPreparaPhasePipelineOutput, SDXLPipelineForCheckpointing
 from .dpm import ReverseDPMSolverMultistepScheduler
 
-__all__ = [
-    "SD2PipelineForCheckpointing",
-    "SD3PipelineForCheckpointing",
-    "SDXLPipelineForCheckpointing",
-    "DiTPipelineForCheckpointing",
-    "FluxPipelineForCheckpointing",
-    "SD2DiffusionPreparaPhasePipelineOutput",
-    "SDIBDiffusion3PreparaPhasePipelineOutput",
-    "SDIBDiffusionXLPreparaPhasePipelineOutput",
-    "DiTDiffusionPreparaPhasePipelineOutput",
-    "FluxIBDiffusionPreparaPhasePipelineOutput",
+PipelineOutput = SD2DiffusionPreparaPhasePipelineOutput | SDIBDiffusion3PreparaPhasePipelineOutput | SDIBDiffusionXLPreparaPhasePipelineOutput | DiTDiffusionPreparaPhasePipelineOutput | FluxIBDiffusionPreparaPhasePipelineOutput
+Pipeline = SD2PipelineForCheckpointing | SD3PipelineForCheckpointing | SDXLPipelineForCheckpointing | DiTPipelineForCheckpointing | FluxPipelineForCheckpointing
 
+
+__all__ = [
+    "PipelineOutput",
+    "Pipeline",
     "ReverseDPMSolverMultistepScheduler"
 ]
