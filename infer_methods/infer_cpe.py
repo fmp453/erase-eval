@@ -1,46 +1,17 @@
 from pathlib import Path
 
-import safetensors
 import torch
 from diffusers import UNet2DConditionModel, StableDiffusionPipeline
-from safetensors.torch import load_file
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils import Arguments
+from infer_methods.infer_utils import load_state_dict
 from train_methods.train_utils import seed_everything, tokenize
 from train_methods.utils_cpe import CPELayer_ResAG, CPENetwork_ResAG
 
 UNET_NAME = "unet"
 TEXT_ENCODER_NAME = "text_encoder"
 
-
-def load_metadata_from_safetensors(safetensors_file: str) -> dict:
-    """r
-    This method locks the file. see https://github.com/huggingface/safetensors/issues/164
-    If the file isn't .safetensors or doesn't have metadata, return empty dict.
-    """
-    if not safetensors_file.endswith(".safetensors"):
-        return {}
-
-    with safetensors.safe_open(safetensors_file, framework="pt", device="cpu") as f:
-        metadata = f.metadata()
-    if metadata is None:
-        metadata = {}
-    return metadata
-
-def load_state_dict(file_name: str, dtype: torch.dtype):
-    if file_name.endswith(".safetensors"):
-        sd = load_file(file_name)
-        metadata = load_metadata_from_safetensors(file_name)
-    else:
-        sd = torch.load(file_name, map_location="cpu")
-        metadata = {}
-
-    for key in list(sd.keys()):
-        if type(sd[key]) == torch.Tensor:
-            sd[key] = sd[key].to(dtype)
-
-    return sd, metadata
 
 def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: int | None = None, device = "cuda") -> tuple[CLIPTokenizer, CLIPTextModel, UNet2DConditionModel, StableDiffusionPipeline]:
     pipe = StableDiffusionPipeline.from_pretrained(

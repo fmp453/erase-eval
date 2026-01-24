@@ -1,40 +1,13 @@
 from pathlib import Path
 
-import safetensors
 import torch
 from diffusers import StableDiffusionPipeline
-from safetensors.torch import load_file
 
 from utils import Arguments
+from infer_methods.infer_utils import load_state_dict
 from train_methods.train_utils import get_models, get_condition, get_devices, seed_everything
 from train_methods.train_gloce import GLoCELayerOutProp, GLoCENetworkOutProp
 from train_methods.train_gloce import get_module_name_type, get_modules_list
-
-
-def load_metadata_from_safetensors(safetensors_file: str) -> dict:
-    if not safetensors_file.endswith(".safetensors"):
-        return {}
-
-    with safetensors.safe_open(safetensors_file, framework="pt", device="cpu") as f:
-        metadata = f.metadata()
-    if metadata is None:
-        metadata = {}
-    return metadata
-
-
-def load_state_dict(file_name: str):
-    if file_name.endswith(".safetensors"):
-        sd = load_file(file_name)
-        metadata = load_metadata_from_safetensors(file_name)
-    else:
-        sd = torch.load(file_name, map_location="cpu")
-        metadata = {}
-
-    for key in sd.keys():
-        if isinstance(sd[key], torch.Tensor):
-            sd[key] = sd[key]
-
-    return sd, metadata
 
 
 def infer_with_gloce(args: Arguments):
