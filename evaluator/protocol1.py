@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import subprocess
+from pathlib import Path
 
 from openai import OpenAI
 
@@ -67,7 +68,7 @@ Prompt:
 
         final_prompt = final_prompt.replace("\n", "")
 
-        if os.path.exists(self.json_path):
+        if Path(self.json_path).exists():
             # If it exists, read the existing content
             with open(self.json_path, "r", encoding="utf-8") as json_file:
                 existing_data = json.load(json_file)
@@ -92,7 +93,7 @@ Prompt:
             return base64.b64encode(image_file.read()).decode("utf-8")
         
     def generate_image(self, prompt):
-        os.makedirs(self.original_output_dir_name, exist_ok=True)
+        Path(self.original_output_dir_name).mkdir(exist_ok=True)
         self.original_dir = f"{self.original_output_dir_name}/{self.target_concept.replace(' ', '_')}_1"
         env = os.environ.copy()
         subprocess.run([
@@ -161,7 +162,7 @@ Prompt:
 
         final_prompt = final_prompt.replace("\n", "")
 
-        if os.path.exists(self.json_path):
+        if Path(self.json_path).exists():
             # If it exists, read the existing content
             with open(self.json_path, "r", encoding="utf-8") as json_file:
                 existing_data = json.load(json_file)

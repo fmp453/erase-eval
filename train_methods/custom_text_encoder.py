@@ -1,5 +1,3 @@
-from typing import Optional, Tuple, Union
-
 import torch
 import torch.nn as nn
 
@@ -8,7 +6,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPooling
 from transformers.models.clip.modeling_clip import CLIPTextEmbeddings, CLIPEncoder, CLIPPreTrainedModel
 
 # Copied from transformers.models.bart.modeling_bart._expand_mask
-def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] = None):
+def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: int | None = None):
     """
     Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
     """
@@ -52,14 +50,14 @@ class CustomTextTransformer(nn.Module):
     
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        inputs_embeds : Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, BaseModelOutputWithPooling]:
+        input_ids: torch.Tensor | None = None,
+        inputs_embeds : torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+    ) -> tuple[torch.Tensor, ...] | BaseModelOutputWithPooling:
         output_attentions = False
         output_hidden_states = False
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -138,14 +136,14 @@ class CustomCLIPTextModel(CLIPPreTrainedModel):
     
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, BaseModelOutputWithPooling]:
+        input_ids: torch.Tensor | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+    ) -> tuple[torch.Tensor, ...] | BaseModelOutputWithPooling:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         return self.text_model(

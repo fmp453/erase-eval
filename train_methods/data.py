@@ -735,13 +735,8 @@ class TextualInversionDataset(Dataset):
 
         if self.center_crop:
             crop = min(img.shape[0], img.shape[1])
-            (
-                h,
-                w,
-            ) = (
-                img.shape[0],
-                img.shape[1],
-            )
+            h = img.shape[0]
+            w = img.shape[1]
             img = img[(h - crop) // 2 : (h + crop) // 2, (w - crop) // 2 : (w + crop) // 2]
 
         image = Image.fromarray(img)
