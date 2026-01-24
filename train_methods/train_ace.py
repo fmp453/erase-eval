@@ -4,7 +4,6 @@ import gc
 import json
 import random
 from copy import deepcopy
-from typing import Optional
 
 import numpy as np
 import torch
@@ -172,7 +171,7 @@ class ACENetwork(nn.Module):
 
         return all_params
 
-    def save_weights(self, file: str, metadata: Optional[dict] = None):
+    def save_weights(self, file: str, metadata: dict | None=None):
         state_dict = self.state_dict()
 
         for key in list(state_dict.keys()):

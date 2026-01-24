@@ -1,7 +1,7 @@
 # https://github.com/cloneofsimo/lora/blob/master/lora_diffusion/lora.py
 
 import json
-from typing import Optional, Type
+from typing import Type
 
 import torch
 import torch.nn as nn
@@ -141,9 +141,9 @@ def inspect_lora(model: nn.Module):
 
 def _find_modules(
     model: nn.Module,
-    ancestor_class: Optional[set[str]] = None,
+    ancestor_class: set[str] | None = None,
     search_class: list[Type[nn.Module]] = [nn.Linear],
-    exclude_children_of: Optional[list[Type[nn.Module]]] = [
+    exclude_children_of: list[Type[nn.Module]] | None = [
         LoraInjectedLinear,
         LoraInjectedConv2d,
     ],
@@ -178,6 +178,7 @@ def _find_modules(
                 # Otherwise, yield it
                 yield parent, name, module
 
+
 def extract_lora_ups_down(model, target_replace_module=DEFAULT_TARGET_REPLACE):
 
     loras = []
@@ -193,6 +194,7 @@ def extract_lora_ups_down(model, target_replace_module=DEFAULT_TARGET_REPLACE):
         raise ValueError("No lora injected.")
 
     return loras
+
 
 def save_lora_weight(
     model,
@@ -217,6 +219,7 @@ def _text_lora_path(path: str) -> str:
 def _ti_lora_path(path: str) -> str:
     assert path.endswith(".pt"), "Only .pt files are supported"
     return ".".join(path.split(".")[:-1] + ["ti", "pt"])
+
 
 def save_all(
     unet,

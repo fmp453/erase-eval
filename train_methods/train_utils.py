@@ -2,7 +2,7 @@ import gc
 import inspect
 import os
 import random
-from typing import Optional, Any
+from typing import Any
 from copy import deepcopy
 
 import numpy as np
@@ -537,7 +537,7 @@ def sample_until(
     scheduler: DDIMScheduler,
     prompt_embeds: torch.Tensor,
     guidance_scale: float,
-    extra_step_kwargs: Optional[dict[str, Any]]=None,
+    extra_step_kwargs: dict[str, Any] | None=None,
 ):
     """Sample latents until t for a given prompt."""
     timesteps = scheduler.timesteps
@@ -590,7 +590,7 @@ def soft_prompt_attack(
     criteria,
     all_embeddings: torch.Tensor,
     args: Arguments,
-    attack_init_embd: Optional[torch.Tensor] = None,
+    attack_init_embd: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     
     k = args.adv_prompt_num
@@ -776,12 +776,12 @@ def get_train_loss_retain(
     emb_0: torch.Tensor,
     emb_p: torch.Tensor,
     retain_emb_p: torch.Tensor,
-    emb_n: Optional[torch.Tensor],
+    emb_n: torch.Tensor | None,
     retain_emb_n: torch.Tensor,
     devices: list[torch.device],
     criteria,
     adv_input_ids,
-    adv_embd: Optional[torch.Tensor]
+    adv_embd: torch.Tensor | None
 ) -> torch.Tensor:
     """
         emb_0: unconditional embedding

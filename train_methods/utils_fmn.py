@@ -5,7 +5,6 @@
 import re
 import math
 import itertools
-from typing import Optional, Any, Union
 from pathlib import Path
 
 import torch
@@ -254,8 +253,8 @@ def ti_component(
     args: Arguments,
     output_dir: str,
     placeholder_tokens: str = "<s>",
-    placeholder_token_at_data: Optional[str] = None,
-    initializer_tokens: Optional[str] = None,
+    placeholder_token_at_data: str | None = None,
+    initializer_tokens: str | None = None,
     device="cuda:0",
 ):
     torch.manual_seed(args.seed)
@@ -368,7 +367,7 @@ def apply_learned_embed_in_clip(
     learned_embeds: dict[str, torch.Tensor],
     text_encoder: CLIPTextModel,
     tokenizer: CLIPTokenizer,
-    token: Optional[Union[str, list[str]]]=None,
+    token: str | list[str] | None=None,
     idempotent: bool=False,
 ):
     if isinstance(token, str):
@@ -465,7 +464,7 @@ def attn_component(
             self.attn_probs = []
             self.logs = []
             self.concept_positions = None
-        def __call__(self, attn_prob, m_name) -> Any:
+        def __call__(self, attn_prob, m_name) -> None:
             bs, _ = self.concept_positions.shape
             head_num = attn_prob.shape[0] // bs
             target_attns = attn_prob.masked_select(self.concept_positions[:,None,:].repeat(head_num, 1, 1)).reshape(-1, self.concept_positions[0].sum())
