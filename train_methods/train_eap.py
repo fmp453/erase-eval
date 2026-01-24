@@ -1,7 +1,7 @@
 # Erasing Undesirable Concepts in Diffusion Models with Adversarial Preservation (EAP)
 
-import os
 import random
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -167,10 +167,10 @@ def train(args: Arguments):
     """
 
     # create embedding matrix for all tokens in the dictionary
-    if not os.path.exists('models/embedding_matrix_dict_EN3K.pt'):
+    if not Path('models/embedding_matrix_dict_EN3K.pt').exists():
         save_embedding_matrix(tokenizer, text_encoder, model_name='SD-v1-4', save_mode='dict', vocab='EN3K')
 
-    if not os.path.exists('models/embedding_matrix_array_EN3K.pt'):
+    if not Path('models/embedding_matrix_array_EN3K.pt').exists():
         save_embedding_matrix(tokenizer, text_encoder, model_name='SD-v1-4', save_mode='array', vocab='EN3K')
 
     

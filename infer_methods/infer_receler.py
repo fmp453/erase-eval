@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -29,6 +29,7 @@ class EraserControlMixin:
             raise AttributeError(f'state should be bool, but got {type(state)}.')
         self._use_eraser = state
 
+
 class AdapterEraser(nn.Module, EraserControlMixin):
     def __init__(self, dim, mid_dim):
         super().__init__()
@@ -39,6 +40,7 @@ class AdapterEraser(nn.Module, EraserControlMixin):
     def forward(self, hidden_states):
         return self.up(self.act(self.down(hidden_states)))
 
+
 def load_adapter_params(eraser_ckpt_path):
     adapter_params = {}
     with safe_open(eraser_ckpt_path, framework="pt") as f:
@@ -47,13 +49,13 @@ def load_adapter_params(eraser_ckpt_path):
                 adapter_params[key] = f.get_tensor(key)
     return adapter_params
 
+
 def inject_eraser(unet: UNet2DConditionModel, adapter_params, eraser_rank):
     for name, module in unet.named_modules():
         if isinstance(module, BasicTransformerBlock):
             print(f'Load eraser at: {name}')
-            # prefix_name = diffuser_prefix_name(name)
             attn_w_eraser = AttentionWithEraser(module.attn2, eraser_rank)
-            # adapterのパラメータをロード
+            # load adapters' parameters
             attn_w_eraser.adapter.load_state_dict({
                 'down.weight': adapter_params[f'{name}.adapter.down.weight'],
                 'down.bias': adapter_params[f'{name}.adapter.down.bias'],
@@ -94,7 +96,7 @@ def infer(args: Arguments):
 
     images = pipe(args.prompt, guidance_scale=args.guidance_scale, num_images_per_prompt=args.num_images_per_prompt, generator=generator).images
 
-    os.makedirs(args.images_dir, exist_ok=True)
+    Path(args.images_dir).mkdir(exist_ok=True)
     for i in range(len(images)):
         images[i].save(f"{args.images_dir}/{i:02}.png")
 

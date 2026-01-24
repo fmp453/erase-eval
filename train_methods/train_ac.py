@@ -1,6 +1,5 @@
 # Ablating Concepts in Text-to-Image Diffusion Models (AC)
 
-import os
 import warnings
 
 import pandas as pd
@@ -11,6 +10,7 @@ import torch.nn.functional as F
 from collections import OrderedDict
 
 from tqdm import trange
+from pathlib import Path
 from torch.utils.data import DataLoader
 
 from diffusers import StableDiffusionPipeline
@@ -114,7 +114,7 @@ def generation(args: Arguments):
     pipe.safety_checker = None
     df = pd.read_csv(args.ac_prompt_path)
     prompts = df["prompt"].tolist()
-    os.makedirs(args.ac_img_dir, exist_ok=True)
+    Path(args.ac_img_dir).mkdir(exist_ok=True)
     
     for i in range(200):
         images = pipe(prompts[i], num_images_per_prompt=5).images

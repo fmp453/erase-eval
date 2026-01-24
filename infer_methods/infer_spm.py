@@ -1,7 +1,6 @@
 import gc
-import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
 import safetensors
@@ -47,8 +46,8 @@ class GenerationConfig(BaseModel):
                 cfg[k] = v.item()
 
 
-def load_state_dict(file_name, dtype):
-    if os.path.splitext(file_name)[1] == ".safetensors":
+def load_state_dict(file_name: str, dtype: torch.dtype):
+    if file_name.endswith(".safetensors"):
         sd = load_file(file_name)
         metadata = load_metadata_from_safetensors(file_name)
     else:
@@ -61,12 +60,13 @@ def load_state_dict(file_name, dtype):
 
     return sd, metadata
 
+
 def load_metadata_from_safetensors(safetensors_file: str) -> dict:
     """r
     This method locks the file. see https://github.com/huggingface/safetensors/issues/164
     If the file isn't .safetensors or doesn't have metadata, return empty dict.
     """
-    if os.path.splitext(safetensors_file)[1] != ".safetensors":
+    if not safetensors_file.endswith(".safetensors"):
         return {}
 
     with safetensors.safe_open(safetensors_file, framework="pt", device="cpu") as f:
@@ -75,7 +75,8 @@ def load_metadata_from_safetensors(safetensors_file: str) -> dict:
         metadata = {}
     return metadata
 
-def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: Optional[int] = None, device = "cuda") -> tuple[CLIPTokenizer, CLIPTextModel, UNet2DConditionModel, StableDiffusionPipeline]:
+
+def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: int | None = None, device="cuda") -> tuple[CLIPTokenizer, CLIPTextModel, UNet2DConditionModel, StableDiffusionPipeline]:
     print(f"Loading checkpoint from {checkpoint_path}")
     pipe = StableDiffusionPipeline.from_pretrained(
         checkpoint_path,
@@ -84,7 +85,7 @@ def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: Opt
 
     unet = pipe.unet
     tokenizer = pipe.tokenizer
-    text_encoder = pipe.text_encoder
+    text_encoder: CLIPTextModel = pipe.text_encoder
     if clip_skip is not None:
         if v2:
             text_encoder.config.num_hidden_layers = 24 - (clip_skip - 1)
@@ -93,12 +94,15 @@ def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: Opt
 
     return tokenizer, text_encoder, unet, pipe
 
+
 def text_tokenize(tokenizer: CLIPTokenizer, prompts: list[str]):
     return tokenizer(prompts, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt").input_ids
 
+
 @torch.no_grad()
-def text_encode(text_encoder: CLIPTextModel, tokens):
+def text_encode(text_encoder: CLIPTextModel, tokens: torch.Tensor):
     return text_encoder(tokens.to(text_encoder.device))[0]
+
 
 def encode_prompts(tokenizer: CLIPTokenizer, text_encoder: CLIPTokenizer, prompts: list[str], return_tokens: bool = False):
     text_tokens = text_tokenize(tokenizer, prompts)
@@ -113,13 +117,13 @@ def flush():
     gc.collect()
 
 def calculate_matching_score(
-        prompt_tokens,
-        prompt_embeds, 
-        erased_prompt_tokens, 
-        erased_prompt_embeds, 
-        matching_metric: MATCHING_METRICS,
-        special_token_ids: set[int],
-    ):
+    prompt_tokens: torch.Tensor,
+    prompt_embeds: torch.Tensor,
+    erased_prompt_tokens: torch.Tensor,
+    erased_prompt_embeds: torch.Tensor,
+    matching_metric: MATCHING_METRICS,
+    special_token_ids: set[int],
+):
     scores = []
     if "clipcos" in matching_metric:
         clipcos = torch.cosine_similarity(prompt_embeds.flatten(1, 2), erased_prompt_embeds.flatten(1, 2), dim=-1).cpu()
@@ -133,7 +137,7 @@ def calculate_matching_score(
         scores.append(torch.tensor(tokenuni).to("cpu"))
     return torch.max(torch.stack(scores), dim=0)[0]
 
-def infer_with_spm(spm_paths: list[str], config: GenerationConfig, args: Arguments):
+def infer_with_spm(spm_paths: list[Path], config: GenerationConfig, args: Arguments):
     
     base_model = args.sd_version
     v2 = "v2" in args.sd_version
@@ -141,7 +145,7 @@ def infer_with_spm(spm_paths: list[str], config: GenerationConfig, args: Argumen
     matching_metric = args.matching_metric
     save_path = config.save_path
 
-    os.makedirs(save_path, exist_ok=True)
+    Path(save_path).mkdir(exist_ok=True)
     device = f"cuda:{args.device.split(',')[0]}"
 
     spm_model_paths = [lp / f"{lp.name}_last.safetensors" if lp.is_dir() else lp for lp in spm_paths]

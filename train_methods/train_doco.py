@@ -1,7 +1,7 @@
+import os
 import hashlib
 import itertools
 import math
-import os
 from pathlib import Path
 import random
 
@@ -30,6 +30,7 @@ from train_methods.train_utils import collate_fn, get_devices, get_models
 from train_methods.data import DocoDataset, DocoPromptDataset
 from utils import Arguments
 
+
 def init_discriminator(lr=0.0001, b1=0.5, b2=0.999) -> tuple[PatchGANDiscriminator, nn.BCEWithLogitsLoss, optim.Optimizer]:
     discriminator = PatchGANDiscriminator()
     criterion = nn.BCEWithLogitsLoss()
@@ -40,6 +41,7 @@ def init_discriminator(lr=0.0001, b1=0.5, b2=0.999) -> tuple[PatchGANDiscriminat
 def set_use_memory_efficient_attention(self, use_memory_efficient_attention_xformers: bool):
     processor = CustomDiffusionAttnProcessor()
     self.set_processor(processor)
+
 
 def create_custom_diffusion(unet: UNet2DConditionModel, parameter_group):
     for name, params in unet.named_parameters():
@@ -118,7 +120,7 @@ def main(args: Arguments):
         os.makedirs(f"{class_images_dir}/images", exist_ok=True)
 
         # we need to generate training images
-        if (len(list(Path(os.path.join(class_images_dir, "images")).iterdir())) < args.doco_num_class_images):
+        if (len(list(Path(class_images_dir, "images").iterdir())) < args.doco_num_class_images):
 
             pipeline: StableDiffusionPipeline = DiffusionPipeline.from_pretrained(args.sd_version)
             pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
@@ -127,13 +129,13 @@ def main(args: Arguments):
             pipeline.to(device)
 
             # need to create prompts using class_prompt.
-            if not os.path.isfile(concept["class_prompt"]):
+            if not Path(concept["class_prompt"]).is_file():
                 # style based prompts are retrieved from laion dataset
                 if args.doco_concept_type in ["style", "nudity", "violence"]:
                     name = "images"
                     if (
-                        not Path(os.path.join(class_images_dir, name)).exists()
-                        or len(list(Path(os.path.join(class_images_dir, name)).iterdir())) < args.doco_num_class_images
+                        not Path(class_images_dir, name).exists()
+                        or len(list(Path(class_images_dir, name).iterdir())) < args.doco_num_class_images
                     ):
                         retrieve(
                             concept["class_prompt"],
@@ -141,7 +143,7 @@ def main(args: Arguments):
                             args.doco_num_class_prompts,
                             save_images=False,
                         )
-                    with open(os.path.join(class_images_dir, "caption.txt")) as f:
+                    with open(Path(class_images_dir, "caption.txt")) as f:
                         class_prompt_collection = [x.strip() for x in f.readlines()]
 
                 # LLM based prompt collection.
@@ -168,9 +170,9 @@ def main(args: Arguments):
             sample_dataloader = DataLoader(sample_dataset, batch_size=4)
 
             if Path(f"{class_images_dir}/caption.txt").exists():
-                os.remove(f"{class_images_dir}/caption.txt")
+                Path(f"{class_images_dir}/caption.txt").unlink
             if Path(f"{class_images_dir}/images.txt").exists():
-                os.remove(f"{class_images_dir}/images.txt")
+                Path(f"{class_images_dir}/images.txt").unlink
 
 
             for example in tqdm(sample_dataloader, desc="Generating class images"):
@@ -193,14 +195,14 @@ def main(args: Arguments):
 
             del pipeline
 
-        concept["class_prompt"] = os.path.join(class_images_dir, "caption.txt")
-        concept["class_data_dir"] = os.path.join(class_images_dir, "images.txt")
-        concept["instance_prompt"] = os.path.join(class_images_dir, "caption.txt")
-        concept["instance_data_dir"] = os.path.join(class_images_dir, "images.txt")
+        concept["class_prompt"] = Path(class_images_dir, "caption.txt")
+        concept["class_data_dir"] = Path(class_images_dir, "images.txt")
+        concept["instance_prompt"] = Path(class_images_dir, "caption.txt")
+        concept["instance_data_dir"] = Path(class_images_dir, "images.txt")
 
         torch.cuda.empty_cache()
 
-    os.makedirs(args.save_dir, exist_ok=True)
+    Path(args.save_dir).mkdir(exist_ok=True)
 
     shadow_unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     tokenizer, text_encoder, vae, unet, _, noise_scheduler = get_models(args)
@@ -401,5 +403,5 @@ def main(args: Arguments):
         tokenizer=tokenizer,
         modifier_token_id=modifier_token_id,
     )
-    save_path = os.path.join(args.save_dir, "delta.bin")
+    save_path = Path(args.save_dir, "delta.bin")
     pipeline.save_pretrained(save_path, parameter_group=args.doco_parameter_group)

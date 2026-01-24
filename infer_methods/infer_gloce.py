@@ -24,7 +24,7 @@ def seed_everything(seed: int):
     torch.backends.cudnn.benchmark = True
 
 def load_metadata_from_safetensors(safetensors_file: str) -> dict:
-    if os.path.splitext(safetensors_file)[1] != ".safetensors":
+    if not safetensors_file.endswith(".safetensors"):
         return {}
 
     with safetensors.safe_open(safetensors_file, framework="pt", device="cpu") as f:
@@ -33,8 +33,9 @@ def load_metadata_from_safetensors(safetensors_file: str) -> dict:
         metadata = {}
     return metadata
 
-def load_state_dict(file_name):
-    if os.path.splitext(file_name)[1] == ".safetensors":
+
+def load_state_dict(file_name: str):
+    if file_name.endswith(".safetensors"):
         sd = load_file(file_name)
         metadata = load_metadata_from_safetensors(file_name)
     else:
@@ -46,6 +47,7 @@ def load_state_dict(file_name):
             sd[key] = sd[key]
 
     return sd, metadata
+
 
 def infer_with_gloce(args: Arguments):
     args.gloce_method = args.gloce_method.split(",")
@@ -105,7 +107,7 @@ def infer_with_gloce(args: Arguments):
         print(f"loaded concepts: {n_concept + 1}")
         for k, m in network.named_modules():
             if m.__class__.__name__ == "GLoCELayerOutProp":
-                m.eta = args.eta
+                m.eta = args.gloce_eta
                         
                 for k_child, m_child in m.named_children():
                     module_name = f"{k}.{k_child}"
@@ -139,8 +141,8 @@ def infer_with_gloce(args: Arguments):
                 num_images_per_prompt=args.num_images_per_prompt,
                 prompt_embeds=prompt_embeds,
             ).images
-        
-        os.makedirs(f"{args.images_dir}/gloce", exist_ok=True)
+
+        Path(args.images_dir, "gloce").mkdir(exist_ok=True)
         for i, image in enumerate(images):
             image.save(f"{args.images_dir}/gloce/{args.prompt.replace(' ', '-')}.png")
 

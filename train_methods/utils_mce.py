@@ -1,4 +1,3 @@
-import os
 import time
 from typing import TYPE_CHECKING
 from pathlib import Path
@@ -410,8 +409,8 @@ def background_score_calculation(d, args: Arguments, clip_dict, device):
     score_wconcept = calculate_clip_score(clip_dict, img_path, background, device)
 
     # replace base name
-    basename = "deconcept_" + os.path.basename(img_path)
-    img_path = os.path.join(os.path.dirname(img_path), basename)
+    basename = "deconcept_" + Path(img_path).name
+    img_path = Path(Path(img_path).parent, basename)
     score_woconcept = calculate_clip_score(clip_dict, img_path, background, device)
     return abs(score_wconcept - score_woconcept)
 

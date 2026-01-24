@@ -1,4 +1,3 @@
-import os
 import random
 import shutil
 from itertools import product
@@ -9,7 +8,6 @@ import gdown
 import numpy as np
 import pandas as pd
 import torch
-import PIL
 from datasets import load_dataset
 from PIL import Image
 from safetensors.torch import safe_open, save_file
@@ -31,11 +29,11 @@ from train_methods.templates import (
 )
 
 PIL_INTERPOLATION = {
-    "linear": PIL.Image.Resampling.BILINEAR,
-    "bilinear": PIL.Image.Resampling.BILINEAR,
-    "bicubic": PIL.Image.Resampling.BICUBIC,
-    "lanczos": PIL.Image.Resampling.LANCZOS,
-    "nearest": PIL.Image.Resampling.NEAREST,
+    "linear": Image.Resampling.BILINEAR,
+    "bilinear": Image.Resampling.BILINEAR,
+    "bicubic": Image.Resampling.BICUBIC,
+    "lanczos": Image.Resampling.LANCZOS,
+    "nearest": Image.Resampling.NEAREST,
 }
 
 class MACEDataset(Dataset):
@@ -43,11 +41,11 @@ class MACEDataset(Dataset):
         self,
         tokenizer: CLIPTokenizer,
         size: int=512,
-        multi_concept: Optional[list[str, str]]=None,
-        mapping: Optional[list[str]]=None,
-        batch_size: Optional[int]=None,
+        multi_concept: list[str, str] | None=None,
+        mapping: list[str] | None=None,
+        batch_size: int | None=None,
         train_seperate: bool=False,
-        input_data_path: Optional[str]=None
+        input_data_path: str | None=None,
     ):  
         self.size = size
         self.tokenizer = tokenizer
@@ -70,12 +68,12 @@ class MACEDataset(Dataset):
             c, t = data
             
             if input_data_path is not None:
-                p = Path(os.path.join(input_data_path, c.replace("-", " ")).replace(" ", "-"))
+                p = Path(input_data_path, c.replace("-", " ").replace(" ", "-"))
                 if not p.exists():
                     raise ValueError(f"Instance {p} images root doesn't exists.")
                 
                 if t == "object":
-                    p_mask = Path(os.path.join(input_data_path, c.replace("-", " ")).replace(f'{c.replace("-", " ")}', f'{c.replace("-", " ")}-mask').replace(" ", "-"))
+                    p_mask = Path(input_data_path, c.replace("-", " ").replace(f'{c.replace("-", " ")}', f'{c.replace("-", " ")}-mask').replace(" ", "-"))
                     if not p_mask.exists():
                         raise ValueError(f"Instance {p_mask} images root doesn't exists.")
             else:
@@ -445,7 +443,7 @@ class ForgetMeNotDataset(Dataset):
         self.instance_prompt  = []
 
         token_idx = 1
-        for c, t, num_tok in multi_concept:
+        for _, t, num_tok in multi_concept:
             p = Path(data_dir)
             if not p.exists():
                 raise ValueError(f"Instance {p} images root doesn't exists.")                   
@@ -509,8 +507,8 @@ class FMNPivotalTuningDataset(Dataset):
         self,
         instance_data_root: str,
         tokenizer: CLIPTokenizer,
-        token_map: Optional[dict]=None,
-        use_template: Optional[str]=None,
+        token_map: dict | None=None,
+        use_template: str | None=None,
         size: int=512,
         blur_amount: int=20,
     ):
@@ -649,7 +647,7 @@ class AnchorsDataset(Dataset):
 class TextualInversionDataset(Dataset):
     def __init__(
         self,
-        data_root,
+        data_root: str,
         tokenizer: CLIPTokenizer,
         learnable_property="object",  # [object, style]
         size=512,
@@ -672,7 +670,7 @@ class TextualInversionDataset(Dataset):
         self.iteration = iteration
         self.num_iterations = num_iterations
 
-        self.image_paths = [os.path.join(self.data_root, file_path) for file_path in os.listdir(self.data_root)]
+        self.image_paths = [Path(self.data_root, file_path) for file_path in Path(self.data_root).iterdir()]
         self.num_images = len(self.image_paths)
 
         # Dynamically calculate images_per_subset based on total images and number of iterations
@@ -839,17 +837,15 @@ class MCEDataset(Dataset):
         self.CON_DECON_DICT = update_con_decon_dict
 
     def _validity_check(self):
-        if not Path(self.save_dir).exists():
-            print(f"save_dir {self.save_dir} does not exist, creating the directory")
-            os.makedirs(self.save_dir)
+        Path(self.save_dir).mkdir(exist_ok=True)
 
         if not self.keep_old:
             shutil.rmtree(self.save_dir)
-            os.mkdir(self.save_dir)
+            Path(self.save_dir).mkdir(exist_ok=True)
 
         if not Path(self.metadata).exists():
-            base_dir = os.path.dirname(self.metadata)
-            Path(base_dir).mkdir(exist_ok=True)
+            base_dir = Path(self.metadata).parent
+            base_dir.mkdir(exist_ok=True)
             print(f"save_dir {self.metadata} does not exist, downloading the meta data ...")
             if "gcc" in self.metadata:
                 METADICT = {"gcc": "https://drive.google.com/file/d/1VCWJ9YeLwqbT_TyvdV_aZWp0qkpHdEkz/view?usp=sharing"}
@@ -956,8 +952,8 @@ class MCEDataset(Dataset):
         self.ptpaths, self.imgpaths, self.idxlist = [], [], []
         self.size = len(self.df)
         for i in range(self.size):
-            self.ptpaths.append(os.path.join(self.save_dir, f"{i}.pt"))
-            self.imgpaths.append(os.path.join(self.save_dir, f"{i}.png"))
+            self.ptpaths.append(Path(self.save_dir, f"{i}.pt"))
+            self.imgpaths.append(Path(self.save_dir, f"{i}.png"))
             self.idxlist.append(i)
 
     def _contain_concept(self, prompt):
@@ -1023,8 +1019,8 @@ class MCEDataset(Dataset):
                         deconcept_image_tensor = torch.stack([last_latent], dim=0).squeeze(1)
 
                         # save deconcept image
-                        basename = "deconcept_" + os.path.basename(i)
-                        i = os.path.join(os.path.dirname(i), basename)
+                        basename = "deconcept_" + Path(i).name
+                        i = Path(Path(i).parent, basename)
                         img_tar.save(i)
 
                     else:
@@ -1040,8 +1036,8 @@ class MCEDataset(Dataset):
                         assert intermediate_latents[0].equal(intermediate_latents_deconcept[0]), "Latent mismatch"
 
                         # save deconcept image
-                        basename = "deconcept_" + os.path.basename(i)
-                        i = os.path.join(os.path.dirname(i), basename)
+                        basename = "deconcept_" + Path(i).name
+                        i = Path(Path(i).parent, basename)
                         img_deconcept["images"][0].save(i)
                 else:
                     intermediate_latents, preparation_phase_output = self._generate_latents(
@@ -1077,7 +1073,7 @@ class MCEDataset(Dataset):
     def __getitem__(self, idx):
         if self.df is None:
             raise ValueError("metadata is not prepared")
-        latents = self._load_safetenors(os.path.join(self.save_dir, f"{idx}.pt"))
+        latents = self._load_safetenors(Path(self.save_dir, f"{idx}.pt"))
         example = {
             "image": latents["latents"].to(self.device),
             "deconcept_image": latents["deconcept_latents"].to(self.device),

@@ -2,7 +2,6 @@
 # https://github.com/cloneofsimo/lora/blob/master/lora_diffusion/cli_lora_pti.py
 
 
-import os
 import re
 import math
 import itertools
@@ -244,7 +243,7 @@ def train_inversion(
                     text_encoder=text_encoder,
                     placeholder_token_ids=placeholder_token_ids,
                     placeholder_tokens=placeholder_tokens,
-                    save_path=os.path.join(save_path, f"step_inv_{global_step}.safetensors"),
+                    save_path=Path(save_path, f"step_inv_{global_step}.safetensors"),
                     save_lora=False,
                 )
 
@@ -263,7 +262,7 @@ def ti_component(
     
     if output_dir is not None:
         output_dir = output_dir.replace(" ", "-")
-        os.makedirs(output_dir, exist_ok=True)
+        Path(output_dir).mkdir(exist_ok=True)
     
     placeholder_tokens = placeholder_tokens.split("|")
     if initializer_tokens is None:

@@ -1,7 +1,7 @@
 # Precise, Fast, and Low-cost Concept Erasure in Value Space: Orthogonal Complement Matters
 
-import os, sys
 from copy import deepcopy
+from pathlib import Path
 from typing import Optional
 
 from tqdm import tqdm
@@ -148,7 +148,7 @@ class AttnProcessor():
         self,
         attn: Attention,
         hidden_states: torch.Tensor,
-        encoder_hidden_states=None,
+        encoder_hidden_states: torch.Tensor | None=None,
         attention_mask=None,
         temb=None,
     ):
@@ -250,15 +250,6 @@ def set_attenprocessor(
         m: Attention
         if name.endswith('attn2') or name.endswith('attn1'):
             cross_attention_dim = None if name.endswith("attn1") else unet.config.cross_attention_dim
-            if name.startswith("mid_block"):
-                hidden_size = unet.config.block_out_channels[-1]
-            elif name.startswith("up_blocks"):
-                block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-            elif name.startswith("down_blocks"):
-                block_id = int(name[len("down_blocks.")])
-                hidden_size = unet.config.block_out_channels[block_id]
-
             m.set_processor(VisualAttentionProcess(
                 module_name=name, 
                 atten_type=atten_type,
@@ -322,14 +313,14 @@ def main(args: Arguments):
     concept_list, concept_list_tmp = [], [item.strip() for item in args.adavd_contents.split(',')]
     if 'retain' in mode_list:
         for concept in concept_list_tmp:
-            check_path = os.path.join(args.save_dir, args.concepts.replace(', ', '_'), concept, 'retain')
-            os.makedirs(check_path, exist_ok=True)
-            if len(os.listdir(check_path)) != len(template_dict[args.adavd_erase_type]) * 10:
+            check_path = Path(args.save_dir, args.concepts.replace(', ', '_'), concept, 'retain')
+            check_path.mkdir(exist_ok=True)
+            if len(Path(check_path).iterdir()) != len(template_dict[args.adavd_erase_type]) * 10:
                 concept_list.append(concept)
     else:
         concept_list = concept_list_tmp
     if len(concept_list) == 0: 
-        sys.exit()
+        exit()
     # endregion
 
     # region [Prepare Models]

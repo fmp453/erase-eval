@@ -6,7 +6,7 @@ import math
 import random
 import yaml
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -335,8 +335,7 @@ class GLoCENetworkOutProp(nn.Module):
 
         return gloce_layers
     
-    def save_weights(self, file, dtype=None, metadata: Optional[dict] = None):
-        
+    def save_weights(self, file: str, dtype=None, metadata: dict | None = None):
         state_dict: dict[str, torch.Tensor] = self.state_dict()
         
         state_dict_save = dict()
@@ -346,7 +345,7 @@ class GLoCENetworkOutProp(nn.Module):
                 v = v.detach().clone().to("cpu").to(dtype)
                 state_dict_save[key] = v
                 
-        if os.path.splitext(file)[1] == ".safetensors":
+        if file.endswith(".safetensors"):
             save_file(state_dict_save, file, metadata)
         else:
             torch.save(state_dict_save, file)
@@ -399,9 +398,9 @@ def get_registered_buffer(
     prompts_batch = []
     len_embs_batch = embeddings.size(0)
 
-    os.makedirs(register_buffer_path, exist_ok=True)
+    Path(register_buffer_path).mkdir(exist_ok=True)
 
-    if os.path.isfile(f"{register_buffer_path}/{register_buffer_fn}"):
+    if Path(f"{register_buffer_path}/{register_buffer_fn}").is_file():
         print(f"load precomputed registered_buffer for original models ... {register_buffer_path}/{register_buffer_fn}")
         registered_buffer = torch.load(f"{register_buffer_path}/{register_buffer_fn}", map_location=torch.device(device))
 
@@ -472,7 +471,7 @@ def prepare_text_embedding_token(
         prmpt_temp_sel_base = replace_word
 
     prompt_scripts_list.append(prmpt_temp_sel_base)
-    if args.gloce_use_emb_cache and os.path.isfile(f"{emb_cache_path}/{args.gloce_emb_cache_fn}"):
+    if args.gloce_use_emb_cache and Path(f"{emb_cache_path}/{args.gloce_emb_cache_fn}").is_file():
         print("load pre-computed text emb cache...")
         emb_cache = torch.load(f"{emb_cache_path}/{args.gloce_emb_cache_fn}", map_location=torch.device(text_encoder.device))
         
@@ -640,7 +639,7 @@ def prepare_text_embedding_token(
             "prmpt_scripts_upd": prmpt_scripts_upd,
         }
 
-        os.makedirs(emb_cache_path, exist_ok=True)
+        Path(emb_cache_path).mkdir(exist_ok=True)
         torch.save(emb_cache, f"{emb_cache_path}/{args.gloce_emb_cache_fn}")
 
     return emb_cache
@@ -738,7 +737,7 @@ def get_modules_list(
     return org_modules, module_name_list
 
 def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules: dict[str, nn.Module]):
-    if os.path.isfile(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt"):
+    if Path(param_cache_path, f"vh_cache_dict_{find_module_name}.pt").is_file:
         param_vh_cache_dict = torch.load(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt", map_location=torch.device(device)) 
         param_s_cache_dict = torch.load(f"{param_cache_path}/s_cache_dict_{find_module_name}.pt", map_location=torch.device(device))
     else:
@@ -757,7 +756,7 @@ def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules:
                 param_vh_cache_dict[k] = Vh.detach().cpu()
                 param_s_cache_dict[k] = S.detach().cpu()                
 
-        os.makedirs(param_cache_path, exist_ok=True)
+        Path(param_cache_path).mkdir(exist_ok=True)
         torch.save(param_vh_cache_dict, f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt")
         torch.save(param_s_cache_dict, f"{param_cache_path}/s_cache_dict_{find_module_name}.pt")
 

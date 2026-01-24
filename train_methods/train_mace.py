@@ -1,11 +1,12 @@
 # MACE: Mass Concept Erasure in Diffusion Models
 
-import os
+importance_sampling_fn OSError
 import gc
 import math
 import random
 import shutil
 import warnings
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -48,7 +49,7 @@ def inference(args: Arguments, device: str, multi_concept: list[list[str]], outp
         cnt += 1
         c = c.replace("-", "")
         output_dir = f"{output_dir}/{c}".replace(" ", "-")
-        os.makedirs(output_dir, exist_ok=True)
+        Path(output_dir).mkdir(exist_ok=True)
 
         if t == "object":
             prompt = f"a photo of the {c}"
@@ -96,7 +97,7 @@ def get_grounding_output(model: GroundingDINO, image, caption: str, box_threshol
     model = model.to(device)
     image = image.to(device)
     with torch.no_grad():
-        outputs = model(image[None], captions=[caption])
+        outputs: dict[str, torch.Tensor] = model(image[None], captions=[caption])
     logits = outputs["pred_logits"].cpu().sigmoid()[0]  # (nq, 256)
     boxes = outputs["pred_boxes"].cpu()[0]  # (nq, 4)
     logits.shape[0]
@@ -125,7 +126,7 @@ def get_grounding_output(model: GroundingDINO, image, caption: str, box_threshol
 
 def get_mask(input_image: torch.Tensor, text_prompt, model, predictor: SamPredictor, device, output_dir=None, box_threshold=0.3, text_threshold=0.25):
     
-    os.makedirs(output_dir, exist_ok=True)
+    Path(output_dir).mkdir(exist_ok=True)
         
     image = input_image
     
@@ -192,21 +193,21 @@ def making_data(args: Arguments):
     predictor = SamPredictor(sam_hq_model_registry['vit_h'](checkpoint=args.sam_hq_checkpoint).to(device))
     
     transform = transforms.ToTensor()
-    for root, _, files in os.walk(args.data_dir):
-        mask_save_path = root.replace(f'{os.path.basename(root)}', f'{os.path.basename(root)}-mask')
-        os.makedirs(mask_save_path, exist_ok=True)
+    for root, _, files in Path(args.data_dir).rglob("*"):
+        mask_save_path = root.replace(f'{Path(root).name}', f'{Path(root).name}-mask')
+        Path(mask_save_path).mkdir(exist_ok=True)
         for file in files:
-            file_path = os.path.join(root, file)
+            file_path = Path(root, file)
             # read images and get masks
             image = Image.open(file_path)
             if not image.mode == "RGB":
                 image = image.convert("RGB")
             tensor_image = transform(image).to(device)
-            GSAM_mask = get_mask(tensor_image, os.path.basename(root), grounded_model, predictor, device)
+            GSAM_mask = get_mask(tensor_image, Path(root).name, grounded_model, predictor, device)
             # save masks
             GSAM_mask = (GSAM_mask.to(torch.uint8) * 255).squeeze()
             save_mask = to_pil_image(GSAM_mask)
-            save_mask.save(f"{os.path.join(mask_save_path, file).replace('.jpg', '_mask.jpg')}")
+            save_mask.save(f"{Path(mask_save_path, file).replace('.jpg', '_mask.jpg')}")
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -489,8 +490,8 @@ def main(args: Arguments):
     # stage 1 & 2 (CFR and LoRA training)
     cfr_lora_training(args)
 
-    if os.path.isdir("mace-data"):
+    if Path("mace-data").is_dir():
         shutil.rmtree("mace-data")
 
-    if os.path.isdir("mace-data-mask"):
+    if Path("mace-data-mask").is_dir():
         shutil.rmtree("mace-data-mask")

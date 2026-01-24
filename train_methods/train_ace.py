@@ -2,7 +2,6 @@
 
 import gc
 import json
-import os
 import random
 from copy import deepcopy
 from typing import Optional
@@ -14,6 +13,7 @@ from torch.utils.data import DataLoader
 
 from safetensors.torch import save_file
 from diffusers import UNet2DConditionModel, DDIMScheduler
+from pathlib import Path
 from tqdm import tqdm
 
 from utils import Arguments
@@ -172,14 +172,14 @@ class ACENetwork(nn.Module):
 
         return all_params
 
-    def save_weights(self, file, metadata: Optional[dict] = None):
+    def save_weights(self, file: str, metadata: Optional[dict] = None):
         state_dict = self.state_dict()
 
         for key in list(state_dict.keys()):
             if not key.startswith("lora"):
                 del state_dict[key]
 
-        if os.path.splitext(file)[1] == ".safetensors":
+        if file.endswith(".safetensors"):
             save_file(state_dict, file, metadata)
         else:
             torch.save(state_dict, file)
@@ -390,9 +390,9 @@ def train(args: Arguments):
         gc.collect()
 
     folder_path = f'{args.save_dir}/ace/{args.concepts.replace(" ", "_")}'
-    os.makedirs(folder_path, exist_ok=True)
+    Path(folder_path).mkdir(exist_ok=True)
     network.save_weights(
-        os.path.join(folder_path, "model.safetensors"),
+        Path(folder_path, "model.safetensors"),
         metadata=model_metadata,
     )
 

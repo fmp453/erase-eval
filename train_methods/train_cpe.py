@@ -662,8 +662,8 @@ def main(args: Arguments):
         if (p_idx < args.cpe_st_prompt_idx) or (p_idx > args.cpe_end_prompt_idx):
             continue
     
-        os.makedirs(args.save_dir, exist_ok=True)
-        if args.cpe_skip_learned and os.path.isfile(f"{args.save_dir}/model_last.safetensors"):
+        Path(args.save_dir).mkdir(exist_ok=True)
+        if args.cpe_skip_learned and Path(f"{args.save_dir}/model_last.safetensors").is_file():
             print(f"{p_idx} {p.target} has already been trained")
             continue
                 
