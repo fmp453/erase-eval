@@ -1,5 +1,7 @@
 import gc
 import inspect
+import os
+import random
 from typing import Optional, Any
 from copy import deepcopy
 
@@ -45,6 +47,17 @@ def tokenize(prompt: list[str], tokenizer: CLIPTokenizer) -> dict[str, torch.Ten
         truncation=True, 
         return_tensors="pt"
     )
+
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
+
 
 def prompt_augmentation(content, sampled_indices=None, concept_type='object') -> list[str]:
     if concept_type == 'object':

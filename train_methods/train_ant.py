@@ -2,29 +2,18 @@
 # Set You Straight: Auto-Steering Denoising Trajectories to Sidestep Unwanted Concepts (ACMMM 2025)
 
 
-import os
 import random
 from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from diffusers import UNet2DConditionModel
 from tqdm import tqdm
 
-from train_methods.train_utils import get_devices, get_models, get_condition, apply_model, gather_parameters, sample_until
+from train_methods.train_utils import get_devices, get_models, get_condition, apply_model, gather_parameters, sample_until, seed_everything
 from utils import Arguments
-
-def seed_everything(TORCH_SEED):
-	random.seed(TORCH_SEED)
-	os.environ['PYTHONHASHSEED'] = str(TORCH_SEED)
-	np.random.seed(TORCH_SEED)
-	torch.manual_seed(TORCH_SEED)
-	torch.cuda.manual_seed_all(TORCH_SEED)
-	torch.backends.cudnn.deterministic = True
-	torch.backends.cudnn.benchmark = False
 
 
 def train_ant(args: Arguments):

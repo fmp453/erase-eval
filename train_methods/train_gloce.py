@@ -1,14 +1,11 @@
 # GLoCE: Localized Concept Erasure for Text-to-Image Diffusion Models Using Training-Free Gated Low-Rank Adaptation
 # https://github.com/Hyun1A/GLoCE/tree/main
 
-import os
 import math
-import random
 import yaml
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -19,7 +16,7 @@ from diffusers import UNet2DConditionModel
 from safetensors.torch import save_file
 
 from utils import Arguments
-from train_methods.train_utils import get_condition, get_devices
+from train_methods.train_utils import get_condition, get_devices, seed_everything
 
 class PromptSettings(BaseModel):  # yaml
     target: str
@@ -50,15 +47,6 @@ def load_prompts_from_yaml(path) -> list[PromptSettings]:
 
     return [PromptSettings(**prompt) for prompt in prompts]
 
-
-def seed_everything(seed: int):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
 
 class ParamModule(nn.Module):
     def __init__(self, size):
