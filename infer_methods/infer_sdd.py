@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import warnings
 
 import torch
@@ -21,7 +21,7 @@ def infer(args: Arguments):
 
     images = pipe(args.prompt, guidance_scale=args.guidance_scale, num_images_per_prompt=args.num_images_per_prompt, generator=generator).images
 
-    os.makedirs(args.images_dir, exist_ok=True)
+    Path(args.images_dir).mkdir(exist_ok=True)
     for i in range(len(images)):
         images[i].save(f"{args.images_dir}/{i:02}.png")
 

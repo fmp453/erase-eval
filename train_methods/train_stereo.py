@@ -1,6 +1,5 @@
 # https://github.com/koushiksrivats/robust-concept-erasing/blob/main
 
-import os
 import random
 import time
 import string
@@ -34,6 +33,7 @@ class MomentumBuffer:
         new_average = self.momentum * self.running_average
         self.running_average = update_value + new_average
 
+
 def project(
     v0: torch.Tensor,  # [B, C, H, W]
     v1: torch.Tensor,  # [B, C, H, W]
@@ -44,6 +44,7 @@ def project(
     v0_parallel = (v0 * v1).sum(dim=[-1, -2, -3], keepdim=True) * v1
     v0_orthogonal = v0 - v0_parallel
     return v0_parallel.to(dtype), v0_orthogonal.to(dtype)
+
 
 def normalized_guidance(
     pred_cond: torch.Tensor,   # [B, C, H, W]
@@ -375,8 +376,8 @@ def inference_and_save(
 
     generator = torch.Generator().manual_seed(args.seed)
 
-    iteration_dir = os.path.join(args.data_dir, f"iteration_{iteration}")
-    os.makedirs(iteration_dir, exist_ok=True)
+    iteration_dir = Path(args.data_dir, f"iteration_{iteration}")
+    iteration_dir.mkdir(exist_ok=True)
 
     with torch.no_grad():
         erased_images = pipe(
@@ -390,7 +391,7 @@ def inference_and_save(
         ).images
 
     for i, img in enumerate(erased_images):
-        img.save(os.path.join(iteration_dir, f"erased_image_{i}.png"))
+        img.save(Path(iteration_dir, f"erased_image_{i}.png"))
 
     with torch.no_grad():
         for token in list(saved_tokens.values()):
@@ -404,7 +405,7 @@ def inference_and_save(
                 guidance_scale=args.guidance_scale
             )
             for i, img in enumerate(attack_images):
-                img.save(os.path.join(iteration_dir, f"attack_image_placeholder_{token}_{i}.png"))
+                img.save(Path(iteration_dir, f"attack_image_placeholder_{token}_{i}.png"))
             torch.cuda.empty_cache()
 
     print(f"Generated and saved images for iteration {iteration}.")

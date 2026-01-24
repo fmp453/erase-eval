@@ -2,9 +2,8 @@
 # - https://github.com/cloneofsimo/lora/blob/master/lora_diffusion/lora.py
 # - https://github.com/kohya-ss/sd-scripts/blob/main/networks/lora.py
 
-import os
+
 import math
-from typing import Optional, List
 
 import torch
 import torch.nn as nn
@@ -116,10 +115,10 @@ class SPMNetwork(nn.Module):
         self,
         prefix: str,
         root_module: nn.Module,
-        target_replace_modules: List[str],
+        target_replace_modules: list[str],
         rank: int,
         multiplier: float,
-    ) -> list:
+    ) -> list[nn.Module]:
         spm_layers = []
 
         for name, module in root_module.named_modules():
@@ -128,7 +127,6 @@ class SPMNetwork(nn.Module):
                     if child_module.__class__.__name__ in ["Linear", "Conv2d"]:
                         spm_name = prefix + "." + name + "." + child_name
                         spm_name = spm_name.replace(".", "_")
-                        # print(f"{spm_name}")
                         spm_layer = self.module(spm_name, child_module, multiplier, rank, self.alpha, **self.module_kwargs)
                         spm_layers.append(spm_layer)
 
@@ -147,7 +145,7 @@ class SPMNetwork(nn.Module):
 
         return all_params
 
-    def save_weights(self, file, dtype=None, metadata: Optional[dict] = None):
+    def save_weights(self, file: str, dtype=None, metadata: dict | None = None):
         state_dict = self.state_dict()
 
         if dtype is not None:
@@ -160,7 +158,7 @@ class SPMNetwork(nn.Module):
             if not key.startswith("lora"):
                 del state_dict[key]
 
-        if os.path.splitext(file)[1] == ".safetensors":
+        if file.endswith(".safetensors"):
             save_file(state_dict, file, metadata)
         else:
             torch.save(state_dict, file)

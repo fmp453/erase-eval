@@ -1,4 +1,3 @@
-import os
 import random
 import math
 from typing import Optional
@@ -449,7 +448,7 @@ class CPENetwork_ResAG(nn.Module):
 
         return all_params
     
-    def save_weights(self, file, dtype=None, metadata: Optional[dict] = None):
+    def save_weights(self, file: str, dtype=None, metadata: Optional[dict] = None):
         state_dict = self.state_dict()
         state_dict_save = dict()
         if dtype is not None:
@@ -461,7 +460,7 @@ class CPENetwork_ResAG(nn.Module):
                 v = v.detach().clone().to("cpu").to(dtype)
                 state_dict_save[key] = v
 
-        if os.path.splitext(file)[1] == ".safetensors":
+        if file.endswith(".safetensors"):
             save_file(state_dict_save, file, metadata)
         else:
             torch.save(state_dict_save, file)
@@ -475,6 +474,7 @@ class CPENetwork_ResAG(nn.Module):
         for cpe_layer in self.unet_cpe_layers:
             cpe_layer.multiplier = 0
             cpe_layer.use_prompt_tuning = False
+
 
 class PromptTuningLayer(nn.Module):
     def __init__(self, num_add_prompts, num_tokens, token_dim, device):
@@ -522,7 +522,7 @@ class PromptTuningLayer(nn.Module):
     def forward_prev_eval(self, x, idx=None):
         return x + self.prompts_prev.weight.detach() if idx is None else x + self.prompts_prev.weight[idx].detach()
     
-    def save_weights(self, file, dtype=None, metadata: Optional[dict] = None):
+    def save_weights(self, file: str, dtype=None, metadata: Optional[dict] = None):
         state_dict = self.state_dict()
 
         state_dict_save = dict()
@@ -532,7 +532,7 @@ class PromptTuningLayer(nn.Module):
                 v = v.detach().clone().to("cpu").to(dtype)
                 state_dict_save[key] = v
                 
-        if os.path.splitext(file)[1] == ".safetensors":
+        if file.endswith(".safetensors"):
             save_file(state_dict_save, file, metadata)
         else:
             torch.save(state_dict_save, file)

@@ -157,7 +157,7 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
         aesthetic_weight=0.1,
     )
 
-    os.makedirs(f"{class_images_dir}/images", exist_ok=True)
+    Path(f"{class_images_dir}/images").mkdir(exist_ok=True)
     if len(list(Path(f"{class_images_dir}/images").iterdir())) >= num_class_images:
         return
 

@@ -1,8 +1,8 @@
 # Forget-Me-Not: Learning to Forget in Text-to-Image Diffusion Models (FMN)
 
-import os
 import shutil
 import warnings
+from pathlib import Path
 
 from transformers import CLIPTokenizer
 from diffusers import StableDiffusionPipeline
@@ -85,7 +85,7 @@ def generation(args: Arguments):
     pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(args.sd_version).to(device=f"cuda:{device}")
     pipe.safety_checker = None
     prompt = f"a photo of {args.concepts}"
-    os.makedirs(args.instance_data_dir, exist_ok=True)
+    Path(args.instance_data_dir).mkdir(exist_ok=True)
     
     for i in range(2):
         images = pipe(prompt, num_images_per_prompt=5).images
