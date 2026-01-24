@@ -1,5 +1,4 @@
 from pathlib import Path
-import warnings
 
 import torch
 
@@ -15,8 +14,6 @@ from train_methods.mce_models import (
     Pipeline
 )
 from utils import Arguments
-
-warnings.filterwarnings("ignore")
 
 
 def load_pipeline(model_str: str) -> Pipeline:

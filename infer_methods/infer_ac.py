@@ -1,12 +1,9 @@
-import warnings
 from pathlib import Path
 
 import torch
 from diffusers import UNet2DConditionModel, StableDiffusionPipeline
 
 from utils import Arguments
-
-warnings.filterwarnings("ignore")
 
 def infer(args: Arguments):
     pipe = StableDiffusionPipeline.from_pretrained(args.sd_version)

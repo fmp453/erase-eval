@@ -1,7 +1,6 @@
 # Forget-Me-Not: Learning to Forget in Text-to-Image Diffusion Models (FMN)
 
 import shutil
-import warnings
 from pathlib import Path
 
 from transformers import CLIPTokenizer
@@ -11,8 +10,6 @@ from train_methods.train_utils import get_devices
 from train_methods.utils_fmn import ti_component, attn_component
 from utils import Arguments
 
-
-warnings.filterwarnings("ignore")
 
 def tokenize(s, tokenizer: CLIPTokenizer):
     tokens = tokenizer.convert_ids_to_tokens(tokenizer.encode(s, add_special_tokens=False))

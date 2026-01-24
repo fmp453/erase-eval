@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore")
+
 from utils import execute_function, get_args
 
 if __name__ == '__main__':

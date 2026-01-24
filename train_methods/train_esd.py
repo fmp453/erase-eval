@@ -3,7 +3,6 @@
 # ref: https://github.com/nannullna/safe-diffusion/blob/main/train_sdd.py
 
 import random
-import warnings
 
 import torch
 import torch.optim as optim
@@ -19,7 +18,6 @@ from diffusers.optimization import get_scheduler
 from utils import Arguments
 from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices, get_models
 
-warnings.filterwarnings("ignore")
 
 def train_step(
     args: Arguments,

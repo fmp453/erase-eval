@@ -3,7 +3,6 @@
 
 import random
 import shutil
-import warnings
 from pathlib import Path
 
 import torch
@@ -27,7 +26,6 @@ from train_methods.consts import imagenette_labels
 from train_methods.data import Imagenette, NSFW, SalUnDataset
 from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices, get_models, get_condition
 
-warnings.filterwarnings("ignore")
 
 def train_step(
     args: Arguments,

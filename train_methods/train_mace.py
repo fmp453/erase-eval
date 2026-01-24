@@ -4,7 +4,6 @@ import os
 import gc
 import math
 import shutil
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +29,6 @@ from train_methods.data import MACEDataset
 
 from utils import Arguments
 
-warnings.filterwarnings("ignore")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def inference(args: Arguments, device: str, multi_concept: list[list[str]], output_dir: str) -> None:

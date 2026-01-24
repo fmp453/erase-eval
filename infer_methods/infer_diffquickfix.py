@@ -1,5 +1,4 @@
 from pathlib import Path
-import warnings
 
 import torch
 from transformers import CLIPTextModel
@@ -7,7 +6,6 @@ from diffusers import StableDiffusionPipeline
 
 from utils import Arguments
 
-warnings.filterwarnings("ignore")
 
 def infer(args: Arguments):
     pipe = StableDiffusionPipeline.from_pretrained(args.sd_version)

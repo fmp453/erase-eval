@@ -1,6 +1,6 @@
 # Ablating Concepts in Text-to-Image Diffusion Models (AC)
-
-import warnings
+# model-based concept ablation
+# ref: https://huggingface.co/spaces/nupurkmr9/concept-ablation/blob/main/concept-ablation-diffusers/train.py
 
 import pandas as pd
 import torch
@@ -19,10 +19,6 @@ from train_methods.data import AblatingConceptDataset
 from train_methods.train_utils import collate_fn, get_devices, get_models
 from utils import Arguments
 
-warnings.filterwarnings("ignore")
-
-# model-based concept ablation
-# ref: https://huggingface.co/spaces/nupurkmr9/concept-ablation/blob/main/concept-ablation-diffusers/train.py
 
 def train(args: Arguments):
     
