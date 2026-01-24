@@ -7,9 +7,7 @@ from pathlib import Path
 import pandas as pd
 import random
 import math
-import os
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -21,18 +19,9 @@ from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
 from train_methods.train_spm import PromptSettings, PromptEmbedsPair
 from train_methods.utils_cpe import CPELayer_ResAG, CPENetwork_ResAG, PromptTuningLayer, AnchorSamplerGensim
-from train_methods.train_utils import get_devices, get_models, get_condition
+from train_methods.train_utils import get_devices, get_models, get_condition, seed_everything
 from utils import Arguments
 
-
-def seed_everything(seed: int):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
 
 def get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_steps, num_processes: int = 1):
     num_training_steps = iterations * num_processes  

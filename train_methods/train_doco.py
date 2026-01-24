@@ -1,9 +1,7 @@
-import os
 import hashlib
 import itertools
 import math
 from pathlib import Path
-import random
 
 import numpy as np
 import torch
@@ -26,7 +24,7 @@ from diffusers.optimization import get_scheduler
 
 from train_methods.utils_doco import get_anchor_prompts, retrieve, adjust_gradient
 from train_methods.utils_doco import CustomDiffusionAttnProcessor, PatchGANDiscriminator, CustomDiffusionPipeline
-from train_methods.train_utils import collate_fn, get_devices, get_models
+from train_methods.train_utils import collate_fn, get_devices, get_models, seed_everything
 from train_methods.data import DocoDataset, DocoPromptDataset
 from utils import Arguments
 
@@ -77,22 +75,6 @@ def freeze_params(params: nn.Parameter) -> None:
     for param in params:
         param.requires_grad = False
 
-def seed_everything(seed: int=42) -> None:
-    """
-    Seed everything to make results reproducible.
-    :param seed: An integer to use as the random seed.
-    """
-    random.seed(seed)        # Python random module
-    np.random.seed(seed)     # Numpy module
-    torch.manual_seed(seed)  # PyTorch
-    
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)  # if use multi-GPU
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    
-    os.environ['PYTHONHASHSEED'] = str(seed)
 
 def main(args: Arguments):
     
@@ -117,7 +99,7 @@ def main(args: Arguments):
 
         class_images_dir = Path(concept["class_data_dir"])
         class_images_dir.mkdir(parents=True, exist_ok=True)
-        os.makedirs(f"{class_images_dir}/images", exist_ok=True)
+        Path(f"{class_images_dir}/images").mkdir(exist_ok=True)
 
         # we need to generate training images
         if (len(list(Path(class_images_dir, "images").iterdir())) < args.doco_num_class_images):
