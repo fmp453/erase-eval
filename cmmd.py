@@ -126,7 +126,7 @@ class CMMDDataset(Dataset):
         image_list.sort()
         return image_list
 
-    def _center_crop_and_resize(self, im, size):
+    def _center_crop_and_resize(self, im: Image.Image, size: int):
         w, h = im.size
         l = min(w, h)
         top = (h - l) // 2
@@ -134,7 +134,7 @@ class CMMDDataset(Dataset):
         box = (left, top, left + l, top + l)
         im = im.crop(box)
         # Note that the following performs anti-aliasing as well.
-        return im.resize((size, size), resample=Image.BICUBIC)  # pytype: disable=module-attr
+        return im.resize((size, size), resample=Image.Resampling.BICUBIC)  # pytype: disable=module-attr
 
     def _read_image(self, path, size):
         im = Image.open(path)

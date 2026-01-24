@@ -99,7 +99,7 @@ def text_encoding(method: Literal["t5-xxl", "modern-bert"], caption: str, device
         # output shape: [bs, 4096]
         
         # https://blog.shikoan.com/t5-sentence-embedding/
-        def mean_pooling(model_output, attention_mask):
+        def mean_pooling(model_output: torch.Tensor, attention_mask: torch.Tensor):
             token_embeddings = model_output[0] # First element of model_output contains all token embeddings
             input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
             return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
@@ -164,15 +164,15 @@ def get_detection_model(concept: str, concept_type: Literal["object", "style"]):
         return None, None, ""
 
 def check_erased_image_with_implicit_prompt(
-        erased_image_path: str, 
-        concept: str, 
-        concept_type: str, 
-        client: OpenAI,
-        model: PaliGemmaForConditionalGeneration, 
-        processor: AutoProcessor,
-        prompt: str,
-        gpt_version: str
-    ) -> bool:
+    erased_image_path: str, 
+    concept: str, 
+    concept_type: str, 
+    client: OpenAI,
+    model: PaliGemmaForConditionalGeneration, 
+    processor: AutoProcessor,
+    prompt: str,
+    gpt_version: str
+) -> bool:
     img = Image.open(erased_image_path)
     inputs = processor(text=prompt, images=img, return_tensors="pt").to(model.device)
     input_length = inputs["input_ids"].shape[-1]

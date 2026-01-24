@@ -1,6 +1,6 @@
 # MACE: Mass Concept Erasure in Diffusion Models
 
-importance_sampling_fn OSError
+import os
 import gc
 import math
 import random
