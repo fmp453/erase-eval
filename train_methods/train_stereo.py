@@ -7,7 +7,6 @@ import math
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -75,7 +74,7 @@ def normalized_compositional_guidance(
     pred_conds: list[torch.Tensor], # List of [B, C, H, W] conditional predictions
     pred_uncond: torch.Tensor,  # [B, C, H, W] unconditional prediction
     guidance_scales: list[float],  # List of guidance scales for each condition (can be + or -)
-    momentum_buffers: Optional[list[MomentumBuffer]] = None, # List of MomentumBuffers for each condition
+    momentum_buffers: list[MomentumBuffer] | None = None, # List of MomentumBuffers for each condition
     eta: float = 1.0,
     norm_threshold: float = 0.0,
 ):

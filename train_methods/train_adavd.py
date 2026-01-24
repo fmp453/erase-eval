@@ -2,7 +2,6 @@
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Optional
 
 from tqdm import tqdm
 from einops import rearrange
@@ -44,7 +43,7 @@ class AttnProcessor():
         atten_type='original', 
         target_records=None, 
         record=False, 
-        record_type: Optional[str]=None, 
+        record_type: str | None=None, 
         sigmoid_setting=None, 
         decomp_timestep=0
     ) -> None:
@@ -65,7 +64,7 @@ class AttnProcessor():
         self,
         target_value: torch.Tensor | list[torch.Tensor],
         pro_record: torch.Tensor,
-        ortho_basis: Optional[torch.Tensor]=None,
+        ortho_basis: torch.Tensor | None=None,
         project_matrix=None
     ): 
 

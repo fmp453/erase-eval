@@ -1,7 +1,6 @@
 # Receler: Reliable Concept Erasing of Text-to-Image Diffusion Models via Lightweight Erasers
 
 import random
-from typing import Optional
 from datetime import datetime
 
 import numpy as np
@@ -200,9 +199,9 @@ class CustomAttnProcessor(AttnProcessor):
         self,
         attn: Attention,
         hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        temb: Optional[torch.Tensor] = None,
+        encoder_hidden_states: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        temb: torch.Tensor | None = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:

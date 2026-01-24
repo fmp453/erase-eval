@@ -9,7 +9,7 @@ import gc
 import random
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 from pydantic import BaseModel, model_validator
 
 import torch
@@ -83,17 +83,17 @@ class PromptEmbedsPair:
     batch_size: int
     dynamic_crops: bool
 
-    loss_fn: torch.nn.Module
+    loss_fn: nn.Module
     action: Literal["erase", "erase_with_la"]
 
     def __init__(
         self,
-        loss_fn: torch.nn.Module,
+        loss_fn: nn.Module,
         target: torch.FloatTensor,
         positive: torch.FloatTensor,
         unconditional: torch.FloatTensor,
         neutral: torch.FloatTensor,
-        settings: Optional[PromptSettings]=None
+        settings: PromptSettings | None=None
     ) -> None:
         self.loss_fn = loss_fn
         self.target = target
@@ -414,7 +414,7 @@ def train(
 
         loss["loss"].backward()
         if max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm, norm_type=2)
+            nn.utils.clip_grad_norm_(trainable_params, max_grad_norm, norm_type=2)
         optimizer.step()
         lr_scheduler.step()
 

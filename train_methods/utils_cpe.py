@@ -1,6 +1,5 @@
 import random
 import math
-from typing import Optional
 
 import numpy as np
 import torch
@@ -29,7 +28,7 @@ class ScaledDotProductAttention(nn.Module):
         self.temperature = temperature
         self.dropout = nn.Dropout(attn_dropout)
 
-    def forward(self, q_list: list[torch.Tensor], k_list: list[torch.Tensor], mask: Optional[torch.Tensor]=None):
+    def forward(self, q_list: list[torch.Tensor], k_list: list[torch.Tensor], mask: torch.Tensor | None=None):
         for i, (q, k) in enumerate(zip(q_list, k_list)):
             if i == 0:
                 attn = torch.matmul(q, k.transpose(3, 4)) / self.temperature
@@ -71,7 +70,7 @@ class AttentionModule(nn.Module):
         self.attention = ScaledDotProductAttention(temperature=1)
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor]=None):
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None=None):
         q, k, v = x, x, x
         
         input = q.unsqueeze(1)
@@ -448,7 +447,7 @@ class CPENetwork_ResAG(nn.Module):
 
         return all_params
     
-    def save_weights(self, file: str, dtype=None, metadata: Optional[dict] = None):
+    def save_weights(self, file: str, dtype=None, metadata: dict | None = None):
         state_dict = self.state_dict()
         state_dict_save = dict()
         if dtype is not None:
@@ -522,7 +521,7 @@ class PromptTuningLayer(nn.Module):
     def forward_prev_eval(self, x, idx=None):
         return x + self.prompts_prev.weight.detach() if idx is None else x + self.prompts_prev.weight[idx].detach()
     
-    def save_weights(self, file: str, dtype=None, metadata: Optional[dict] = None):
+    def save_weights(self, file: str, dtype=None, metadata: dict | None = None):
         state_dict = self.state_dict()
 
         state_dict_save = dict()

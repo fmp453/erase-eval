@@ -2,7 +2,6 @@ import random
 import shutil
 from itertools import product
 from pathlib import Path
-from typing import Optional
 
 import gdown
 import numpy as np
@@ -172,7 +171,7 @@ class AblatingConceptDataset(Dataset):
         prompt_path: str,
         tokenizer: CLIPTokenizer,
         concept: str,
-        anchor_concept: Optional[str]=None,
+        anchor_concept: str | None=None,
         aug: bool=True
     ):
         
@@ -432,7 +431,7 @@ class ForgetMeNotDataset(Dataset):
         size: int=512,
         center_crop: bool=False,
         use_pooler: bool=False,
-        multi_concept: Optional[list[str]]=None,
+        multi_concept: list[str] | None=None,
         data_dir: str="fmn-data"
     ):  
         self.use_pooler = use_pooler
