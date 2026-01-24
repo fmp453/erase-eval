@@ -1,13 +1,12 @@
 from pathlib import Path
 from typing import Literal
 
-import safetensors
 import torch
 from diffusers import LMSDiscreteScheduler, AutoencoderKL
 from PIL import Image
-from safetensors.torch import load_file
 from tqdm.auto import tqdm
 
+from infer_methods.infer_utils import load_state_dict
 from train_methods.train_ace import ACELayer, ACENetwork
 from train_methods.train_utils import get_models, get_devices, tokenize, get_condition
 from utils import Arguments
@@ -39,7 +38,7 @@ def calculate_matching_score(
 
 
 @torch.no_grad()
-def get_images(latents: torch.Tensor, vae: AutoencoderKL):
+def get_images(latents: torch.Tensor, vae: AutoencoderKL) -> list[Image.Image]:
     latents = 1 / 0.18215 * latents
     image = vae.decode(latents).sample
     image = (image / 2 + 0.5).clamp(0, 1)
@@ -52,35 +51,6 @@ def save_images(pil_images: list[Image.Image], folder_path: str):
     Path(folder_path).mkdir(exist_ok=True)
     for num, im in enumerate(pil_images):
         im.save(f"{folder_path}/{num:02}.png")
-
-def load_state_dict(file_name: str):
-    if file_name.endswith(".safetensors"):
-        sd = load_file(file_name)
-        metadata = load_metadata_from_safetensors(file_name)
-    else:
-        sd = torch.load(file_name, map_location="cpu")
-        metadata = {}
-
-    for key in list(sd.keys()):
-        if isinstance(sd[key], torch.Tensor):
-            sd[key] = sd[key].to(dtype=torch.float32)
-
-    return sd, metadata
-
-
-def load_metadata_from_safetensors(safetensors_file: str) -> dict[str, str]:
-    """r
-    This method locks the file. see https://github.com/huggingface/safetensors/issues/164
-    If the file isn't .safetensors or doesn't have metadata, return empty dict.
-    """
-    if not safetensors_file.endswith(".safetensors"):
-        return {}
-
-    with safetensors.safe_open(safetensors_file, framework="pt", device="cpu") as f:
-        metadata = f.metadata()
-    if metadata is None:
-        metadata = {}
-    return metadata
 
 
 @torch.no_grad()
