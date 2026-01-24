@@ -23,7 +23,6 @@ from train_methods.train_utils import get_condition, get_models, predict_noise, 
 class ACELayer(nn.Module):
     """
     replaces forward method of the original Linear, instead of replacing the original Linear module.
-
     """
 
     def __init__(
@@ -79,7 +78,7 @@ class ACELayer(nn.Module):
         self.org_module.forward = self.forward
         del self.org_module
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
 
 
@@ -201,6 +200,7 @@ class InfiniteDataLoader(DataLoader):
             for batch in super().__iter__():
                 yield batch
 
+
 @torch.no_grad()
 def diffusion_to_get_x_t(
     unet: UNet2DConditionModel,
@@ -262,7 +262,7 @@ def train(args: Arguments):
 
     losses = []
     opt = torch.optim.Adam(unet_lora_params, lr=args.ace_lr)
-    criteria = torch.nn.MSELoss()
+    criteria = nn.MSELoss()
     history = []
     is_sc_clip = args.ace_surrogate_concept_clip_path is not None
     if not is_sc_clip:
@@ -279,7 +279,6 @@ def train(args: Arguments):
     
     for _, data in zip(pbar, anchor_dataloader):
         word = random.sample(words, 1)[0]
-        # get text embeddings for unconditional and conditional prompts
         emb_0 = get_condition([''], tokenizer, text_encoder)
         emb_p = get_condition(word, tokenizer, text_encoder)
         emb_n = get_condition(word, tokenizer, text_encoder)

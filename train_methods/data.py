@@ -2,6 +2,7 @@ import random
 import shutil
 from itertools import product
 from pathlib import Path
+from typing import Literal, TYPE_CHECKING
 
 import gdown
 import numpy as np
@@ -26,6 +27,11 @@ from train_methods.templates import (
     CON_DECON_DICT,
     SYNONYMS_DICT,
 )
+
+if TYPE_CHECKING:
+    from train_methods.mce_models import (
+        Pipeline
+    )
 
 PIL_INTERPOLATION = {
     "linear": Image.Resampling.BILINEAR,
@@ -67,7 +73,7 @@ class MACEDataset(Dataset):
             c, t = data
             
             if input_data_path is not None:
-                p = Path(input_data_path, c.replace("-", " ").replace(" ", "-"))
+                p = Path(input_data_path, c)
                 if not p.exists():
                     raise ValueError(f"Instance {p} images root doesn't exists.")
                 
@@ -174,7 +180,6 @@ class AblatingConceptDataset(Dataset):
         anchor_concept: str | None=None,
         aug: bool=True
     ):
-        
         self.size = 512
         self.tokenizer = tokenizer
         self.interpolation = Image.Resampling.BILINEAR
@@ -438,8 +443,8 @@ class ForgetMeNotDataset(Dataset):
         self.size = size
         self.center_crop = center_crop
         self.tokenizer = tokenizer
-        self.instance_images_path  = []
-        self.instance_prompt  = []
+        self.instance_images_path = []
+        self.instance_prompt = []
 
         token_idx = 1
         for _, t, num_tok in multi_concept:
@@ -480,8 +485,8 @@ class ForgetMeNotDataset(Dataset):
 
         example["instance_prompt"] = instance_prompt
         example["instance_images"] = self.image_transforms(instance_image)
-
         example["instance_prompt_ids"] = tokenize(instance_prompt, self.tokenizer).input_ids
+
         prompt_ids = self.tokenizer(
             instance_prompt,
             truncation=True,
@@ -494,7 +499,7 @@ class ForgetMeNotDataset(Dataset):
         concept_positions = [0] * self.tokenizer.model_max_length
         for i, tok_id in enumerate(prompt_ids):
             if tok_id == concept_ids[0] and prompt_ids[i:i + len(concept_ids)] == concept_ids:
-                concept_positions[i:i + len(concept_ids)] = [1]*len(concept_ids)
+                concept_positions[i:i + len(concept_ids)] = [1] * len(concept_ids)
             if self.use_pooler and tok_id == pooler_token_id:
                 concept_positions[i] = 1
         example["concept_positions"] = torch.tensor(concept_positions)[None]               
@@ -506,11 +511,12 @@ class FMNPivotalTuningDataset(Dataset):
         self,
         instance_data_root: str,
         tokenizer: CLIPTokenizer,
-        token_map: dict | None=None,
+        token_map: dict[str, str] | None=None,
         use_template: str | None=None,
         size: int=512,
         blur_amount: int=20,
     ):
+        assert token_map is not None
         self.size = size
         self.blur_amount = blur_amount
         self.tokenizer = tokenizer
@@ -518,7 +524,7 @@ class FMNPivotalTuningDataset(Dataset):
         if not self.instance_data_root.exists():
             raise ValueError("Instance images root doesn't exists.")
 
-        self.instance_images_path = list(Path(instance_data_root).iterdir())
+        self.instance_images_path = list(self.instance_data_root.iterdir())
         self.num_instance_images = len(self.instance_images_path)
         self.token_map = token_map
         self.use_template = use_template
@@ -553,7 +559,7 @@ class FMNPivotalTuningDataset(Dataset):
             input_tok = list(self.token_map.values())[0]
             text = random.choice(self.templates).format(input_tok)
         else:
-            text = self.instance_images_path[index % self.num_instance_images].stem
+            text: str = self.instance_images_path[index % self.num_instance_images].stem
             if self.token_map is not None:
                 for token, value in self.token_map.items():
                     text = text.replace(token, value)
@@ -648,16 +654,16 @@ class TextualInversionDataset(Dataset):
         self,
         data_root: str,
         tokenizer: CLIPTokenizer,
-        learnable_property="object",  # [object, style]
+        learnable_property: Literal["object", "style", "person"]="object",
         size=512,
         repeats=100,
         interpolation="bicubic",
         flip_p=0.5,
-        set="train",
+        set: Literal["train", "test"]="train",
         placeholder_token="*",
         center_crop=False,
-        iteration=None,       # New argument for the iteration
-        num_iterations=None   # New argument for the number of images per subset
+        iteration: int | None=None, # New argument for the iteration
+        num_iterations: int | None =None # New argument for the number of images per subset
     ):
         self.data_root = data_root
         self.tokenizer = tokenizer
@@ -750,27 +756,16 @@ class TextualInversionDataset(Dataset):
         return example
 
 class MCEDataset(Dataset):
-    """
-    A dataset for generating prompted images from different metadata, such as gcc3m, gcc12m, yfcc, laion400m, etc.
-    store the image in the tmp folder and return the path of the image.
-
-    # Arguments
-    metadata: str, path to the metadata file, can be a tsv file or a yaml file, for pruningt
-    while perserving the image quality
-    deconceptmeta: str, path to the deconcept metadata file
-
-    """
-
     def __init__(
         self,
         metadata,
         deconceptmeta,
-        pipe,
+        pipe: Pipeline,
         num_inference_steps,
         save_dir,
-        seed,
-        device,
-        size=45,
+        seed: int,
+        device: str,
+        size: int=45,
         concept=None,
         neutral_concept=None,
         only_deconcept_latent=False,  # only use deconcept latent for training
@@ -842,8 +837,7 @@ class MCEDataset(Dataset):
             base_dir.mkdir(exist_ok=True)
             print(f"save_dir {self.metadata} does not exist, downloading the meta data ...")
             if "gcc" in self.metadata:
-                METADICT = {"gcc": "https://drive.google.com/file/d/1VCWJ9YeLwqbT_TyvdV_aZWp0qkpHdEkz/view?usp=sharing"}
-                url = METADICT["gcc"]
+                url = "https://drive.google.com/file/d/1VCWJ9YeLwqbT_TyvdV_aZWp0qkpHdEkz/view?usp=sharing"
                 gdown.download(url, self.metadata, fuzzy=True)
             else:
                 raise ValueError("metadata not found, please provide the correct metadata path or download link")
@@ -937,10 +931,9 @@ class MCEDataset(Dataset):
     def _generate_image(self, intermediate_latents, preparation_phase_output):
         prompt_embeds = preparation_phase_output.prompt_embeds
         g_cpu = torch.Generator(self.device).manual_seed(self.seed)
-        img = self.pipe.inference_aft_denoising(
+        return self.pipe.inference_aft_denoising(
             intermediate_latents[-1], prompt_embeds, g_cpu, "pil", True, self.device
         )
-        return img
 
     def _initialize_save_paths(self):
         self.ptpaths, self.imgpaths, self.idxlist = [], [], []
@@ -950,7 +943,7 @@ class MCEDataset(Dataset):
             self.imgpaths.append(Path(self.save_dir, f"{i}.png"))
             self.idxlist.append(i)
 
-    def _contain_concept(self, prompt):
+    def _contain_concept(self, prompt: str) -> None | dict[str, str]:
         for k, v in self.CON_DECON_DICT.items():
             # k is the concept, v is the neutral concept
             if k in prompt:
@@ -961,11 +954,10 @@ class MCEDataset(Dataset):
     def prepare_metadata(self):
         self._load_and_merge_metadata()
         self._initialize_save_paths()
-        # save latent tensor
         print("Generating latent tensors and images ...")
         with tqdm(total=len(self.df)) as pbar:
             for p, i, idx in zip(self.ptpaths, self.imgpaths, self.idxlist):
-                prompt = self.df["prompt"][idx]
+                prompt: str = self.df["prompt"][idx]
                 concept_neutral_concet_dict = self._contain_concept(prompt)
 
                 # prompt w concept -> prompt w/o concept if only_deconcept_latent
@@ -1057,7 +1049,7 @@ class MCEDataset(Dataset):
             return 0
         return len(self.df)
 
-    def _load_safetenors(self, path) -> dict[str, torch.Tensor]:
+    def _load_safetenors(self, path: str) -> dict[str, torch.Tensor]:
         latents = {}
         with safe_open(path, framework="pt") as f:
             for k in f.keys():
@@ -1068,11 +1060,10 @@ class MCEDataset(Dataset):
         if self.df is None:
             raise ValueError("metadata is not prepared")
         latents = self._load_safetenors(Path(self.save_dir, f"{idx}.pt"))
-        example = {
+        return {
             "image": latents["latents"].to(self.device),
             "deconcept_image": latents["deconcept_latents"].to(self.device),
             "prompt": self.df["prompt"][idx],
             "value": self.df["value"][idx],
             "path": self.imgpaths[idx]
         }
-        return example

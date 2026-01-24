@@ -8,7 +8,7 @@ from train_methods.train_utils import get_devices, get_models, tokenize
 from utils import Arguments
 
 # Total number of computable operations / modules -- 709
-def high_level_layers(unet: UNet2DConditionModel):
+def high_level_layers(unet: UNet2DConditionModel) -> list[str]:
     # Counter for the list
     
     # Total list of all modules
@@ -56,7 +56,6 @@ def train_edit(args: Arguments, layer_edit_modules, key_embeddings: torch.Tensor
 def train(args: Arguments):
     
     device = get_devices(args)[0]
-
     tokenizer, text_encoder, _, unet, _, _ = get_models(args)
     
     text_encoder.to(device)
@@ -143,7 +142,7 @@ def train(args: Arguments):
     # Finished storing the layers which are edited
     key_embeddings = generate_text_embeddings(tokenizer, text_encoder, key_prompt)
     target_prompt = ['a painting'] * len(key_embeddings) if args.loco_concept_type == "style" else ["a photo"] * len(key_embeddings)
-    
+
     # Flag
     value_embeddings = generate_text_embeddings(tokenizer, text_encoder, target_prompt, value=True)
 

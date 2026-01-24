@@ -86,7 +86,7 @@ def get_phrases_from_posmap(posmap: torch.BoolTensor, tokenized: dict, tokenizer
     else:
         raise NotImplementedError("posmap must be 1-dim")
 
-def get_grounding_output(model: GroundingDINO, image, caption: str, box_threshold, text_threshold, with_logits=True, device="cpu"):
+def get_grounding_output(model: GroundingDINO, image: torch.Tensor, caption: str, box_threshold, text_threshold, with_logits=True, device="cpu"):
     caption = caption.lower()
     caption = caption.strip()
     if not caption.endswith("."):
@@ -122,17 +122,16 @@ def get_grounding_output(model: GroundingDINO, image, caption: str, box_threshol
     return boxes_filt, pred_phrases
 
 def get_mask(input_image: torch.Tensor, text_prompt, model, predictor: SamPredictor, device, output_dir=None, box_threshold=0.3, text_threshold=0.25):
-    
+
     Path(output_dir).mkdir(exist_ok=True)
-        
     image = input_image
-    
+
     # run grounding dino model
     boxes_filt, _ = get_grounding_output(model, image, text_prompt, box_threshold, text_threshold, device=device)
-        
+
     image_np: np.ndarray = image.cpu().numpy()
     image_np = ((image_np / max(image_np.max().item(), abs(image_np.min().item())) + 1) * 255 * 0.5).astype(np.uint8)
-    
+
     # C x H x W  to  H x W x C
     if image_np.ndim == 3 and image_np.shape[0] in {1, 3}:
         image_np = image_np.transpose(1, 2, 0)
@@ -167,7 +166,7 @@ def get_mask(input_image: torch.Tensor, text_prompt, model, predictor: SamPredic
             final_mask = final_mask | masks[i]
     else:
         final_mask = masks
-    
+
     return final_mask
 
 def making_data(args: Arguments):
@@ -176,19 +175,19 @@ def making_data(args: Arguments):
     multi_concept = []
     concepts = args.concepts.split(",")
     concept_types = args.mace_concept_type.split(",")
-    
+
     assert len(concepts) == len(concept_types)
     for i in range(len(concept_types)):
         multi_concept.append([concepts[i], concept_types[i]])
-    
+
     # generate 8 images per concept using the original model for performing erasure
     inference(args, device, multi_concept=multi_concept, output_dir=args.data_dir)
 
     # get and save masks for each image
     grounded_model = load_model(args.grounded_config, args.grounded_checkpoint)
-        
+
     predictor = SamPredictor(sam_hq_model_registry['vit_h'](checkpoint=args.sam_hq_checkpoint).to(device))
-    
+
     transform = transforms.ToTensor()
     for root, _, files in Path(args.data_dir).rglob("*"):
         mask_save_path = root.replace(f'{Path(root).name}', f'{Path(root).name}-mask')

@@ -132,10 +132,8 @@ def train(args: Arguments):
     unet_orig.to(devices[1])
     unet.to(devices[0])
 
-    # choose parameters to train based on train_method
     _, parameters = gather_parameters(args.eap_method, unet=unet)
     unet.train()
-    # create a lambda function for cleaner use of sampling code (only denoising till time step t)
     quick_sample_till_t = lambda cond, s, code, t: sample_until(
         until=t,
         latents=code,
@@ -166,7 +164,6 @@ def train(args: Arguments):
     
     """
 
-    # create embedding matrix for all tokens in the dictionary
     if not Path('models/embedding_matrix_dict_EN3K.pt').exists():
         save_embedding_matrix(tokenizer, text_encoder, model_name='SD-v1-4', save_mode='dict', vocab='EN3K')
 
@@ -212,7 +209,6 @@ def train(args: Arguments):
     
     history_dict = save_to_dict(one_hot_dict, f'one_hot_dict_0', history_dict)
 
-    # optimizer for all one-hot vectors
     opt_one_hot = optim.Adam([one_hot for one_hot in one_hot_dict.values()], lr=args.gumbel_lr)
 
     def gumbel_softmax(logits, temperature=args.gumbel_temp, hard=args.gumbel_hard, eps=1e-10):
@@ -229,7 +225,7 @@ def train(args: Arguments):
     pbar = tqdm(range(args.pgd_num_steps * args.eap_iterations))
     scheduler.set_timesteps(args.ddim_steps, devices[1])
     for i in pbar:
-        word = random.sample(erased_words,1)[0]
+        word = random.sample(erased_words, 1)[0]
 
         opt.zero_grad()
         opt_one_hot.zero_grad()

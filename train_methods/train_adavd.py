@@ -17,7 +17,6 @@ from utils import Arguments
 
 
 class VisualAttentionProcess(nn.Module):
-
     def __init__(
         self,
         module_name=None,
@@ -45,7 +44,6 @@ class VisualAttentionProcess(nn.Module):
     
 
 class AttnProcessor():
-
     def __init__(
         self, 
         module_name=None, 
@@ -65,7 +63,7 @@ class AttnProcessor():
         self.sigmoid_setting = sigmoid_setting
         self.decomp_timestep=decomp_timestep
 
-    def sigmoid(self, x: torch.Tensor, setting) -> torch.Tensor:
+    def sigmoid(self, x: torch.Tensor, setting: tuple[float, ...]) -> torch.Tensor:
         a, b, c = setting
         return c / (1 + torch.exp(-a * (x - b)))
 

@@ -41,7 +41,7 @@ def set_use_memory_efficient_attention(self, use_memory_efficient_attention_xfor
     self.set_processor(processor)
 
 
-def create_custom_diffusion(unet: UNet2DConditionModel, parameter_group):
+def create_custom_diffusion(unet: UNet2DConditionModel, parameter_group: str) -> UNet2DConditionModel:
     for name, params in unet.named_parameters():
         if parameter_group == "cross-attn":
             if "attn2.to_k" in name or "attn2.to_v" in name:
@@ -77,7 +77,6 @@ def freeze_params(params: nn.Parameter) -> None:
 
 
 def main(args: Arguments):
-    
     seed_everything(args.seed)
     device = get_devices(args)[0]
     
@@ -99,7 +98,7 @@ def main(args: Arguments):
 
         class_images_dir = Path(concept["class_data_dir"])
         class_images_dir.mkdir(parents=True, exist_ok=True)
-        Path(f"{class_images_dir}/images").mkdir(exist_ok=True)
+        Path(class_images_dir, "images").mkdir(exist_ok=True)
 
         # we need to generate training images
         if len(list(Path(class_images_dir, "images").iterdir())) < args.doco_num_class_images:

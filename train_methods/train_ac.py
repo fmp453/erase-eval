@@ -6,14 +6,13 @@ import pandas as pd
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-
 from collections import OrderedDict
 
+from diffusers import StableDiffusionPipeline
 from tqdm import trange
 from pathlib import Path
 from torch.utils.data import DataLoader
 
-from diffusers import StableDiffusionPipeline
 
 from train_methods.data import AblatingConceptDataset
 from train_methods.train_utils import collate_fn, get_devices, get_models
@@ -23,7 +22,6 @@ from utils import Arguments
 def train(args: Arguments):
     
     tokenizer, text_encoder, vae, unet, scheduler, _ = get_models(args)
-    
     device = get_devices(args)[0]
 
     text_encoder.eval()
@@ -43,15 +41,6 @@ def train(args: Arguments):
         else:
             raise ValueError(f"Unknown finetuning method: {args.ac_method}")
 
-    cnt = 0
-    tot = 0
-    for param in unet.parameters():
-        tot += param.numel()
-        if param.requires_grad:
-            cnt += param.numel()
-    
-    print(f"{cnt / tot * 100}% parameters are updated.")
-
     optimizer = optim.Adam(unet.parameters(), lr=args.ac_lr, weight_decay=1e-2)
     dataset = AblatingConceptDataset(
         concept_type=args.ac_concept_type,
@@ -65,8 +54,6 @@ def train(args: Arguments):
 
     dataloader = DataLoader(dataset, batch_size=args.ac_batch_size, num_workers=2, shuffle=True, collate_fn=lambda examples: collate_fn(examples))
 
-    print(f"{len(dataloader)=}")
-
     pbar = trange(0, 1 * len(dataloader), desc="step")
     unet.train()
 
@@ -75,9 +62,9 @@ def train(args: Arguments):
         batch = next(iter(dataloader))
 
         with torch.no_grad():
-            latents = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
+            latents: torch.Tensor = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
             text_embedding = text_encoder(batch["input_ids"].to(device))[0]
-            anchor_embedding = text_encoder(batch["input_anchor_ids"].to(device))[0]
+            anchor_embedding: torch.Tensor = text_encoder(batch["input_anchor_ids"].to(device))[0]
             latents = latents * vae.config.scaling_factor
         
         bsz = latents.shape[0]
@@ -86,14 +73,14 @@ def train(args: Arguments):
         timesteps = timesteps.long()
 
         noisy_latens = scheduler.add_noise(latents, noise, timesteps)
-        noise_pred = unet(noisy_latens, timesteps, text_embedding).sample
+        noise_pred: torch.Tensor = unet(noisy_latens, timesteps, text_embedding).sample
 
         with torch.no_grad():
-            anchor_pred = unet(noisy_latens[:anchor_embedding.size(0)], timesteps[:anchor_embedding.size(0)], anchor_embedding).sample
+            anchor_pred: torch.Tensor = unet(noisy_latens[:anchor_embedding.size(0)], timesteps[:anchor_embedding.size(0)], anchor_embedding).sample
         
         mask: torch.Tensor = batch["mask"].to(device)
 
-        loss: torch.Tensor = F.mse_loss(noise_pred, anchor_pred, reduction="none")
+        loss = F.mse_loss(noise_pred, anchor_pred, reduction="none")
         loss = ((loss * mask).sum([1, 2, 3]) / mask.sum([1, 2, 3])).mean()
     
         loss.backward()
@@ -105,7 +92,7 @@ def train(args: Arguments):
 def generation(args: Arguments):
     print("generate images for Ablating Concepts")
 
-    device = args.device.split(",")[0]
+    device = get_devices(args)[0]
     pipe = StableDiffusionPipeline.from_pretrained(args.sd_version).to(device=f"cuda:{device}")
     pipe.safety_checker = None
     df = pd.read_csv(args.ac_prompt_path)

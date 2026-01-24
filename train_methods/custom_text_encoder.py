@@ -67,7 +67,7 @@ class CustomTextTransformer(nn.Module):
         if input_ids is None:
             raise ValueError("You have to specify input_ids")
 
-        hidden_states = self.embeddings(inputs_embeds=inputs_embeds , position_ids=position_ids)
+        hidden_states: torch.Tensor = self.embeddings(inputs_embeds=inputs_embeds , position_ids=position_ids)
         input_shape = input_ids.size()
         causal_attention_mask = _make_causal_mask(input_shape, hidden_states.dtype, device=hidden_states.device)
         if attention_mask is not None:
@@ -83,7 +83,7 @@ class CustomTextTransformer(nn.Module):
             return_dict=return_dict,
         )
 
-        last_hidden_state = encoder_outputs[0]
+        last_hidden_state: torch.Tensor = encoder_outputs[0]
         last_hidden_state = self.final_layer_norm(last_hidden_state)
 
         if self.eos_token_id == 2:

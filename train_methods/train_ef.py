@@ -19,12 +19,9 @@ from train_methods.utils_ef import ddim_step_with_logprob, pipeline_with_logprob
 from utils import Arguments
 
 def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
-    """
-    If a model is compiled (e.g. with torch.compile()), unwrap back to the original module.
-    """
     return model._orig_mod if is_compiled_module(model) else model
 
-def save_lora_checkpoint(unet: UNet2DConditionModel, output_dir: str, epoch: int):
+def save_lora_checkpoint(unet: UNet2DConditionModel, output_dir: Path, epoch: int):
     save_path = Path(output_dir, f"checkpoint_epoch{epoch}")
     save_path.mkdir(exist_ok=True)
 
@@ -110,7 +107,7 @@ def train_eraseflow_step(
 
         with contextlib.nullcontext():
             if args.start_guidance > 1.0:
-                noise_pred = unet(
+                noise_pred: torch.Tensor = unet(
                     torch.cat([j_latent] * 2),
                     torch.cat([sample["timesteps"][:, j]] * 2),
                     embeds,
@@ -239,7 +236,6 @@ def train(args: Arguments):
     unet.requires_grad_(False)
     for p in unet.parameters():
         p.requires_grad_(False)
-
     unet.to(device)
 
     unet_lora_config = LoraConfig(
@@ -249,7 +245,6 @@ def train(args: Arguments):
         target_modules=["to_k", "to_q", "to_v", "to_out.0"],
     )
     unet.add_adapter(unet_lora_config)
-
 
     # 3) Build optimizer (LoRA + z_model) and potential GradScaler
     optimizer, z_model = setup_optimizer_and_scaler(unet, args)
@@ -264,7 +259,6 @@ def train(args: Arguments):
     global_step = 0
     last_samples = None
 
-    # ──────────── Start timing ────────────
     start_time = time.time()
     for epoch in range(args.ef_num_epochs):
         print(f"Starting epoch {epoch}/{args.ef_num_epochs - 1}")
@@ -304,7 +298,6 @@ def train(args: Arguments):
                 global_step += 1
                 if global_step % 10 == 0:
                     print(f"Epoch {epoch} | step {global_step} | loss {loss_val:.4f}")
-
 
     save_lora_checkpoint(unet, output_dir, epoch)
     elapsed = time.time() - start_time

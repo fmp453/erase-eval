@@ -1,6 +1,5 @@
 # Concept Pinpoint Eraser for Text-to-image Diffusion Models via Residual Attention Gate
 # https://github.com/Hyun1A/CPE
-
 # - https://huggingface.co/spaces/baulab/Erasing-Concepts-In-Diffusion/blob/main/train.py
 
 from pathlib import Path
@@ -53,7 +52,6 @@ def train_erase_one_stage(
     for _ in pbar:
         loss: dict[str, torch.Tensor] = {}
         optimizer.zero_grad()
-        # Prepare for erasing prompt 
         prompt_one = prompts
 
         cache = dict()      

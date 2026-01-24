@@ -38,7 +38,7 @@ class PromptSettings(BaseModel):  # yaml
 
         return values
     
-def load_prompts_from_yaml(path) -> list[PromptSettings]:
+def load_prompts_from_yaml(path: str) -> list[PromptSettings]:
     with open(path, "r") as f:
         prompts = yaml.safe_load(f)
 
@@ -100,11 +100,11 @@ class SimpleSelectorOutProp(nn.Module):
         Vh_gate = self.select_weight.weight # (N,D,1)        
         cont = torch.einsum("nds,bntd->bnts", Vh_gate,x_diff_norm)**2
         
-        select_scale = torch.sigmoid(self.imp_slope.unsqueeze(0).unsqueeze(-1)*( \
-                    cont.sum(dim=-1) - self.imp_center.unsqueeze(0).unsqueeze(-1)) ) # BN
+        select_scale = torch.sigmoid(
+            self.imp_slope.unsqueeze(0).unsqueeze(-1) * (cont.sum(dim=-1) - self.imp_center.unsqueeze(0).unsqueeze(-1))
+        ) # BN
 
-        select_scale, select_idx = select_scale.max(dim=1, keepdim=True) #
-
+        select_scale, select_idx = select_scale.max(dim=1, keepdim=True)
         return select_idx, select_scale
 
     def reset_select_cache(self):
@@ -145,7 +145,7 @@ class GLoCELayerOutProp(nn.Module):
         self.use_bias = use_bias
         self.use_gate = use_gate
 
-        if org_module.__class__.__name__ == "Linear":
+        if org_module.__class__.__name__ == "Linear" and isinstance(org_module, nn.Linear):
  
             out_dim = org_module.out_features
 
@@ -154,7 +154,6 @@ class GLoCELayerOutProp(nn.Module):
 
             self.bias = ParamModule((1, n_concepts, out_dim))
             self.debias = ParamModule((1, n_concepts, out_dim))
-
 
         # same as microsoft's
         nn.init.zeros_(self.lora_update.weight)    
@@ -176,7 +175,7 @@ class GLoCELayerOutProp(nn.Module):
             n_concepts=n_concepts, 
             is_last_layer=is_last_layer
         )
-        
+
         self.use_prompt_tuning = False    
         self.t_counter = 0
 
@@ -216,7 +215,7 @@ class GLoCELayerOutProp(nn.Module):
         if self.t_counter == self.n_step:
             self.t_counter = 0
 
-        return (1-select_scale.permute(0,2,1))*x + select_scale.permute(0,2,1)*mod_x_bias 
+        return (1 - select_scale.permute(0, 2, 1)) * x + select_scale.permute(0, 2, 1) * mod_x_bias
 
 class GLoCENetworkOutProp(nn.Module):
     TARGET_REPLACE_MODULE_TRANSFORMER = [
@@ -249,7 +248,6 @@ class GLoCENetworkOutProp(nn.Module):
         last_layer = "",
         st_step = 10,
     ) -> None:
-        
         super().__init__()
         
         self.n_concepts = n_concepts
@@ -270,7 +268,6 @@ class GLoCENetworkOutProp(nn.Module):
         self.module_name_list_all=module_name_list_all
         self.last_layer = last_layer
         self.st_step = st_step
-
 
         self.gloce_layers = self.create_modules(
             GLoCENetworkOutProp.GLoCE_PREFIX,
@@ -388,13 +385,13 @@ def get_registered_buffer(
 
     Path(register_buffer_path).mkdir(exist_ok=True)
 
-    if Path(f"{register_buffer_path}/{register_buffer_fn}").is_file():
+    if Path(register_buffer_path, register_buffer_fn).is_file():
         print(f"load precomputed registered_buffer for original models ... {register_buffer_path}/{register_buffer_fn}")
         registered_buffer = torch.load(f"{register_buffer_path}/{register_buffer_fn}", map_location=torch.device(device))
 
     else:
         print(f"compute registered_buffer for original models ... {register_buffer_path}/{register_buffer_fn}")
-        for batch_idx in range(int(math.ceil(float(len_embs_batch)/embs_batchsize))):
+        for batch_idx in range(int(math.ceil(float(len_embs_batch) / embs_batchsize))):
             if embs_batchsize * (batch_idx + 1) <= len_embs_batch:
                 embs_batch.append(embeddings[embs_batchsize * batch_idx : embs_batchsize * (batch_idx + 1)])
                 prompts_batch.append(prompts[embs_batchsize * batch_idx : embs_batchsize * (batch_idx + 1)])
@@ -724,7 +721,7 @@ def get_modules_list(
 
     return org_modules, module_name_list
 
-def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules: dict[str, nn.Module]):
+def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules: dict[str, nn.Module]) -> dict[str, torch.Tensor]:
     if Path(param_cache_path, f"vh_cache_dict_{find_module_name}.pt").is_file:
         param_vh_cache_dict = torch.load(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt", map_location=torch.device(device)) 
         param_s_cache_dict = torch.load(f"{param_cache_path}/s_cache_dict_{find_module_name}.pt", map_location=torch.device(device))
@@ -733,16 +730,16 @@ def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules:
         param_s_cache_dict = dict()
 
         for k, m in org_modules.items():
-            if m.__class__.__name__ == "Linear":
+            if m.__class__.__name__ == "Linear" and isinstance(m, nn.Linear):
                 _, S, Vh = torch.linalg.svd(m.weight, full_matrices=False) 
                 param_vh_cache_dict[k] = Vh.detach().cpu()
-                param_s_cache_dict[k] = S.detach().cpu()        
+                param_s_cache_dict[k] = S.detach().cpu()
 
-            elif m.__class__.__name__ == "Conv2d":
+            elif m.__class__.__name__ == "Conv2d" and isinstance(m, nn.Conv2d):
                 module_weight_flatten = m.weight.view(m.weight.size(0), -1)
                 _, S, Vh = torch.linalg.svd(module_weight_flatten, full_matrices=False) 
                 param_vh_cache_dict[k] = Vh.detach().cpu()
-                param_s_cache_dict[k] = S.detach().cpu()                
+                param_s_cache_dict[k] = S.detach().cpu()
 
         Path(param_cache_path).mkdir(exist_ok=True)
         torch.save(param_vh_cache_dict, f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt")
@@ -922,7 +919,7 @@ def train(args: Arguments):
     for gloce_module in network.gloce_layers:        
         n_forward = buffer_sel_basis_surrogate[gloce_module.find_name][gloce_module.gloce_org_name]['n_forward']
         n_sum_per_forward = buffer_sel_basis_surrogate[gloce_module.find_name][gloce_module.gloce_org_name]['n_sum_per_forward']
-        n_sum = n_forward*n_sum_per_forward
+        n_sum = n_forward * n_sum_per_forward
 
         stacked_buffer_surrogate = buffer_sel_basis_surrogate[gloce_module.find_name][gloce_module.gloce_org_name]['data'] / n_sum
         stacked_buffer_surrogate_mean = buffer_sel_basis_surrogate[gloce_module.find_name][gloce_module.gloce_org_name]["data_mean"] / n_sum

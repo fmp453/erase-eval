@@ -89,8 +89,8 @@ def train_ant(args: Arguments):
         e_p_minus.requires_grad = False
         
         # The loss function of ANT model
-        loss_1 = criteria(e_n_plus.to(devices[0]), e_0_plus.to(devices[0]) + (args.negative_guidance*(e_p_plus.to(devices[0]) - e_0_plus.to(devices[0])))) 
-        loss_3 = criteria(e_n_minus.to(devices[0]), e_0_minus.to(devices[0]) - (args.negative_guidance*(e_p_minus.to(devices[0]) - e_0_minus.to(devices[0]))))
+        loss_1 = criteria(e_n_plus.to(devices[0]), e_0_plus.to(devices[0]) + (args.negative_guidance * (e_p_plus.to(devices[0]) - e_0_plus.to(devices[0])))) 
+        loss_3 = criteria(e_n_minus.to(devices[0]), e_0_minus.to(devices[0]) - (args.negative_guidance * (e_p_minus.to(devices[0]) - e_0_minus.to(devices[0]))))
         loss_2 = criteria(e_0_plus.to(devices[0]), e_n0_plus.to(devices[0]))
         loss_4 = criteria(e_0_minus.to(devices[0]), e_n0_minus.to(devices[0]))
         loss: torch.Tensor = loss_3 + args.ant_alpha_2 * loss_4 + args.ant_alpha_1 * (loss_1 + args.ant_alpha_2 * loss_2)

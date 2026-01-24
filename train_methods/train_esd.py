@@ -32,11 +32,9 @@ def train_step(
     unet_student: UNet2DConditionModel,
     devices: list[torch.device]
 ) -> torch.Tensor:
-    """Train the model a single step for a given prompt and return the loss."""
 
     unet_student.train()
 
-    # Encode prompt
     prompt_embeds = encode_prompt(
         prompt=prompt, 
         removing_prompt=removing_prompt,

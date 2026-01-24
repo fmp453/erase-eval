@@ -227,8 +227,8 @@ def setup_forget_data(args: Arguments, device: torch.device):
         train_dl = DataLoader(train_set, batch_size=args.salun_masking_batch_size)
         return train_dl, descriptions
 
-def generate_mask(args: Arguments):
-    
+def generate_mask(args: Arguments) -> Path:
+
     device = get_devices(args)[0]
     tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
