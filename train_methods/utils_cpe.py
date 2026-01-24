@@ -447,17 +447,16 @@ class CPENetwork_ResAG(nn.Module):
 
         return all_params
     
-    def save_weights(self, file: str, dtype=None, metadata: dict | None = None):
-        state_dict = self.state_dict()
+    def save_weights(self, file: str, dtype: torch.dtype=torch.float32, metadata: dict | None = None):
+        state_dict: dict[str, torch.Tensor] = self.state_dict()
         state_dict_save = dict()
-        if dtype is not None:
-            for key in list(state_dict.keys()):
-                if ("lora" in key) and ("attention_gate" in key):
-                    continue                
-                
-                v = state_dict[key]
-                v = v.detach().clone().to("cpu").to(dtype)
-                state_dict_save[key] = v
+        for key in list(state_dict.keys()):
+            if ("lora" in key) and ("attention_gate" in key):
+                continue                
+            
+            v = state_dict[key]
+            v = v.detach().clone().to("cpu").to(dtype)
+            state_dict_save[key] = v
 
         if file.endswith(".safetensors"):
             save_file(state_dict_save, file, metadata)

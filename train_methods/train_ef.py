@@ -14,7 +14,7 @@ from peft import LoraConfig, get_peft_model_state_dict
 from torch.nn.utils import clip_grad_norm_
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from train_methods.train_utils import get_models, get_condition
+from train_methods.train_utils import get_models, get_condition, get_devices
 from train_methods.utils_ef import ddim_step_with_logprob, pipeline_with_logprob
 from utils import Arguments
 
@@ -25,7 +25,7 @@ def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     return model._orig_mod if is_compiled_module(model) else model
 
 def save_lora_checkpoint(unet: UNet2DConditionModel, output_dir: str, epoch: int):
-    save_path = Path(output_dir) / Path(f"checkpoint_epoch{epoch}")
+    save_path = Path(output_dir, f"checkpoint_epoch{epoch}")
     save_path.mkdir(exist_ok=True)
 
     unwrapped = unwrap_model(unet)
@@ -228,8 +228,7 @@ def sample_epoch(
 
 def train(args: Arguments):
 
-    device = args.device
-
+    device = get_devices(args)[0]
     tokenizer, text_encoder, vae, unet, scheduler, _ = get_models(args)
     text_encoder.eval()
     text_encoder.to(device)

@@ -43,7 +43,7 @@ def ddim_step_with_logprob(
     sample: torch.FloatTensor,
     eta: float = 1.0,
     prev_sample: torch.FloatTensor | None = None,
-) -> tuple:
+) -> tuple[torch.Tensor, ...]:
     """
     Predict the sample at the previous timestep by reversing the SDE. Core function to propagate the diffusion
     process from the learned model outputs (most often the predicted noise).
@@ -55,9 +55,6 @@ def ddim_step_with_logprob(
             current instance of sample being created by diffusion process.
         eta (`float`): weight of noise for added noise in diffusion step.
         sample: x_t
-
-    Returns:
-        `tuple` of [`~schedulers.scheduling_utils.DDIMSchedulerOutput`].
     """
     assert isinstance(self, DDIMScheduler)
     if self.num_inference_steps is None:

@@ -198,7 +198,7 @@ def train_inversion(
     index_updates = ~index_no_updates
     loss_sum = 0.0
 
-    for epoch in range(math.ceil(num_steps / len(dataloader))):
+    for _ in range(math.ceil(num_steps / len(dataloader))):
         unet.eval()
         text_encoder.train()
         for batch in dataloader:
@@ -223,7 +223,7 @@ def train_inversion(
                             lambda_ = min(1.0, 100 * lr_scheduler.get_last_lr()[0])
                             text_encoder.get_input_embeddings().weight[index_updates] = F.normalize(text_encoder.get_input_embeddings().weight[index_updates, :], dim=-1) * (pre_norm + lambda_ * (0.4 - pre_norm))
 
-                        current_norm = text_encoder.get_input_embeddings().weight[index_updates, :].norm(dim=-1)
+                        text_encoder.get_input_embeddings().weight[index_updates, :].norm(dim=-1)
                         
                         text_encoder.get_input_embeddings().weight[index_no_updates] = orig_embeds_params[index_no_updates]
 
@@ -589,9 +589,9 @@ def attn_component(
     progress_bar = trange(global_step, max_train_steps)
     progress_bar.set_description("Steps")
 
-    for epoch in range(first_epoch, num_train_epochs):
+    for _ in range(first_epoch, num_train_epochs):
         unet.train()
-        for step, batch in enumerate(train_dataloader):
+        for _, batch in enumerate(train_dataloader):
             
             with torch.no_grad():
                 latents: torch.Tensor = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
@@ -626,5 +626,4 @@ def attn_component(
             if global_step >= max_train_steps:
                 break
 
-    # output_dir: models/CONCEPT_NAME/fmn/CONCEPT_NAME-attn
     unet.save_pretrained(Path(output_dir).parent)

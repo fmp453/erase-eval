@@ -304,7 +304,7 @@ def train(
                 settings.unconditional,
             ]:
                 if cache[prompt] == None:
-                    input_ids = tokenize([prompt], tokenizer).input_ids
+                    input_ids: torch.Tensor = tokenize([prompt], tokenizer).input_ids
                     cache[prompt] = text_encoder(input_ids.to(text_encoder.device))[0]
 
             prompt_pair = PromptEmbedsPair(

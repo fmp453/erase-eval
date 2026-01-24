@@ -222,7 +222,7 @@ def diffusion_to_get_x_t(
 
     return latents
 
-# memo: argument `tensor_path` is removed because this is not used in official readme and there is no desc about this.
+
 def train(args: Arguments):
 
     torch.autograd.set_detect_anomaly(True)

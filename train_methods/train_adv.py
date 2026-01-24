@@ -326,4 +326,3 @@ def train(args: Arguments):
 
 def main(args: Arguments):
     train(args)
-

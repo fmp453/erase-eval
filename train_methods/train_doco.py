@@ -3,11 +3,11 @@ import itertools
 import math
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
+from PIL import Image
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
@@ -102,7 +102,7 @@ def main(args: Arguments):
         Path(f"{class_images_dir}/images").mkdir(exist_ok=True)
 
         # we need to generate training images
-        if (len(list(Path(class_images_dir, "images").iterdir())) < args.doco_num_class_images):
+        if len(list(Path(class_images_dir, "images").iterdir())) < args.doco_num_class_images:
 
             pipeline: StableDiffusionPipeline = DiffusionPipeline.from_pretrained(args.sd_version)
             pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
@@ -152,16 +152,16 @@ def main(args: Arguments):
             sample_dataloader = DataLoader(sample_dataset, batch_size=4)
 
             if Path(f"{class_images_dir}/caption.txt").exists():
-                Path(f"{class_images_dir}/caption.txt").unlink
+                Path(f"{class_images_dir}/caption.txt").unlink()
             if Path(f"{class_images_dir}/images.txt").exists():
-                Path(f"{class_images_dir}/images.txt").unlink
+                Path(f"{class_images_dir}/images.txt").unlink()
 
 
             for example in tqdm(sample_dataloader, desc="Generating class images"):
                 with open(f"{class_images_dir}/caption.txt", "a") as f1, open(
                     f"{class_images_dir}/images.txt", "a"
                 ) as f2:
-                    images: list[np.ndarray] = pipeline(
+                    images: list[Image.Image] = pipeline(
                         example["prompt"],
                         num_inference_steps=25,
                         guidance_scale=6.0,

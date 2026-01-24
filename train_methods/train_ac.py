@@ -95,7 +95,7 @@ def train(args: Arguments):
         with torch.no_grad():
             anchor_pred = unet(noisy_latens[:anchor_embedding.size(0)], timesteps[:anchor_embedding.size(0)], anchor_embedding).sample
         
-        mask = batch["mask"].to(device)
+        mask: torch.Tensor = batch["mask"].to(device)
 
         loss: torch.Tensor = F.mse_loss(noise_pred, anchor_pred, reduction="none")
         loss = ((loss * mask).sum([1, 2, 3]) / mask.sum([1, 2, 3])).mean()

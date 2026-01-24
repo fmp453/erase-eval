@@ -12,6 +12,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 from tqdm import trange
+from PIL import Image
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
@@ -24,7 +25,7 @@ from diffusers.optimization import get_scheduler
 from utils import Arguments
 from train_methods.consts import imagenette_labels
 from train_methods.data import Imagenette, NSFW, SalUnDataset
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize, get_devices, get_models, get_condition
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices, get_models, get_condition
 
 warnings.filterwarnings("ignore")
 
@@ -176,7 +177,7 @@ def salun(args: Arguments, mask_path: str):
     unet_student.eval()
     unet_student.save_pretrained(args.save_dir)
 
-def _convert_image_to_rgb(image):
+def _convert_image_to_rgb(image: Image.Image):
     return image.convert("RGB")
 
 def get_transform(interpolation=InterpolationMode.BICUBIC, size=512):

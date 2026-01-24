@@ -23,7 +23,7 @@ def train_ant(args: Arguments):
     devices = get_devices(args)
     gradients = defaultdict(float)
     save_path = Path(args.save_dir)
-    gradient_path = Path("gradient") / Path(f"{args.ant_method}_{args.ant_lr}")
+    gradient_path = Path("gradient", f"{args.ant_method}_{args.ant_lr}")
 
     words = [args.concepts.split(",")]
 

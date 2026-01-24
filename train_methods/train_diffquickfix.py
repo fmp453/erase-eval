@@ -1,19 +1,15 @@
 # Localizing and Editing Knowledge in Text-to-Image Generative Models (DiffQuickFix)
-
 # almost of all is copied from https://github.com/adobe-research/DiffQuickFixRelease/blob/main/causal_trace_model_edit.ipynb
 
-import os
-import random
 from copy import deepcopy
 
-import numpy as np
 import torch
 import torch.nn as nn
 from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import StableDiffusionPipeline
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionSafetyChecker
 
-from train_methods.train_utils import get_devices
+from train_methods.train_utils import get_devices, seed_everything
 from utils import Arguments
 
 class SafteyChecker(StableDiffusionSafetyChecker):
@@ -28,20 +24,12 @@ class SafteyChecker(StableDiffusionSafetyChecker):
         has_nsfw_concepts = [False for _ in range(len(images))]
         return images, has_nsfw_concepts
 
-def set_seed(seed: int=42) -> None:
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    # Set a fixed value for the hash seed
-    os.environ["PYTHONHASHSEED"] = str(seed)
 
 def decode_tokens(tokenizer: CLIPTokenizer, token_array):
     if hasattr(token_array, "shape") and len(token_array.shape) > 1:
         return [decode_tokens(tokenizer, row) for row in token_array]
     return [tokenizer.decode([t]) for t in token_array]
+
 
 # maybe under construction
 def train_edit(model, projection_matrices, og_matrices, contexts, values, old_texts, new_texts, lamb=0.01):
@@ -109,7 +97,7 @@ def train(args: Arguments):
     text_encoder: CLIPTextModel = sd_pipeline.text_encoder
     tokenizer: CLIPTokenizer = sd_pipeline.tokenizer
 
-    set_seed(seed)
+    seed_everything(seed)
 
     # Define the self-attention layer which needs to be edited 
     self_layer = 0 ## Default = 0, found via causal tracing in the paper

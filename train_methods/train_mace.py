@@ -3,7 +3,6 @@
 import os
 import gc
 import math
-import random
 import shutil
 import warnings
 from pathlib import Path
@@ -21,7 +20,7 @@ from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.loaders import AttnProcsLayers
 from diffusers.optimization import get_scheduler
 
-from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn, get_devices, get_models
+from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn, get_devices, get_models, seed_everything
 from train_methods.train_utils import AttnController, LoRAAttnProcessor
 from train_methods.segment_anything.segment_anything import SamPredictor, sam_hq_model_registry
 from train_methods.groundingdino.models import build_model, GroundingDINO
@@ -72,10 +71,10 @@ def inference(args: Arguments, device: str, multi_concept: list[list[str]], outp
 
 def load_model(model_config_path, model_checkpoint_path):
     args = SLConfig.fromfile(model_config_path)
-    model = build_model(args)
+    model: nn.Module = build_model(args)
     checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
-    load_res = model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
-    _ = model.eval()
+    model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+    model.eval()
     return model
 
 def get_phrases_from_posmap(posmap: torch.BoolTensor, tokenized: dict, tokenizer: AutoTokenizer, left_idx: int = 0, right_idx: int = 255):
@@ -209,11 +208,6 @@ def making_data(args: Arguments):
             save_mask = to_pil_image(GSAM_mask)
             save_mask.save(f"{Path(mask_save_path, file).replace('.jpg', '_mask.jpg')}")
 
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
 def collate_fn(examples):
     input_ids = [example["instance_prompt_ids"] for example in examples]
@@ -255,7 +249,7 @@ def cfr_lora_training(args: Arguments):
     for i in range(len(concept_types)):
         multi_concept.append([concepts[i], concept_types[i]])
 
-    set_seed(args.seed)
+    seed_everything(args.seed)
     tokenizer, text_encoder, vae, unet, _, noise_scheduler = get_models(args)
     unet.to(device)
     vae.requires_grad_(False)

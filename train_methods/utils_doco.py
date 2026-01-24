@@ -51,8 +51,8 @@ class CustomDiffusionAttnProcessor:
             if attn.cross_attention_norm:
                 encoder_hidden_states = attn.norm_cross(encoder_hidden_states)
 
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
+        key: torch.Tensor = attn.to_k(encoder_hidden_states)
+        value: torch.Tensor = attn.to_v(encoder_hidden_states)
         if crossattn:
             detach = torch.ones_like(key)
             detach[:, :1, :] = detach[:, :1, :] * 0.
@@ -72,6 +72,7 @@ class CustomDiffusionAttnProcessor:
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
 
+
 class CustomDiffusionPipeline(StableDiffusionPipeline):
     _optional_components = ["safety_checker","feature_extractor", "modifier_token_id"]
 
@@ -85,15 +86,7 @@ class CustomDiffusionPipeline(StableDiffusionPipeline):
         feature_extractor: CLIPFeatureExtractor,
         modifier_token_id: list = [],
     ):
-        super().__init__(vae,
-                         text_encoder,
-                         tokenizer,
-                         unet,
-                         scheduler,
-                         None,
-                         feature_extractor,
-                         None)
-
+        super().__init__(vae, text_encoder, tokenizer, unet, scheduler, None, feature_extractor, None)
         self.modifier_token_id = modifier_token_id
 
     def save_pretrained(self, save_path, parameter_group="cross-attn", all=False):

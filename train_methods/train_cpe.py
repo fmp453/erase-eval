@@ -250,7 +250,7 @@ def train_adv_one_stage(
                 prompt_pairs.append(prompt_pair)
 
         # Prepare adversairal prompt
-        embeddings_adv = adv_prompts.forward(prompt_pair.target)
+        embeddings_adv: torch.Tensor = adv_prompts.forward(prompt_pair.target)
         len_emb_adv = embeddings_adv.size(0)
 
         loss_prompt_adv_to_k = 0
@@ -287,7 +287,7 @@ def train_adv_one_stage(
         loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv"].backward()
 
         if args.max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(trainable_params_adv, args.max_grad_norm, norm_type=2)
+            nn.utils.clip_grad_norm_(trainable_params_adv, args.max_grad_norm, norm_type=2)
         optimizer_adv.step()
         lr_scheduler_adv.step()
 
@@ -295,10 +295,7 @@ def train_adv_one_stage(
         
     return network, adv_prompts
 
-def train(
-    args: Arguments,
-    prompts: list[PromptSettings],
-):
+def train(args: Arguments, prompts: list[PromptSettings]):
     model_metadata = {
         "prompts": ",".join([prompt.target for prompt in prompts]),
         "rank": str(args.cpe_network_rank),
@@ -579,7 +576,7 @@ def train(
                 lr_scheduler_num_cycles=args.cpe_lr_scheduler_num_cycles,
                 lr_warmup_steps=args.cpe_lr_warmup_steps
             )
-            criteria_adv = torch.nn.MSELoss()        
+            criteria_adv = nn.MSELoss()        
 
             network, adv_prompts = train_adv_one_stage(
                 args=args,
@@ -607,13 +604,11 @@ def train(
     save_path.mkdir(parents=True, exist_ok=True)
     network.save_weights(
         save_path / "model_last.safetensors",
-        dtype=torch.float32,
         metadata=model_metadata,
     )
 
     adv_prompts.save_weights(
         save_path / "model_adv_prompts_last.safetensors",
-        dtype=torch.float32,
         metadata=model_metadata,
     )
 
@@ -644,18 +639,18 @@ def main(args: Arguments):
     ]
 
     base_path = args.save_dir
-    
+
     for p_idx, p in enumerate(prompts):
         args.save_dir = base_path.replace(args.cpe_replace_word.upper(), p.target.replace(' ', '_'))
 
         if (p_idx < args.cpe_st_prompt_idx) or (p_idx > args.cpe_end_prompt_idx):
             continue
-    
+
         Path(args.save_dir).mkdir(exist_ok=True)
         if args.cpe_skip_learned and Path(f"{args.save_dir}/model_last.safetensors").is_file():
             print(f"{p_idx} {p.target} has already been trained")
             continue
-                
+
         print(p_idx, [p])
         seed_everything(args.seed)
         train(args, [p])

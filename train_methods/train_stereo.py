@@ -19,7 +19,7 @@ from tqdm import tqdm
 from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, UNet2DConditionModel, get_scheduler
 
 from train_methods.data import TextualInversionDataset
-from train_methods.train_utils import get_models, get_devices, get_condition, gather_parameters, predict_noise, sample_until
+from train_methods.train_utils import get_models, get_devices, get_condition, gather_parameters, predict_noise, sample_until, seed_everything
 from utils import Arguments
 
 
@@ -129,15 +129,8 @@ def train_erasing(
     save_dir,
 ) -> UNet2DConditionModel:
     # Set the random seed for reproducibility
-    seed = args.seed
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
+    seed_everything(args.seed)
     nsteps = 50
-
     parameters = gather_parameters(args.stereo_method, unet)
 
     optimizer = optim.AdamW(parameters, lr=args.stereo_ste_lr)
@@ -222,12 +215,7 @@ def train_concept_inversion(
 ) -> tuple[CLIPTokenizer, CLIPTextModel]:
     
     # Set the random seed for reproducibility
-    seed = args.seed
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    seed_everything(args.seed)
 
     for param in text_encoder.get_input_embeddings().parameters():
         param.requires_grad = True
@@ -351,6 +339,7 @@ def generate_unique_placeholder_token(saved_tokens: dict[str, torch.Tensor], ite
     return placeholder_token
 
 
+@torch.no_grad()
 def inference_and_save(
     args: Arguments,
     prompt,
@@ -378,34 +367,32 @@ def inference_and_save(
     iteration_dir = Path(args.data_dir, f"iteration_{iteration}")
     iteration_dir.mkdir(exist_ok=True)
 
-    with torch.no_grad():
-        erased_images = pipe(
-            f"{args.stereo_generic_prompt} {prompt}",
+    erased_images = pipe(
+        f"{args.stereo_generic_prompt} {prompt}",
+        width=args.image_size,
+        height=args.image_size,
+        num_inference_steps=50,
+        num_images_per_prompt=args.num_images_per_prompt,
+        generator=generator,
+        guidance_scale=args.guidance_scale
+    ).images
+
+    for i, img in enumerate(erased_images):
+        img.save(Path(iteration_dir, f"erased_image_{i}.png"))
+
+    for token in list(saved_tokens.values()):
+        attack_images = pipe(
+            f"{args.stereo_generic_prompt} {token}",
             width=args.image_size,
             height=args.image_size,
             num_inference_steps=50,
             num_images_per_prompt=args.num_images_per_prompt,
             generator=generator,
             guidance_scale=args.guidance_scale
-        ).images
-
-    for i, img in enumerate(erased_images):
-        img.save(Path(iteration_dir, f"erased_image_{i}.png"))
-
-    with torch.no_grad():
-        for token in list(saved_tokens.values()):
-            attack_images = pipe(
-                f"{args.stereo_generic_prompt} {token}",
-                width=args.image_size,
-                height=args.image_size,
-                num_inference_steps=50,
-                num_images_per_prompt=args.num_images_per_prompt,
-                generator=generator,
-                guidance_scale=args.guidance_scale
-            )
-            for i, img in enumerate(attack_images):
-                img.save(Path(iteration_dir, f"attack_image_placeholder_{token}_{i}.png"))
-            torch.cuda.empty_cache()
+        )
+        for i, img in enumerate(attack_images):
+            img.save(Path(iteration_dir, f"attack_image_placeholder_{token}_{i}.png"))
+        torch.cuda.empty_cache()
 
     print(f"Generated and saved images for iteration {iteration}.")
 
@@ -490,9 +477,7 @@ def search_thoroughly_enough(
 
     # Final model and token saving after all iterations
     final_model_path = save_dir / "ste_stage_model.pt"
-    torch.save({
-        'saved_tokens': saved_tokens
-    }, final_model_path)
+    torch.save({'saved_tokens': saved_tokens}, final_model_path)
     print(f"\nIterative erasure and attack complete. Final model saved to {final_model_path}")
     print(f"Placeholder tokens used for attack: {saved_tokens}")
 

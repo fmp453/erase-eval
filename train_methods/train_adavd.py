@@ -18,8 +18,17 @@ from utils import Arguments
 
 class VisualAttentionProcess(nn.Module):
 
-    def __init__(self, module_name=None, atten_type='original', target_records=None, record=False, 
-    record_type=None, sigmoid_setting=None, decomp_timestep=0,  **kwargs):
+    def __init__(
+        self,
+        module_name=None,
+        atten_type='original',
+        target_records=None,
+        record=False,
+        record_type=None,
+        sigmoid_setting: tuple[float, ...]=(0.0),
+        decomp_timestep=0,
+        **kwargs
+    ):
         super().__init__()
         self.module_name = module_name
         self.atten_type = atten_type
@@ -44,7 +53,7 @@ class AttnProcessor():
         target_records=None, 
         record=False, 
         record_type: str | None=None, 
-        sigmoid_setting=None, 
+        sigmoid_setting: tuple[float, ...]=(0.0, 0.0, 0.0),
         decomp_timestep=0
     ) -> None:
         self.module_name = module_name
@@ -56,7 +65,7 @@ class AttnProcessor():
         self.sigmoid_setting = sigmoid_setting
         self.decomp_timestep=decomp_timestep
 
-    def sigmoid(self, x, setting): 
+    def sigmoid(self, x: torch.Tensor, setting) -> torch.Tensor:
         a, b, c = setting
         return c / (1 + torch.exp(-a * (x - b)))
 
@@ -308,7 +317,6 @@ def main(args: Arguments):
     device = get_devices(args)[0]
     mode_list = args.adavd_mode.replace(' ', '').split(',')
 
-    # region [If certain concept is already sampled, then skip it.]
     concept_list, concept_list_tmp = [], [item.strip() for item in args.adavd_contents.split(',')]
     if 'retain' in mode_list:
         for concept in concept_list_tmp:
@@ -320,9 +328,7 @@ def main(args: Arguments):
         concept_list = concept_list_tmp
     if len(concept_list) == 0: 
         exit()
-    # endregion
 
-    # region [Prepare Models]
     tokenizer, text_encoder, vae, unet, ddim_scheduler, _ = get_models(args)
     scheduler = DPMSolverMultistepScheduler.from_config(ddim_scheduler.config)
     text_encoder.to(device)
@@ -332,16 +338,13 @@ def main(args: Arguments):
         unet_erase = deepcopy(unet)
     if 'retain' in mode_list: 
         unet_retain = deepcopy(unet)
-    # endregion
 
-    # region [Prepare embeddings]
     target_concepts = [item.strip() for item in args.concepts.split(',')]
     target_concept_encodings_ = [get_condition(prompt=concept, tokenizer=tokenizer, text_encoder=text_encoder) for concept in target_concepts]
     target_eot_idxs = [get_eot_idx(tokenize(prompt=concept, tokenizer=tokenizer).input_ids) for concept in target_concepts]
     target_concept_encoding = [get_spread_embedding(target_concept_encoding_, idx) for (target_concept_encoding_, idx) in zip(target_concept_encodings_, target_eot_idxs)]
     target_concept_encoding = torch.concat(target_concept_encoding)
     uncond_encoding = get_condition(prompt='', tokenizer=tokenizer, text_encoder=text_encoder)
-    # endregion
 
     if 'erase' in mode_list or 'retain' in mode_list:
         unet = set_attenprocessor(unet, atten_type='original', record=True, record_type=args.adavd_record_type)
