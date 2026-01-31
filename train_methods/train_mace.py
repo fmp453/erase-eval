@@ -22,7 +22,8 @@ from diffusers.optimization import get_scheduler
 from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn, get_devices, get_models, seed_everything
 from train_methods.train_utils import AttnController, LoRAAttnProcessor
 from train_methods.segment_anything.segment_anything import SamPredictor, sam_hq_model_registry
-from train_methods.groundingdino.models import build_model, GroundingDINO
+from train_methods.groundingdino.models import build_model
+from train_methods.groundingdino.models.GroundingDINO.groundingdino import GroundingDINO
 from train_methods.groundingdino.util.slconfig import SLConfig
 from train_methods.groundingdino.util.utils import clean_state_dict
 from train_methods.data import MACEDataset
