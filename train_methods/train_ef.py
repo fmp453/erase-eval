@@ -6,20 +6,21 @@ import contextlib
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from diffusers import UNet2DConditionModel, StableDiffusionPipeline, DDIMScheduler, AutoencoderKL
 from diffusers.utils import convert_state_dict_to_diffusers
 from diffusers.utils.torch_utils import is_compiled_module
 from peft import LoraConfig, get_peft_model_state_dict
-from torch.nn.utils import clip_grad_norm_
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from train_methods.train_utils import get_models, get_condition, get_devices
 from train_methods.utils_ef import ddim_step_with_logprob, pipeline_with_logprob
 from utils import Arguments
 
-def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+def unwrap_model(model: nn.Module) -> nn.Module:
     return model._orig_mod if is_compiled_module(model) else model
+
 
 def save_lora_checkpoint(unet: UNet2DConditionModel, output_dir: Path, epoch: int):
     save_path = Path(output_dir, f"checkpoint_epoch{epoch}")
@@ -36,6 +37,7 @@ def save_lora_checkpoint(unet: UNet2DConditionModel, output_dir: Path, epoch: in
         safe_serialization=True,
     )
 
+
 def setup_optimizer_and_scaler(unet: UNet2DConditionModel, args: Arguments):
     """
     Create optimizer (8-bit AdamW if requested) over
@@ -51,7 +53,7 @@ def setup_optimizer_and_scaler(unet: UNet2DConditionModel, args: Arguments):
         optimizer_cls = optim.AdamW
 
     # z_model is a single scalar parameter to learn the flow constant
-    z_model = torch.nn.Parameter(
+    z_model = nn.Parameter(
         torch.tensor(-0.1953, device=unet.device, dtype=torch.float32, requires_grad=True)
     )
 
@@ -147,8 +149,8 @@ def train_eraseflow_step(
     total_loss = torch.mean(total_loss.pow(2))
 
     total_loss.backward()
-    clip_grad_norm_(unet.parameters(), args.max_grad_norm)
-    clip_grad_norm_(z_model, args.max_grad_norm)
+    nn.utils.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
+    nn.utils.clip_grad_norm_(z_model, args.max_grad_norm)
     optimizer.step()
 
     optimizer.zero_grad()
@@ -185,7 +187,7 @@ def sample_epoch(
     scheduler.set_timesteps(args.ddim_steps, device=text_encoder.device)
 
     # Perform one pass of inference‐mode sampling (no gradients)
-    with torch.inference_mode():
+    with torch.no_grad():
         ret_tuple = pipeline_with_logprob(
             tokenizer,
             text_encoder,
