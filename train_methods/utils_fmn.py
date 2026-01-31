@@ -6,6 +6,7 @@ import re
 import math
 import itertools
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -84,8 +85,9 @@ def get_models(pretrained_model_name_or_path: str, placeholder_tokens: list[str]
         placeholder_token_ids,
     )
 
+
 def text2img_dataloader(train_dataset, train_batch_size: int, tokenizer: CLIPTokenizer):
-    def collate_fn(examples):
+    def collate_fn(examples: dict[str, Any]):
         input_ids = [example["instance_prompt_ids"] for example in examples]
         uncond_ids = [example["uncond_prompt_ids"] for example in examples]
         pixel_values = [example["instance_images"] for example in examples]
@@ -166,8 +168,7 @@ def loss_step(batch: dict[str, torch.Tensor], unet: UNet2DConditionModel, vae: A
         model_pred = model_pred * mask
         target = target * mask
 
-    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-    return loss
+    return F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
 
 def train_inversion(
@@ -350,6 +351,7 @@ def ti_component(
 
     del ti_optimizer
 
+
 def parse_safeloras_embeds(safeloras) -> dict[str, torch.Tensor]:
     embeds = {}
     metadata = safeloras.metadata()
@@ -464,16 +466,20 @@ def attn_component(
             self.attn_probs = []
             self.logs = []
             self.concept_positions = None
+        
         def __call__(self, attn_prob, m_name) -> None:
             bs, _ = self.concept_positions.shape
             head_num = attn_prob.shape[0] // bs
             target_attns = attn_prob.masked_select(self.concept_positions[:,None,:].repeat(head_num, 1, 1)).reshape(-1, self.concept_positions[0].sum())
             self.attn_probs.append(target_attns)
             self.logs.append(m_name)
+        
         def set_concept_positions(self, concept_positions):
             self.concept_positions = concept_positions
-        def loss(self):
+        
+        def loss(self) -> torch.Tensor:
             return torch.cat(self.attn_probs).norm()
+        
         def zero_attn_probs(self):
             self.attn_probs = []
             self.logs = []
@@ -483,7 +489,10 @@ def attn_component(
         def __init__(self, attn_controller: "AttnController", module_name) -> None:
             self.attn_controller = attn_controller
             self.module_name = module_name
-        def __call__(self, attn, hidden_states, encoder_hidden_states=None, attention_mask=None):
+        
+        def __call__(
+            self, attn, hidden_states: torch.Tensor, encoder_hidden_states=None, attention_mask=None
+        ) -> torch.Tensor:
             batch_size, sequence_length, _ = hidden_states.shape
             attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size=batch_size)
 

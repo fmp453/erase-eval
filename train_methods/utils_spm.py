@@ -132,7 +132,7 @@ class SPMNetwork(nn.Module):
 
         return spm_layers
 
-    def prepare_optimizer_params(self, text_encoder_lr, unet_lr, default_lr):
+    def prepare_optimizer_params(self, default_lr):
         all_params = []
 
         if self.unet_spm_layers:

@@ -13,6 +13,7 @@ import torch.optim as optim
 import bitsandbytes as bnb
 from tqdm import tqdm
 from diffusers import PNDMScheduler
+from diffusers.models.attention_processor import Attention
 from torch.optim.lr_scheduler import LRScheduler
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
@@ -54,7 +55,7 @@ def train_erase_one_stage(
         optimizer.zero_grad()
         prompt_one = prompts
 
-        cache = dict()      
+        cache: dict[str, torch.Tensor] = {}
         with torch.no_grad():            
             prompt_pairs: list[PromptEmbedsPair] = []
 
@@ -78,7 +79,6 @@ def train_erase_one_stage(
                 prompt_pairs.append(prompt_pair)
 
         # Prepare for anchoring prompt
-        with torch.no_grad():
             anchors = anchor_sampler.sample_mixup_batch_cache(
                 prompt_pair,
                 embeddings_anchor_cache=embeddings_anchor_cache,
@@ -342,10 +342,10 @@ def train(args: Arguments, prompts: list[PromptSettings]):
     lipschitz_o = []
     lipschitz_q = []
     lipschitz_ov = []
-    
-    unet_modules = dict()
+
     for name, module in unet.named_modules():
         if ("attn2" in name) and (module.__class__.__name__ == "Attention"):
+            assert isinstance(module, Attention)
             mat_o = module.to_out[0].weight.detach()
             mat_q = module.to_q.weight.detach()
             mat_v = module.to_v.weight.detach()
@@ -513,7 +513,7 @@ def train(args: Arguments, prompts: list[PromptSettings]):
             args.cpe_lr = train_lr
             args.cpe_lr_scheduler_num_cycles = train_lr_scheduler_num_cycles
 
-        trainable_params = network.prepare_optimizer_params(args.cpe_text_encoder_lr, args.cpe_unet_lr, args.cpe_lr)
+        trainable_params = network.prepare_optimizer_params(args.cpe_lr)
 
         pbar = tqdm(range(args.cpe_iterations))
 

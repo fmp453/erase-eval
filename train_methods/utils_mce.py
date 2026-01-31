@@ -35,8 +35,8 @@ def calculate_shift(
 ):
     m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
     b = base_shift - m * base_seq_len
-    mu = image_seq_len * m + b
-    return mu
+    return image_seq_len * m + b
+
 
 def scale_noise(
     scheduler,
@@ -44,19 +44,6 @@ def scale_noise(
     timestep: float | torch.Tensor,
     noise: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """
-    Foward process in flow-matching
-
-    Args:
-        sample (`torch.Tensor`):
-            The input sample.
-        timestep (`int`, *optional*):
-            The current timestep in the diffusion chain.
-
-    Returns:
-        `torch.Tensor`:
-            A scaled input sample.
-    """
     # if scheduler.step_index is None:
     scheduler._init_step_index(timestep)
 
@@ -77,7 +64,7 @@ def calc_v_flux(
     t: torch.Tensor
 ) -> torch.Tensor:
     timestep = t.expand(latents.shape[0])
-    noise_pred = pipe.transformer(
+    return pipe.transformer(
         hidden_states=latents,
         timestep=timestep / 1000,
         guidance=guidance,
@@ -89,7 +76,6 @@ def calc_v_flux(
         return_dict=False,
     )[0]
 
-    return noise_pred
 
 @torch.no_grad()
 def FlowEditFLUX(

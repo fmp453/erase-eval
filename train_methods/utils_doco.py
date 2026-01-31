@@ -189,8 +189,6 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
                         f3.write(f"{class_images_dir}/images/{total}.jpg" + "\n")
                         total += 1
                         pbar.update(1)
-                    else:
-                        continue
                 except:
                     continue
     else:
@@ -200,7 +198,7 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
                 count += 1
                 f1.write(images["caption"] + "\n")
                 pbar.update(1)
-    return
+
 
 def get_anchor_prompts(
     class_prompt,
@@ -263,10 +261,6 @@ def clean_prompt(class_prompt_collection):
     class_prompt_collection = [x.replace('"', "") for x in class_prompt_collection]
     return class_prompt_collection
 
-def safe_dir(dir: Path):
-    if not dir.exists():
-        dir.mkdir()
-    return dir
 
 def adjust_gradient(model: nn.Module, optim: torch.optim.Optimizer, norm_grad, loss_a: torch.Tensor, loss_b: torch.Tensor, lambda_=1):
     optim.zero_grad()
@@ -283,8 +277,8 @@ def adjust_gradient(model: nn.Module, optim: torch.optim.Optimizer, norm_grad, l
     for (p, b_grad) in zip([p[1] for p in model.named_parameters() if ("attn2" in p[0] and p[1].grad != None)], b_grads):
         if p.grad is not None and b_grad is not None:
             # Normalize gradients
-            b_grad_norm = b_grad / (torch.linalg.norm(b_grad) + 1e-8)
-            a_grad_norm = p.grad / (torch.linalg.norm(p.grad) + 1e-8)
+            b_grad_norm: torch.Tensor = b_grad / (torch.linalg.norm(b_grad) + 1e-8)
+            a_grad_norm: torch.Tensor = p.grad / (torch.linalg.norm(p.grad) + 1e-8)
             # Calculate dot product between gradients
             dot_product = torch.dot(a_grad_norm.flatten(), b_grad_norm.flatten())
             # If gradients are in opposite directions, adjust gradient

@@ -287,7 +287,7 @@ def train(
         module=SPMLayer,
     ).to(device)
 
-    trainable_params = network.prepare_optimizer_params(text_encoder_lr, unet_lr, lr)
+    trainable_params = network.prepare_optimizer_params(lr)
     optimizer = bnb.optim.AdamW8bit(trainable_params, lr=lr)
     lr_scheduler = get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_steps)
     criteria = nn.MSELoss()

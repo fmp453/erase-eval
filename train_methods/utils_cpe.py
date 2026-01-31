@@ -200,6 +200,7 @@ class Attention_Gate(nn.Module):
         self.reset_cache()
         self.use_cache = flag
 
+
 class CPELayer_ResAG(nn.Module):
     """replaces forward method of the original Linear, instead of replacing the otrain_prompt_editor_mixup_sampriginal Linear module.
     """
@@ -224,6 +225,7 @@ class CPELayer_ResAG(nn.Module):
         self.dim = dim
 
         if org_module.__class__.__name__ == "Linear":
+            assert isinstance(org_module, nn.Linear)
             in_dim = org_module.in_features
             out_dim = org_module.out_features
             # dim of lora_down: N x D x H
@@ -402,7 +404,7 @@ class CPENetwork_ResAG(nn.Module):
         target_replace_modules: list[str],
         rank: int,
         multiplier: float,
-    ) -> list:
+    ) -> list[CPELayer_ResAG]:
         cpe_layers = []
 
         for name, module in root_module.named_modules():
@@ -437,7 +439,7 @@ class CPENetwork_ResAG(nn.Module):
 
         return cpe_layers
     
-    def prepare_optimizer_params(self, text_encoder_lr, unet_lr, default_lr):    
+    def prepare_optimizer_params(self, default_lr):    
         all_params = []
 
         param_data = {"params": self.parameters()}
@@ -508,28 +510,29 @@ class PromptTuningLayer(nn.Module):
         nn.init.kaiming_uniform_(self.prompts.weight, a=math.sqrt(5))
         self.prompts.weight.data = self.prompts.weight.data / (self.token_dim**2)    
 
-    def forward(self, x, idx=None):
+    def forward(self, x, idx=None) -> torch.Tensor:
         return x + self.prompts.weight if idx is None else x + self.prompts.weight[idx]
         
-    def forward_eval(self, x, idx=None):
+    def forward_eval(self, x, idx=None) -> torch.Tensor:
         return x + self.prompts.weight.detach() if idx is None else x + self.prompts.weight[idx].detach()
 
-    def forward_prev(self, x, idx=None):
+    def forward_prev(self, x, idx=None) -> torch.Tensor:
         return x + self.prompts_prev.weight if idx is None else x + self.prompts_prev.weight[idx]
     
-    def forward_prev_eval(self, x, idx=None):
+    def forward_prev_eval(self, x, idx=None) -> torch.Tensor:
         return x + self.prompts_prev.weight.detach() if idx is None else x + self.prompts_prev.weight[idx].detach()
     
     def save_weights(self, file: str, dtype=None, metadata: dict | None = None):
-        state_dict = self.state_dict()
+        state_dict: dict[str, torch.Tensor] = self.state_dict()
 
-        state_dict_save = dict()
+        state_dict_save = {}
         if dtype is not None:
-            for key in list(state_dict.keys()):
-                v = state_dict[key]
-                v = v.detach().clone().to("cpu").to(dtype)
+            for key, value in state_dict.items():
+                v = value.detach().clone().to("cpu").to(dtype)
                 state_dict_save[key] = v
-                
+        else:
+            state_dict_save = state_dict.copy()
+
         if file.endswith(".safetensors"):
             save_file(state_dict_save, file, metadata)
         else:
