@@ -9,7 +9,7 @@ import subprocess
 from glob import glob
 from pathlib import Path
 from itertools import product
-from typing import Optional, Literal
+from typing import Literal
 
 import pandas as pd
 import torch
@@ -37,28 +37,45 @@ HF_TOKEN = os.environ["HF_TOKEN"]
 
 class Arguments(BaseModel):
 
-    concept: Optional[str] = Field("cat")
+    concept: str = Field("cat")
     method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "original"] = Field("esd")
-    erased_model_path: Optional[str] = Field("models/")
-    original_output_dir_name: Optional[str] = Field("gen-images/original")
-    seed: Optional[int] = Field(2024)
+    erased_model_path: str = Field("models/")
+    original_output_dir_name: str = Field("gen-images/original")
+    seed: int = Field(2024)
 
     concept_type: Literal["object", "style", "nude"] = Field("object")
-    is_nsfw: Optional[bool] = Field(False)
+    is_nsfw: bool = Field(False)
     protocol: Literal["1", "2", "3", "all"] = Field("3")
     encoding_method: Literal["t5-xxl", "modern-bert"] = Field("modern-bert")
-    base_version: Optional[str] = Field("compvis/stable-diffusion-v1-4")
-    gpt_4o_version: Optional[str] = Field("gpt-4o-2024-11-20")
-    gpt_4o_mini_version: Optional[str] = Field("gpt-4o-mini-2024-07-18")
-    device: Optional[str] = Field("0")
+    base_version: str = Field("compvis/stable-diffusion-v1-4")
+    gpt_4o_version: str = Field("gpt-4o-2024-11-20")
+    gpt_4o_mini_version: str = Field("gpt-4o-mini-2024-07-18")
+    device: str = Field("0")
 
     @classmethod
     def parse_args(cls):
         parser = argparse.ArgumentParser()
         fields = cls.model_fields
         for name, field in fields.items():
-            parser.add_argument(f"--{name}", default=field.default, help=field.description)
-        return cls.model_validate(parser.parse_args().__dict__)
+            annotation = field.annotation
+            default = field.default
+            help_text = field.description
+            if annotation is bool:
+                if default is False:
+                    parser.add_argument(
+                        f"--{name}",
+                        action="store_true",
+                        help=help_text
+                    )
+                else:
+                    parser.add_argument(
+                        f"--{name}",
+                        action="store_false",
+                        help=help_text
+                    )
+            else:
+                parser.add_argument(f"--{name}", default=field.default, help=field.description)
+        return cls.model_validate(vars(parser.parse_args()))
 
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
