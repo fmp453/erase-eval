@@ -36,29 +36,29 @@ class Arguments(BaseModel):
     save_dir: Optional[str] = Field("models", description="path to dir for erased models")
 
     anchor_concept: Optional[str] = Field("dog")
-    seperator: Optional[str] = Field(None, desciption='separator if you want to train bunch of erased_words separately')
+    seperator: Optional[str] = Field(None, description='separator if you want to train bunch of erased_words separately')
 
-    image_size: Optional[int] = Field(512, desciption='image size used to train')
-    ddim_steps: Optional[int] = Field(50, desciption='ddim steps of inference used to train')
+    image_size: Optional[int] = Field(512, description='image size used to train')
+    ddim_steps: Optional[int] = Field(50, description='ddim steps of inference used to train')
     ddpm_steps: Optional[int] = Field(1000)
     max_grad_norm: Optional[float] = Field(1.0)
     lr_scheduler: Literal["constant", "linear","cosine", "cosine_warmup", "cosine_warmup_restart", "polynomial", "polynomial_warmup", "polynomial_warmup_restart"] = Field("constant", description="learning rate scheduler")
     
-    negative_guidance: Optional[float] = Field(1, desciption='guidance of negative training used to train')
-    start_guidance: Optional[float] = Field(3, desciption='guidance of start image used to train')
+    negative_guidance: Optional[float] = Field(1, description='guidance of negative training used to train')
+    start_guidance: Optional[float] = Field(3, description='guidance of start image used to train')
 
     # for EAP and AGE
-    gumbel_lr: Optional[float] = Field(1e-3, desciption='learning rate for prompt')
-    gumbel_temp: Optional[float] = Field(2, desciption='temperature for gumbel softmax')
-    gumbel_hard: Literal[0, 1] = Field(0, desciption='hard for gumbel softmax, 0: soft, 1: hard')
-    gumbel_num_centers: Optional[int] = Field(100, desciption='number of centers for kmeans, if <= 0 then do not apply kmeans')
-    gumbel_update: Optional[int] = Field(100, desciption='update frequency for preserved set, if <= 0 then do not update')
-    gumbel_time_step: Optional[int] = Field(0, desciption='time step for the starting point to estimate epsilon')
-    gumbel_multi_steps: Optional[int] = Field(2, desciption='multi steps for calculating the output')
-    gumbel_k_closest: Optional[int] = Field(1000, desciption='number of closest tokens to consider')
-    ignore_special_tokens: Optional[bool] = Field(True, desciption='ignore special tokens in the embedding matrix')
-    vocab: Optional[str] = Field("EN3K", desciption='vocab')
-    pgd_num_steps: Optional[int] = Field(2, desciption='number of step to optimize adversarial concepts')
+    gumbel_lr: Optional[float] = Field(1e-3, description='learning rate for prompt')
+    gumbel_temp: Optional[float] = Field(2, description='temperature for gumbel softmax')
+    gumbel_hard: Literal[0, 1] = Field(0, description='hard for gumbel softmax, 0: soft, 1: hard')
+    gumbel_num_centers: Optional[int] = Field(100, description='number of centers for kmeans, if <= 0 then do not apply kmeans')
+    gumbel_update: Optional[int] = Field(100, description='update frequency for preserved set, if <= 0 then do not update')
+    gumbel_time_step: Optional[int] = Field(0, description='time step for the starting point to estimate epsilon')
+    gumbel_multi_steps: Optional[int] = Field(2, description='multi steps for calculating the output')
+    gumbel_k_closest: Optional[int] = Field(1000, description='number of closest tokens to consider')
+    ignore_special_tokens: Optional[bool] = Field(True, description='ignore special tokens in the embedding matrix')
+    vocab: Optional[str] = Field("EN3K", description='vocab')
+    pgd_num_steps: Optional[int] = Field(2, description='number of step to optimize adversarial concepts')
 
     # configs for ESD (Erased Stable Diffusion)
     esd_method: Literal["full", "selfattn", "xattn", "noxattn", "notime"] = Field("xattn", description="which parameters are updated")
@@ -79,9 +79,9 @@ class Arguments(BaseModel):
     
 
     # configs for EAP (Erasing-Adversarial-Preservation)
-    eap_method: Literal["full", "selfattn", "xattn", "noxattn", "notime", "xattn_matching", "xlayer", "selflayer"] = Field("xattn", desciption='method of training')
-    eap_iterations: Optional[int] = Field(1000, desciption='iterations used to train')
-    eap_lr: Optional[float] = Field(1e-5, desciption='learning rate used to train')
+    eap_method: Literal["full", "selfattn", "xattn", "noxattn", "notime", "xattn_matching", "xlayer", "selflayer"] = Field("xattn", description='method of training')
+    eap_iterations: Optional[int] = Field(1000, description='iterations used to train')
+    eap_lr: Optional[float] = Field(1e-5, description='learning rate used to train')
 
     # configs for AdvUnlearn
     # Training setup
@@ -158,7 +158,7 @@ class Arguments(BaseModel):
 
 
     # configs for SDD (safe self-distill diffusion)
-    sdd_method: Literal["full", "selfattn", "xattn", "noxattn", "notime"] = Field("xattn", desciption='method of training')
+    sdd_method: Literal["full", "selfattn", "xattn", "noxattn", "notime"] = Field("xattn", description='method of training')
     sdd_num_steps: Optional[int] = Field(1300, description="The total number of training iterations to perform.")
     sdd_concept_method: Literal["composite", "random", "iterative", "sequential"] = Field(default="iterative")
     
@@ -347,7 +347,7 @@ class Arguments(BaseModel):
     race_pgd_num_step: Optional[int] = Field(10)
 
     # configs for ant
-    ant_method: Literal["full", "selfattn", "xattn", "noxattn", "notime", "xattn_matching", "xlayer", "selflayer"] = Field("full", desciption='method of training')
+    ant_method: Literal["full", "selfattn", "xattn", "noxattn", "notime", "xattn_matching", "xlayer", "selflayer"] = Field("full", description='method of training')
     ant_iterations: Optional[int] = Field(250)
     ant_lr: Optional[float] = Field(5e-4)
     ant_before_step: Optional[int] = Field(7)
