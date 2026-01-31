@@ -50,6 +50,8 @@ class Arguments(BaseModel):
     base_version: str = Field("compvis/stable-diffusion-v1-4")
     gpt_4o_version: str = Field("gpt-4o-2024-11-20")
     gpt_4o_mini_version: str = Field("gpt-4o-mini-2024-07-18")
+    gpt_41_mini_version: str = Field("gpt-4.1-mini-2025-04-14")
+    gpt_41_version: str = Field("gpt-4.1-2025-04-14")
     device: str = Field("0")
 
     @classmethod
@@ -235,8 +237,8 @@ def generate_prompt_for_protocol1(args: Arguments, original_output_dir_name: str
         target_concept=args.concept,
         original_output_dir_name=original_output_dir_name,
         seed=args.seed,
-        gpt_version=args.gpt_4o_version,
-        gpt_4o_mini_version=args.gpt_4o_mini_version,
+        gpt_version=args.gpt_41_version,
+        gpt_41_mini_version=args.gpt_41_mini_version,
         device=args.device
     )
     print("Generating Caption...")
@@ -247,8 +249,8 @@ def generate_prompt_for_protocol2(args: Arguments, original_output_dir_name: str
         target_concept=args.concept,
         original_output_dir_name=original_output_dir_name,
         seed=args.seed,
-        gpt_version=args.gpt_4o_version,
-        gpt_4o_mini_version=args.gpt_4o_mini_version,
+        gpt_version=args.gpt_41_version,
+        gpt_41_mini_version=args.gpt_41_mini_version,
         device=args.device
     )
     print("Generating Caption...")
@@ -329,7 +331,7 @@ class Evalution:
 
         if not os.path.exists(f"{original_dir}/protocol1-captions.csv"):
             for orig_img_path in glob(f"{original_dir}/*.png"):
-                caption = generate_caption(client=client, img_path=orig_img_path, gpt_version=self.args.gpt_4o_version)
+                caption = generate_caption(client=client, img_path=orig_img_path, gpt_version=self.args.gpt_41_version)
                 original_images_path_list.append(orig_img_path)
                 original_captions.append(caption)
                 embedding = text_encoding(self.args.encoding_method, caption, device=self.device)
@@ -443,7 +445,7 @@ class Evalution:
                         erased_embedding /= erased_embedding.clone().norm(dim=-1, keepdim=True)
                         erased_embedding = erased_embedding.cpu()
                         
-                        if check_erased_image_with_implicit_prompt(erased_image_path, self.args.concept, self.args.concept_type, client, model, processor, detection_prompt, self.args.gpt_4o_mini_version):
+                        if check_erased_image_with_implicit_prompt(erased_image_path, self.args.concept, self.args.concept_type, client, model, processor, detection_prompt, self.args.gpt_41_mini_version):
                             scores.append(0)
                         else:
                             scores.append(F.cosine_similarity(original_embedding, erased_embedding, dim=1).mean().item())

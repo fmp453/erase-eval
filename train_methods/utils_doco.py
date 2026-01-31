@@ -95,8 +95,11 @@ class CustomDiffusionPipeline(StableDiffusionPipeline):
         else:
             delta_dict = {'unet': {}}
             if parameter_group == 'embedding':
+                assert isinstance(self.text_encoder, CLIPTextModel)
                 delta_dict['text_encoder'] = self.text_encoder.state_dict()
+            assert isinstance(self.unet, UNet2DConditionModel)
             for name, params in self.unet.named_parameters():
+                assert isinstance(params, torch.Tensor)
                 if parameter_group == "cross-attn":
                     if 'attn2.to_k' in name or 'attn2.to_v' in name:
                         delta_dict['unet'][name] = params.cpu().clone()
@@ -224,7 +227,7 @@ def get_anchor_prompts(
         ]
         while True:
             completion = client.chat.completions.create(
-                model="gpt-4o-2024-11-20",
+                model="gpt-4.1-2025-04-14",
                 messages=messages
             )
             class_prompt_collection += [
