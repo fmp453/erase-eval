@@ -435,5 +435,23 @@ class Arguments(BaseModel):
         parser = argparse.ArgumentParser()
         fields = cls.model_fields
         for name, field in fields.items():
+            annotation = field.annotation
+            default = field.default
+            help_text = field.description
+            if annotation is bool:
+                if default is False:
+                    parser.add_argument(
+                        f"--{name}",
+                        action="store_true",
+                        help=help_text
+                    )
+                else:
+                    parser.add_argument(
+                        f"--{name}",
+                        action="store_false",
+                        help=help_text
+                    )
+            else:
+                parser.add_argument(f"--{name}", default=field.default, help=field.description)
             parser.add_argument(f"--{name}", default=field.default, help=field.description)
-        return cls.model_validate(parser.parse_args().__dict__)
+        return cls.model_validate(vars(parser.parse_args()))
