@@ -23,7 +23,6 @@ python concept_combination_erasing.py \
 import itertools
 import math
 import json
-import os
 from pathlib import Path
 
 import torch
@@ -98,7 +97,13 @@ class MyCrossAttnProcessor:
         self.hiddenstates_controller = hiddenstates_controller
         self.module_name = module_name
 
-    def __call__(self, attn: Attention, hidden_states, encoder_hidden_states=None, attention_mask=None):
+    def __call__(
+        self,
+        attn: Attention,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None
+    ):
 
         encoder_attention_mask = self.hiddenstates_controller.encoder_attn_mask
         batch_size, sequence_length, _ = hidden_states.shape
@@ -138,7 +143,7 @@ def train(
     if args.seed is not None:
         set_seed(args.seed)
 
-    os.makedirs(args.save_dir, exist_ok=True)
+    Path(args.save_dir).mkdir(exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.sd_version,
@@ -155,8 +160,7 @@ def train(
     unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
     unet_1: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(args.sd_version, subfolder="unet")
 
-    # unet_1 on device 1
-    devices = get_devices(args)[0]
+    devices = get_devices(args)
 
     attn_controller = HiddenStatesController()
     module_count = 0
@@ -169,7 +173,7 @@ def train(
     attn_controller_1 = HiddenStatesController()
     module_count = 0
     for name, module in unet_1.named_modules():
-        if name.endswith('attn2'):
+        if name.endswith('attn2') and isinstance(module, Attention):
             module.set_processor(MyCrossAttnProcessor(attn_controller_1, name))
             module_count += 1
     print(f"cross attention module count: {module_count}")
