@@ -283,11 +283,8 @@ class ConversableAgent(LLMAgent):
         is_termination_msg: Callable[[dict], bool] | None = None,
         max_consecutive_auto_reply: int | None = None,
         function_map: dict[str, Callable] | None = None,
-        code_execution_config: dict | Literal[False] = False,
         llm_config: dict | Literal[False] | None = None,
-        default_auto_reply: str | dict = "",
         chat_messages: dict[Agent, list[dict]] | None = None,
-        silent: bool | None = None,
     ):
         """
         Args:
@@ -300,39 +297,16 @@ class ConversableAgent(LLMAgent):
                 default to None (no limit provided, class attribute MAX_CONSECUTIVE_AUTO_REPLY will be used as the limit in this case).
                 When set to 0, no auto reply will be generated.
             function_map (dict[str, callable]): Mapping function names (passed to openai) to callable functions, also used for tool calls.
-            code_execution_config (dict or False): config for the code execution.
-                To disable code execution, set to False. Otherwise, set to a dictionary with the following keys:
-                - work_dir (Optional, str): The working directory for the code execution.
-                    If None, a default working directory will be used.
-                    The default working directory is the "extensions" directory under
-                    "path_to_autogen".
-                - use_docker (Optional, list, str or bool): The docker image to use for code execution.
-                    Default is True, which means the code will be executed in a docker container. A default list of images will be used.
-                    If a list or a str of image name(s) is provided, the code will be executed in a docker container
-                    with the first image successfully pulled.
-                    If False, the code will be executed in the current environment.
-                    We strongly recommend using docker for code execution.
-                - timeout (Optional, int): The maximum execution time in seconds.
-                - last_n_messages (Experimental, int or str): The number of messages to look back for code execution.
-                    If set to 'auto', it will scan backwards through all messages arriving since the agent last spoke, which is typically the last time execution was attempted. (Default: auto)
             llm_config (dict or False or None): llm inference configuration.
                 Please refer to [OpenAIWrapper.create](/docs/reference/oai/client#create)
                 for available options.
                 When using OpenAI or Azure OpenAI endpoints, please specify a non-empty 'model' either in `llm_config` or in each config of 'config_list' in `llm_config`.
                 To disable llm-based auto reply, set to False.
                 When set to None, will use self.DEFAULT_CONFIG, which defaults to False.
-            default_auto_reply (str or dict): default auto reply when no code execution or llm-based reply is generated.
             chat_messages (dict or None): the previous chat messages that this agent had in the past with other agents.
                 Can be used to give the agent a memory by providing the chat history. This will allow the agent to
                 resume previous had conversations. Defaults to an empty chat history.
-            silent (bool or None): (Experimental) whether to print the message sent. If None, will use the value of
-                silent in each function.
         """
-        # we change code_execution_config below and we have to make sure we don't change the input
-        # in case of UserProxyAgent, without this we could even change the default value {}
-        code_execution_config = (
-            code_execution_config.copy() if hasattr(code_execution_config, "copy") else code_execution_config
-        )
 
         self._name = name
         # a dictionary of conversations, default value is list
@@ -348,7 +322,6 @@ class ConversableAgent(LLMAgent):
             if is_termination_msg is not None
             else (lambda x: content_str(x.get("content")) == "TERMINATE")
         )
-        self.silent = silent
         # Take a copy to avoid modifying the given dict
         if isinstance(llm_config, dict):
             try:
@@ -373,59 +346,11 @@ class ConversableAgent(LLMAgent):
             if function_map is None
             else {name: callable for name, callable in function_map.items() if self._assert_valid_name(name)}
         )
-        self._default_auto_reply = default_auto_reply
         self._reply_func_list = []
         self._human_input = []
         self.reply_at_receive = defaultdict(bool)
         self.register_reply([Agent, None], ConversableAgent.generate_oai_reply)
         self.register_reply([Agent, None], ConversableAgent.a_generate_oai_reply, ignore_async_in_sync_chat=True)
-
-        # Setting up code execution.
-        # Do not register code execution reply if code execution is disabled.
-        if code_execution_config is not False:
-            # If code_execution_config is None, set it to an empty dict.
-            if code_execution_config is None:
-                warnings.warn(
-                    "Using None to signal a default code_execution_config is deprecated. "
-                    "Use {} to use default or False to disable code execution.",
-                    stacklevel=2,
-                )
-                code_execution_config = {}
-            if not isinstance(code_execution_config, dict):
-                raise ValueError("code_execution_config must be a dict or False.")
-
-            # We have got a valid code_execution_config.
-            self._code_execution_config = code_execution_config
-
-            if self._code_execution_config.get("executor") is not None:
-                if "use_docker" in self._code_execution_config:
-                    raise ValueError(
-                        "'use_docker' in code_execution_config is not valid when 'executor' is set. Use the appropriate arg in the chosen executor instead."
-                    )
-
-                if "work_dir" in self._code_execution_config:
-                    raise ValueError(
-                        "'work_dir' in code_execution_config is not valid when 'executor' is set. Use the appropriate arg in the chosen executor instead."
-                    )
-
-                if "timeout" in self._code_execution_config:
-                    raise ValueError(
-                        "'timeout' in code_execution_config is not valid when 'executor' is set. Use the appropriate arg in the chosen executor instead."
-                    )
-
-                # Use the new code executor.
-                self._code_executor = CodeExecutorFactory.create(self._code_execution_config)
-                self.register_reply([Agent, None], ConversableAgent._generate_code_execution_reply_using_executor)
-            else:
-                # Legacy code execution using code_utils.
-                use_docker = self._code_execution_config.get("use_docker", None)
-                use_docker = decide_use_docker(use_docker)
-                check_can_use_docker_or_throw(use_docker)
-                self._code_execution_config["use_docker"] = use_docker
-                self.register_reply([Agent, None], ConversableAgent.generate_code_execution_reply)
-        else:
-            # Code execution is disabled.
-            self._code_execution_config = False
 
         self.register_reply([Agent, None], ConversableAgent.generate_tool_calls_reply)
         self.register_reply([Agent, None], ConversableAgent.a_generate_tool_calls_reply, ignore_async_in_sync_chat=True)
@@ -780,7 +705,7 @@ class ConversableAgent(LLMAgent):
         """Bool value of whether to use docker to execute the code,
         or str value of the docker image name to use, or None when code execution is disabled.
         """
-        return None if self._code_execution_config is False else self._code_execution_config.get("use_docker")
+        return None
 
     @staticmethod
     def _message_to_dict(message: dict | str) -> dict:
@@ -1691,127 +1616,6 @@ class ConversableAgent(LLMAgent):
             ),
         )
 
-    def _generate_code_execution_reply_using_executor(
-        self,
-        messages: list[dict] | None = None,
-        sender: Agent | None = None,
-        config: dict | Literal[False] | None = None,
-    ):
-        """Generate a reply using code executor."""
-        iostream = IOStream.get_default()
-
-        if config is not None:
-            raise ValueError("config is not supported for _generate_code_execution_reply_using_executor.")
-        if self._code_execution_config is False:
-            return False, None
-        if messages is None:
-            messages = self._oai_messages[sender]
-        last_n_messages = self._code_execution_config.get("last_n_messages", "auto")
-
-        if not (isinstance(last_n_messages, (int, float)) and last_n_messages >= 0) and last_n_messages != "auto":
-            raise ValueError("last_n_messages must be either a non-negative integer, or the string 'auto'.")
-
-        num_messages_to_scan = last_n_messages
-        if last_n_messages == "auto":
-            # Find when the agent last spoke
-            num_messages_to_scan = 0
-            for message in reversed(messages):
-                if "role" not in message:
-                    break
-                elif message["role"] != "user":
-                    break
-                else:
-                    num_messages_to_scan += 1
-        num_messages_to_scan = min(len(messages), num_messages_to_scan)
-        messages_to_scan = messages[-num_messages_to_scan:]
-
-        # iterate through the last n messages in reverse
-        # if code blocks are found, execute the code blocks and return the output
-        # if no code blocks are found, continue
-        for message in reversed(messages_to_scan):
-            if not message["content"]:
-                continue
-            code_blocks = self._code_executor.code_extractor.extract_code_blocks(message["content"])
-            if len(code_blocks) == 0:
-                continue
-
-            num_code_blocks = len(code_blocks)
-            if num_code_blocks == 1:
-                iostream.print(
-                    colored(
-                        f"\n>>>>>>>> EXECUTING CODE BLOCK (inferred language is {code_blocks[0].language})...",
-                        "red",
-                    ),
-                    flush=True,
-                )
-            else:
-                iostream.print(
-                    colored(
-                        f"\n>>>>>>>> EXECUTING {num_code_blocks} CODE BLOCKS (inferred languages are [{', '.join([x.language for x in code_blocks])}])...",
-                        "red",
-                    ),
-                    flush=True,
-                )
-
-            # found code blocks, execute code.
-            code_result = self._code_executor.execute_code_blocks(code_blocks)
-            exitcode2str = "execution succeeded" if code_result.exit_code == 0 else "execution failed"
-            return True, f"exitcode: {code_result.exit_code} ({exitcode2str})\nCode output: {code_result.output}"
-
-        return False, None
-
-    def generate_code_execution_reply(
-        self,
-        messages: list[dict] | None = None,
-        sender: Agent | None = None,
-        config: dict | Literal[False] | None = None,
-    ):
-        """Generate a reply using code execution."""
-        code_execution_config = config if config is not None else self._code_execution_config
-        if code_execution_config is False:
-            return False, None
-        if messages is None:
-            messages = self._oai_messages[sender]
-        last_n_messages = code_execution_config.pop("last_n_messages", "auto")
-
-        if not (isinstance(last_n_messages, (int, float)) and last_n_messages >= 0) and last_n_messages != "auto":
-            raise ValueError("last_n_messages must be either a non-negative integer, or the string 'auto'.")
-
-        messages_to_scan = last_n_messages
-        if last_n_messages == "auto":
-            # Find when the agent last spoke
-            messages_to_scan = 0
-            for i in range(len(messages)):
-                message = messages[-(i + 1)]
-                if "role" not in message:
-                    break
-                elif message["role"] != "user":
-                    break
-                else:
-                    messages_to_scan += 1
-
-        # iterate through the last n messages in reverse
-        # if code blocks are found, execute the code blocks and return the output
-        # if no code blocks are found, continue
-        for i in range(min(len(messages), messages_to_scan)):
-            message = messages[-(i + 1)]
-            if not message["content"]:
-                continue
-            code_blocks = extract_code(message["content"])
-            if len(code_blocks) == 1 and code_blocks[0][0] == UNKNOWN:
-                continue
-
-            # found code blocks, execute code and push "last_n_messages" back
-            exitcode, logs = self.execute_code_blocks(code_blocks)
-            code_execution_config["last_n_messages"] = last_n_messages
-            exitcode2str = "execution succeeded" if exitcode == 0 else "execution failed"
-            return True, f"exitcode: {exitcode} ({exitcode2str})\nCode output: {logs}"
-
-        # no code blocks are found, push last_n_messages back and return.
-        code_execution_config["last_n_messages"] = last_n_messages
-
-        return False, None
-
     def generate_function_call_reply(
         self,
         messages: list[dict] | None = None,
@@ -2151,7 +1955,6 @@ class ConversableAgent(LLMAgent):
         1. check_termination_and_human_reply
         2. generate_function_call_reply (deprecated in favor of tool_calls)
         3. generate_tool_calls_reply
-        4. generate_code_execution_reply
         5. generate_oai_reply
         Every function returns a tuple (final, reply).
         When a function returns final=False, the next function will be checked.
@@ -2194,7 +1997,7 @@ class ConversableAgent(LLMAgent):
                 final, reply = reply_func(self, messages=messages, sender=sender, config=reply_func_tuple["config"])
                 if final:
                     return reply
-        return self._default_auto_reply
+        return ""
 
     async def a_generate_reply(
         self,
@@ -2211,7 +2014,6 @@ class ConversableAgent(LLMAgent):
         1. check_termination_and_human_reply
         2. generate_function_call_reply
         3. generate_tool_calls_reply
-        4. generate_code_execution_reply
         5. generate_oai_reply
         Every function returns a tuple (final, reply).
         When a function returns final=False, the next function will be checked.
@@ -2258,7 +2060,7 @@ class ConversableAgent(LLMAgent):
                     final, reply = reply_func(self, messages=messages, sender=sender, config=reply_func_tuple["config"])
                 if final:
                     return reply
-        return self._default_auto_reply
+        return ""
 
     def _match_trigger(self, trigger: None | str | type | Agent | Callable | list, sender: Agent | None) -> bool:
         """Check if the sender matches the trigger.
