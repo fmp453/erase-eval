@@ -264,7 +264,6 @@ class ConversableAgent(LLMAgent):
     configured with different default settings.
 
     To modify auto reply, override `generate_reply` method.
-    To disable/enable human response in every turn, set `human_input_mode` to "NEVER" or "ALWAYS".
     To modify the way to get human input, override `get_human_input` method.
     To modify the way to execute code blocks, single code block, or function call, override `execute_code_blocks`,
     `run_code`, and `execute_function` methods respectively.
@@ -283,7 +282,6 @@ class ConversableAgent(LLMAgent):
         system_message: str | list | None = "You are a helpful AI Assistant.",
         is_termination_msg: Callable[[dict], bool] | None = None,
         max_consecutive_auto_reply: int | None = None,
-        human_input_mode: Literal["ALWAYS", "NEVER", "TERMINATE"] = "TERMINATE",
         function_map: dict[str, Callable] | None = None,
         code_execution_config: dict | Literal[False] = False,
         llm_config: dict | Literal[False] | None = None,
@@ -302,15 +300,6 @@ class ConversableAgent(LLMAgent):
             max_consecutive_auto_reply (int): the maximum number of consecutive auto replies.
                 default to None (no limit provided, class attribute MAX_CONSECUTIVE_AUTO_REPLY will be used as the limit in this case).
                 When set to 0, no auto reply will be generated.
-            human_input_mode (str): whether to ask for human inputs every time a message is received.
-                Possible values are "ALWAYS", "TERMINATE", "NEVER".
-                (1) When "ALWAYS", the agent prompts for human input every time a message is received.
-                    Under this mode, the conversation stops when the human input is "exit",
-                    or when is_termination_msg is True and there is no human input.
-                (2) When "TERMINATE", the agent only prompts for human input only when a termination message is received or
-                    the number of auto reply reaches the max_consecutive_auto_reply.
-                (3) When "NEVER", the agent will never prompt for human input. Under this mode, the conversation stops
-                    when the number of auto reply reaches the max_consecutive_auto_reply or when is_termination_msg is True.
             function_map (dict[str, callable]): Mapping function names (passed to openai) to callable functions, also used for tool calls.
             code_execution_config (dict or False): config for the code execution.
                 To disable code execution, set to False. Otherwise, set to a dictionary with the following keys:
@@ -377,7 +366,6 @@ class ConversableAgent(LLMAgent):
 
         self.client_cache = None
 
-        self.human_input_mode = human_input_mode
         self._max_consecutive_auto_reply = (
             max_consecutive_auto_reply if max_consecutive_auto_reply is not None else self.MAX_CONSECUTIVE_AUTO_REPLY
         )
@@ -2021,40 +2009,10 @@ class ConversableAgent(LLMAgent):
         message = messages[-1]
         reply = ""
         no_human_input_msg = ""
-        sender_name = "the sender" if sender is None else sender.name
-        if self.human_input_mode == "ALWAYS":
-            reply = self.get_human_input(
-                f"Replying as {self.name}. Provide feedback to {sender_name}. Press enter to skip and use auto-reply, or type 'exit' to end the conversation: "
-            )
-            no_human_input_msg = "NO HUMAN INPUT RECEIVED." if not reply else ""
-            # if the human input is empty, and the message is a termination message, then we will terminate the conversation
-            reply = reply if reply or not self._is_termination_msg(message) else "exit"
-        else:
-            if self._consecutive_auto_reply_counter[sender] >= self._max_consecutive_auto_reply_dict[sender]:
-                if self.human_input_mode == "NEVER":
-                    reply = "exit"
-                else:
-                    # self.human_input_mode == "TERMINATE":
-                    terminate = self._is_termination_msg(message)
-                    reply = self.get_human_input(
-                        f"Please give feedback to {sender_name}. Press enter or type 'exit' to stop the conversation: "
-                        if terminate
-                        else f"Please give feedback to {sender_name}. Press enter to skip and use auto-reply, or type 'exit' to stop the conversation: "
-                    )
-                    no_human_input_msg = "NO HUMAN INPUT RECEIVED." if not reply else ""
-                    # if the human input is empty, and the message is a termination message, then we will terminate the conversation
-                    reply = reply if reply or not terminate else "exit"
-            elif self._is_termination_msg(message):
-                if self.human_input_mode == "NEVER":
-                    reply = "exit"
-                else:
-                    # self.human_input_mode == "TERMINATE":
-                    reply = self.get_human_input(
-                        f"Please give feedback to {sender_name}. Press enter or type 'exit' to stop the conversation: "
-                    )
-                    no_human_input_msg = "NO HUMAN INPUT RECEIVED." if not reply else ""
-                    # if the human input is empty, and the message is a termination message, then we will terminate the conversation
-                    reply = reply or "exit"
+        if self._consecutive_auto_reply_counter[sender] >= self._max_consecutive_auto_reply_dict[sender]:
+            reply = "exit"
+        elif self._is_termination_msg(message):
+            reply = "exit"
 
         # print the no_human_input_msg
         if no_human_input_msg:
@@ -2097,8 +2055,6 @@ class ConversableAgent(LLMAgent):
 
         # increment the consecutive_auto_reply_counter
         self._consecutive_auto_reply_counter[sender] += 1
-        if self.human_input_mode != "NEVER":
-            iostream.print(colored("\n>>>>>>>> USING AUTO REPLY...", "red"), flush=True)
 
         return False, None
 
@@ -2134,40 +2090,10 @@ class ConversableAgent(LLMAgent):
         message = messages[-1] if messages else {}
         reply = ""
         no_human_input_msg = ""
-        sender_name = "the sender" if sender is None else sender.name
-        if self.human_input_mode == "ALWAYS":
-            reply = await self.a_get_human_input(
-                f"Replying as {self.name}. Provide feedback to {sender_name}. Press enter to skip and use auto-reply, or type 'exit' to end the conversation: "
-            )
-            no_human_input_msg = "NO HUMAN INPUT RECEIVED." if not reply else ""
-            # if the human input is empty, and the message is a termination message, then we will terminate the conversation
-            reply = reply if reply or not self._is_termination_msg(message) else "exit"
-        else:
-            if self._consecutive_auto_reply_counter[sender] >= self._max_consecutive_auto_reply_dict[sender]:
-                if self.human_input_mode == "NEVER":
-                    reply = "exit"
-                else:
-                    # self.human_input_mode == "TERMINATE":
-                    terminate = self._is_termination_msg(message)
-                    reply = await self.a_get_human_input(
-                        f"Please give feedback to {sender_name}. Press enter or type 'exit' to stop the conversation: "
-                        if terminate
-                        else f"Please give feedback to {sender_name}. Press enter to skip and use auto-reply, or type 'exit' to stop the conversation: "
-                    )
-                    no_human_input_msg = "NO HUMAN INPUT RECEIVED." if not reply else ""
-                    # if the human input is empty, and the message is a termination message, then we will terminate the conversation
-                    reply = reply if reply or not terminate else "exit"
-            elif self._is_termination_msg(message):
-                if self.human_input_mode == "NEVER":
-                    reply = "exit"
-                else:
-                    # self.human_input_mode == "TERMINATE":
-                    reply = await self.a_get_human_input(
-                        f"Please give feedback to {sender_name}. Press enter or type 'exit' to stop the conversation: "
-                    )
-                    no_human_input_msg = "NO HUMAN INPUT RECEIVED." if not reply else ""
-                    # if the human input is empty, and the message is a termination message, then we will terminate the conversation
-                    reply = reply or "exit"
+        if self._consecutive_auto_reply_counter[sender] >= self._max_consecutive_auto_reply_dict[sender]:
+            reply = "exit"
+        elif self._is_termination_msg(message):
+            reply = "exit"
 
         # print the no_human_input_msg
         if no_human_input_msg:
@@ -2210,8 +2136,6 @@ class ConversableAgent(LLMAgent):
 
         # increment the consecutive_auto_reply_counter
         self._consecutive_auto_reply_counter[sender] += 1
-        if self.human_input_mode != "NEVER":
-            iostream.print(colored("\n>>>>>>>> USING AUTO REPLY...", "red"), flush=True)
 
         return False, None
 
@@ -3189,7 +3113,6 @@ class AssistantAgent(ConversableAgent):
     AssistantAgent is a subclass of ConversableAgent configured with a default system message.
     The default system message is designed to solve a task with LLM,
     including suggesting python code blocks and debugging.
-    `human_input_mode` is default to "NEVER"
     and `code_execution_config` is default to False.
     This agent doesn't execute code by default, and expects the user to execute the code.
     """
@@ -3216,7 +3139,6 @@ Reply "TERMINATE" in the end when everything is done.
         llm_config: dict | Literal[False] | None = None,
         is_termination_msg: Callable[[dict], bool] | None = None,
         max_consecutive_auto_reply: int | None = None,
-        human_input_mode: Literal["ALWAYS", "NEVER", "TERMINATE"] = "NEVER",
         description: str | None = None,
         **kwargs,
     ):
@@ -3233,7 +3155,7 @@ Reply "TERMINATE" in the end when everything is done.
                 The dict can contain the following keys: "content", "role", "name", "function_call".
             max_consecutive_auto_reply (int): the maximum number of consecutive auto replies.
                 default to None (no limit provided, class attribute MAX_CONSECUTIVE_AUTO_REPLY will be used as the limit in this case).
-                The limit only plays a role when human_input_mode is not "ALWAYS".
+                The limit only plays a role.
             **kwargs (dict): Please refer to other kwargs in
                 [ConversableAgent](conversable_agent#__init__).
         """
@@ -3242,7 +3164,6 @@ Reply "TERMINATE" in the end when everything is done.
             system_message,
             is_termination_msg,
             max_consecutive_auto_reply,
-            human_input_mode,
             llm_config=llm_config,
             description=description,
             **kwargs,
