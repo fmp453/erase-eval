@@ -27,8 +27,6 @@ from train_methods.legacy_autogen.utils import (
 __all__ = ("ConversableAgent",)
 
 F = TypeVar("F", bound=Callable[..., Any])
-PYTHON_VARIANTS = ["python", "Python", "py"]
-UNKNOWN = "unknown"
 
 def model_dump(model: BaseModel) -> dict[str, Any]:
     return model.model_dump()
@@ -1591,23 +1589,7 @@ class ConversableAgent(LLMAgent):
             messages = self._oai_messages[sender]
         message = messages[-1]
         if "function_call" in message and message["function_call"]:
-            func_call = message["function_call"]
-            func = None
-            if inspect.iscoroutinefunction(func):
-                try:
-                    # get the running loop if it was already created
-                    loop = asyncio.get_running_loop()
-                    close_loop = False
-                except RuntimeError:
-                    # create a loop if there is no running loop
-                    loop = asyncio.new_event_loop()
-                    close_loop = True
-
-                _, func_return = loop.run_until_complete(self.a_execute_function(func_call))
-                if close_loop:
-                    loop.close()
-            else:
-                _, func_return = self.execute_function(message["function_call"])
+            func_return = self.execute_function(message["function_call"])
             return True, func_return
         return False, None
 
@@ -1630,7 +1612,7 @@ class ConversableAgent(LLMAgent):
         message = messages[-1]
         func_call = message.get("function_call")
         if func_call:
-            _, func_return = self.execute_function(func_call)
+            func_return = self.execute_function(func_call)
             return True, func_return
 
         return False, None
@@ -1653,22 +1635,7 @@ class ConversableAgent(LLMAgent):
         tool_returns = []
         for tool_call in message.get("tool_calls", []):
             function_call = tool_call.get("function", {})
-            func = None
-            if inspect.iscoroutinefunction(func):
-                try:
-                    # get the running loop if it was already created
-                    loop = asyncio.get_running_loop()
-                    close_loop = False
-                except RuntimeError:
-                    # create a loop if there is no running loop
-                    loop = asyncio.new_event_loop()
-                    close_loop = True
-
-                _, func_return = loop.run_until_complete(self.a_execute_function(function_call))
-                if close_loop:
-                    loop.close()
-            else:
-                _, func_return = self.execute_function(function_call)
+            func_return = self.execute_function(function_call)
             content = func_return.get("content", "")
             if content is None:
                 content = ""
@@ -1698,7 +1665,7 @@ class ConversableAgent(LLMAgent):
     async def _a_execute_tool_call(self, tool_call):
         id = tool_call["id"]
         function_call = tool_call.get("function", {})
-        _, func_return = await self.a_execute_function(function_call)
+        func_return = await self.a_execute_function(function_call)
         return {
             "tool_call_id": id,
             "role": "tool",
@@ -2080,37 +2047,7 @@ class ConversableAgent(LLMAgent):
         reply = await loop.run_in_executor(None, functools.partial(self.get_human_input, prompt))
         return reply
 
-    @staticmethod
-    def _format_json_str(jstr):
-        """Remove newlines outside of quotes, and handle JSON escape sequences.
-
-        1. this function removes the newline in the query outside of quotes otherwise json.loads(s) will fail.
-            Ex 1:
-            "{\n"tool": "python",\n"query": "print('hello')\nprint('world')"\n}" -> "{"tool": "python","query": "print('hello')\nprint('world')"}"
-            Ex 2:
-            "{\n  \"location\": \"Boston, MA\"\n}" -> "{"location": "Boston, MA"}"
-
-        2. this function also handles JSON escape sequences inside quotes.
-            Ex 1:
-            '{"args": "a\na\na\ta"}' -> '{"args": "a\\na\\na\\ta"}'
-        """
-        result = []
-        inside_quotes = False
-        last_char = " "
-        for char in jstr:
-            if last_char != "\\" and char == '"':
-                inside_quotes = not inside_quotes
-            last_char = char
-            if not inside_quotes and char == "\n":
-                continue
-            if inside_quotes and char == "\n":
-                char = "\\n"
-            if inside_quotes and char == "\t":
-                char = "\\t"
-            result.append(char)
-        return "".join(result)
-
-    def execute_function(self, func_call, verbose: bool = False) -> tuple[bool, dict[str, str]]:
+    def execute_function(self, func_call: dict) -> dict[str, str]:
         """Execute a function call and return the result.
 
         Override this function to modify the way to execute function and tool calls.
@@ -2118,21 +2055,12 @@ class ConversableAgent(LLMAgent):
         Args:
             func_call: a dictionary extracted from openai message at "function_call" or "tool_calls" with keys "name" and "arguments".
 
-        Returns:
-            A tuple of (is_exec_success, result_dict).
-            is_exec_success (boolean): whether the execution is successful.
-            result_dict: a dictionary with keys "name", "role", and "content". Value of "role" is "function".
-
-        "function_call" deprecated as of [OpenAI API v1.1.0](https://github.com/openai/openai-python/releases/tag/v1.1.0)
-        See https://platform.openai.com/docs/api-reference/chat/create#chat-create-function_call
         """
 
         func_name = func_call.get("name", "")
-
-        is_exec_success = False
         content = f"Error: Function {func_name} not found."
 
-        return is_exec_success, {
+        return {
             "name": func_name,
             "role": "function",
             "content": str(content),
@@ -2146,21 +2074,13 @@ class ConversableAgent(LLMAgent):
         Args:
             func_call: a dictionary extracted from openai message at key "function_call" or "tool_calls" with keys "name" and "arguments".
 
-        Returns:
-            A tuple of (is_exec_success, result_dict).
-            is_exec_success (boolean): whether the execution is successful.
-            result_dict: a dictionary with keys "name", "role", and "content". Value of "role" is "function".
-
-        "function_call" deprecated as of [OpenAI API v1.1.0](https://github.com/openai/openai-python/releases/tag/v1.1.0)
-        See https://platform.openai.com/docs/api-reference/chat/create#chat-create-function_call
         """
 
         func_name = func_call.get("name", "")
 
-        is_exec_success = False
         content = f"Error: Function {func_name} not found."
 
-        return is_exec_success, {
+        return {
             "name": func_name,
             "role": "function",
             "content": str(content),
