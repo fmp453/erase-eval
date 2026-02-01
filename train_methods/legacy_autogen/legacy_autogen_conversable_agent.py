@@ -286,7 +286,6 @@ class ConversableAgent(LLMAgent):
         code_execution_config: dict | Literal[False] = False,
         llm_config: dict | Literal[False] | None = None,
         default_auto_reply: str | dict = "",
-        description: str | None = None,
         chat_messages: dict[Agent, list[dict]] | None = None,
         silent: bool | None = None,
     ):
@@ -323,8 +322,6 @@ class ConversableAgent(LLMAgent):
                 To disable llm-based auto reply, set to False.
                 When set to None, will use self.DEFAULT_CONFIG, which defaults to False.
             default_auto_reply (str or dict): default auto reply when no code execution or llm-based reply is generated.
-            description (str): a short description of the agent. This description is used by other agents
-                (e.g. the GroupChatManager) to decide when to call upon this agent. (Default: system_message)
             chat_messages (dict or None): the previous chat messages that this agent had in the past with other agents.
                 Can be used to give the agent a memory by providing the chat history. This will allow the agent to
                 resume previous had conversations. Defaults to an empty chat history.
@@ -345,7 +342,7 @@ class ConversableAgent(LLMAgent):
             self._oai_messages = chat_messages
 
         self._oai_system_message = [{"content": system_message, "role": "system"}]
-        self._description = description if description is not None else system_message
+        self._description = system_message
         self._is_termination_msg = (
             is_termination_msg
             if is_termination_msg is not None
@@ -2780,24 +2777,6 @@ class ConversableAgent(LLMAgent):
 
         Returns:
             The decorator for registering a function to be used by an agent.
-
-        Examples:
-            ```
-            @user_proxy.register_for_execution()
-            @agent2.register_for_llm()
-            @agent1.register_for_llm(description="This is a very useful function")
-            def my_function(a: Annotated[str, "description of a parameter"] = "a", b: int, c=3.14) -> str:
-                 return a + str(b * c)
-            ```
-
-            For Azure OpenAI versions prior to 2023-12-01-preview, set `api_style`
-            to `"function"` if `"tool"` doesn't work:
-            ```
-            @agent2.register_for_llm(api_style="function")
-            def my_function(a: Annotated[str, "description of a parameter"] = "a", b: int, c=3.14) -> str:
-                 return a + str(b * c)
-            ```
-
         """
 
         def _decorator(func: F) -> F:
@@ -2859,15 +2838,6 @@ class ConversableAgent(LLMAgent):
 
         Returns:
             The decorator for registering a function to be used by an agent.
-
-        Examples:
-            ```
-            @user_proxy.register_for_execution()
-            @agent2.register_for_llm()
-            @agent1.register_for_llm(description="This is a very useful function")
-            def my_function(a: Annotated[str, "description of a parameter"] = "a", b: int, c=3.14):
-                 return a + str(b * c)
-            ```
 
         """
 
@@ -3137,10 +3107,6 @@ Reply "TERMINATE" in the end when everything is done.
         name: str,
         system_message: str | None = DEFAULT_SYSTEM_MESSAGE,
         llm_config: dict | Literal[False] | None = None,
-        is_termination_msg: Callable[[dict], bool] | None = None,
-        max_consecutive_auto_reply: int | None = None,
-        description: str | None = None,
-        **kwargs,
     ):
         """
         Args:
@@ -3150,27 +3116,12 @@ Reply "TERMINATE" in the end when everything is done.
             llm_config (dict or False or None): llm inference configuration.
                 Please refer to [OpenAIWrapper.create](/docs/reference/oai/client#create)
                 for available options.
-            is_termination_msg (function): a function that takes a message in the form of a dictionary
-                and returns a boolean value indicating if this received message is a termination message.
-                The dict can contain the following keys: "content", "role", "name", "function_call".
-            max_consecutive_auto_reply (int): the maximum number of consecutive auto replies.
-                default to None (no limit provided, class attribute MAX_CONSECUTIVE_AUTO_REPLY will be used as the limit in this case).
-                The limit only plays a role.
-            **kwargs (dict): Please refer to other kwargs in
-                [ConversableAgent](conversable_agent#__init__).
         """
         super().__init__(
-            name,
-            system_message,
-            is_termination_msg,
-            max_consecutive_auto_reply,
+            name=name,
+            system_message=system_message,
             llm_config=llm_config,
-            description=description,
-            **kwargs,
         )
 
-        # Update the provided description if None, and we are using the default system_message,
-        # then use the default description.
-        if description is None:
-            if system_message == self.DEFAULT_SYSTEM_MESSAGE:
-                self.description = self.DEFAULT_DESCRIPTION
+        if system_message == self.DEFAULT_SYSTEM_MESSAGE:
+            self.description = self.DEFAULT_DESCRIPTION
