@@ -180,7 +180,6 @@ def generate_and_save_concept_graph(
         ''',
         llm_config={"config_list": [{"model": "gpt-4o", "api_key": OPENAI_API_KEY, "base_url": base_url}]},
         is_termination_msg=lambda msg: "the answer is correct!" in msg.get("content", "").lower(),
-        human_input_mode="NEVER",
     )
 
     reviewer = AssistantAgent(
@@ -193,7 +192,6 @@ def generate_and_save_concept_graph(
             If there are some mistakes in the generated graph, please point them out and tell the Generator how to fix them. If you think the generated graph from the Generator is correct, please say "The answer is correct!" and close the chat.  
             You must check carefully!!!
         """,
-        human_input_mode="NEVER",
     )
 
     group_chat_with_introductions = GroupChat(
