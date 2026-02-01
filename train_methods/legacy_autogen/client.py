@@ -601,54 +601,6 @@ class OpenAIWrapper:
                 self._configure_azure_openai(config, openai_config)
                 client = AzureOpenAI(**openai_config)
                 self._clients.append(OpenAIClient(client))
-            elif api_type is not None and api_type.startswith("cerebras"):
-                if cerebras_import_exception:
-                    raise ImportError("Please install `cerebras_cloud_sdk` to use Cerebras OpenAI API.")
-                client = CerebrasClient(**openai_config)
-                self._clients.append(client)
-            elif api_type is not None and api_type.startswith("google"):
-                if gemini_import_exception:
-                    raise ImportError("Please install `google-generativeai` to use Google OpenAI API.")
-                client = GeminiClient(**openai_config)
-                self._clients.append(client)
-            elif api_type is not None and api_type.startswith("anthropic"):
-                if "api_key" not in config:
-                    self._configure_openai_config_for_bedrock(config, openai_config)
-                if anthropic_import_exception:
-                    raise ImportError("Please install `anthropic` to use Anthropic API.")
-                client = AnthropicClient(**openai_config)
-                self._clients.append(client)
-            elif api_type is not None and api_type.startswith("mistral"):
-                if mistral_import_exception:
-                    raise ImportError("Please install `mistralai` to use the Mistral.AI API.")
-                client = MistralAIClient(**openai_config)
-                self._clients.append(client)
-            elif api_type is not None and api_type.startswith("together"):
-                if together_import_exception:
-                    raise ImportError("Please install `together` to use the Together.AI API.")
-                client = TogetherClient(**openai_config)
-                self._clients.append(client)
-            elif api_type is not None and api_type.startswith("groq"):
-                if groq_import_exception:
-                    raise ImportError("Please install `groq` to use the Groq API.")
-                client = GroqClient(**openai_config)
-                self._clients.append(client)
-            elif api_type is not None and api_type.startswith("cohere"):
-                if cohere_import_exception:
-                    raise ImportError("Please install `cohere` to use the Cohere API.")
-                client = CohereClient(**openai_config)
-                self._clients.append(client)
-            elif api_type is not None and api_type.startswith("ollama"):
-                if ollama_import_exception:
-                    raise ImportError("Please install with `[ollama]` option to use the Ollama API.")
-                client = OllamaClient(**openai_config)
-                self._clients.append(client)
-            elif api_type is not None and api_type.startswith("bedrock"):
-                self._configure_openai_config_for_bedrock(config, openai_config)
-                if bedrock_import_exception:
-                    raise ImportError("Please install `boto3` to use the Amazon Bedrock API.")
-                client = BedrockClient(**openai_config)
-                self._clients.append(client)
             else:
                 client = OpenAI(**openai_config)
                 self._clients.append(OpenAIClient(client))
