@@ -3,7 +3,6 @@ import contextvars
 import copy
 import functools
 import inspect
-import json
 import re
 import warnings
 from collections import defaultdict
@@ -16,15 +15,10 @@ from termcolor import colored
 from train_methods.legacy_autogen.cache import AbstractCache
 from train_methods.legacy_autogen.chat import ChatResult, a_initiate_chats, initiate_chats, _post_process_carryover_item, consolidate_chat_info
 from train_methods.legacy_autogen.client import ModelClient, OpenAIWrapper
-from train_methods.legacy_autogen.coding import CodeExecutor, CodeExecutorFactory
+from train_methods.legacy_autogen.coding import CodeExecutor
 from train_methods.legacy_autogen.stream import IOStream
 from train_methods.legacy_autogen.utils import (
-    check_can_use_docker_or_throw,
     content_str,
-    decide_use_docker,
-    execute_code,
-    extract_code,
-    infer_lang,
     load_basemodels_if_needed, 
     serialize_to_str,
     get_function_schema
@@ -262,11 +256,6 @@ class ConversableAgent(LLMAgent):
     After receiving each message, the agent will send a reply to the sender unless the msg is a termination msg.
     For example, AssistantAgent and UserProxyAgent are subclasses of this class,
     configured with different default settings.
-
-    To modify auto reply, override `generate_reply` method.
-    To modify the way to get human input, override `get_human_input` method.
-    To modify the way to execute code blocks, single code block, or function call, override `execute_code_blocks`,
-    `run_code`, and `execute_function` methods respectively.
     """
 
     DEFAULT_CONFIG = False  # False or dict, the default config for llm inference
@@ -281,10 +270,7 @@ class ConversableAgent(LLMAgent):
         name: str,
         system_message: str | list | None = "You are a helpful AI Assistant.",
         is_termination_msg: Callable[[dict], bool] | None = None,
-        max_consecutive_auto_reply: int | None = None,
-        function_map: dict[str, Callable] | None = None,
         llm_config: dict | Literal[False] | None = None,
-        chat_messages: dict[Agent, list[dict]] | None = None,
     ):
         """
         Args:
@@ -296,24 +282,16 @@ class ConversableAgent(LLMAgent):
             max_consecutive_auto_reply (int): the maximum number of consecutive auto replies.
                 default to None (no limit provided, class attribute MAX_CONSECUTIVE_AUTO_REPLY will be used as the limit in this case).
                 When set to 0, no auto reply will be generated.
-            function_map (dict[str, callable]): Mapping function names (passed to openai) to callable functions, also used for tool calls.
             llm_config (dict or False or None): llm inference configuration.
                 Please refer to [OpenAIWrapper.create](/docs/reference/oai/client#create)
                 for available options.
                 When using OpenAI or Azure OpenAI endpoints, please specify a non-empty 'model' either in `llm_config` or in each config of 'config_list' in `llm_config`.
                 To disable llm-based auto reply, set to False.
                 When set to None, will use self.DEFAULT_CONFIG, which defaults to False.
-            chat_messages (dict or None): the previous chat messages that this agent had in the past with other agents.
-                Can be used to give the agent a memory by providing the chat history. This will allow the agent to
-                resume previous had conversations. Defaults to an empty chat history.
         """
 
         self._name = name
-        # a dictionary of conversations, default value is list
-        if chat_messages is None:
-            self._oai_messages = defaultdict(list)
-        else:
-            self._oai_messages = chat_messages
+        self._oai_messages = defaultdict(list)
 
         self._oai_system_message = [{"content": system_message, "role": "system"}]
         self._description = system_message
@@ -324,28 +302,14 @@ class ConversableAgent(LLMAgent):
         )
         # Take a copy to avoid modifying the given dict
         if isinstance(llm_config, dict):
-            try:
-                llm_config = copy.deepcopy(llm_config)
-            except TypeError as e:
-                raise TypeError(
-                    "Please implement __deepcopy__ method for each value class in llm_config to support deepcopy."
-                    " Refer to the docs for more details: https://microsoft.github.io/autogen/docs/topics/llm_configuration#adding-http-client-in-llm_config-for-proxy"
-                ) from e
+            llm_config = copy.deepcopy(llm_config)
 
         self._validate_llm_config(llm_config)
 
         self.client_cache = None
-
-        self._max_consecutive_auto_reply = (
-            max_consecutive_auto_reply if max_consecutive_auto_reply is not None else self.MAX_CONSECUTIVE_AUTO_REPLY
-        )
+        self._max_consecutive_auto_reply = self.MAX_CONSECUTIVE_AUTO_REPLY
         self._consecutive_auto_reply_counter = defaultdict(int)
         self._max_consecutive_auto_reply_dict = defaultdict(self.max_consecutive_auto_reply)
-        self._function_map = (
-            {}
-            if function_map is None
-            else {name: callable for name, callable in function_map.items() if self._assert_valid_name(name)}
-        )
         self._reply_func_list = []
         self._human_input = []
         self.reply_at_receive = defaultdict(bool)
@@ -390,7 +354,7 @@ class ConversableAgent(LLMAgent):
 
     @staticmethod
     def _is_silent(agent: Agent, silent: bool | None = False) -> bool:
-        return agent.silent if agent.silent is not None else silent
+        return silent
 
     @property
     def name(self) -> str:
@@ -699,13 +663,6 @@ class ConversableAgent(LLMAgent):
                 f"The agent '{agent.name}' is not present in any conversation. No history available for this agent."
             )
         return self._oai_messages[agent][-1]
-
-    @property
-    def use_docker(self) -> bool | str | None:
-        """Bool value of whether to use docker to execute the code,
-        or str value of the docker image name to use, or None when code execution is disabled.
-        """
-        return None
 
     @staticmethod
     def _message_to_dict(message: dict | str) -> dict:
@@ -1635,7 +1592,7 @@ class ConversableAgent(LLMAgent):
         message = messages[-1]
         if "function_call" in message and message["function_call"]:
             func_call = message["function_call"]
-            func = self._function_map.get(func_call.get("name", None), None)
+            func = None
             if inspect.iscoroutinefunction(func):
                 try:
                     # get the running loop if it was already created
@@ -1673,12 +1630,7 @@ class ConversableAgent(LLMAgent):
         message = messages[-1]
         func_call = message.get("function_call")
         if func_call:
-            func_name = func_call.get("name", "")
-            func = self._function_map.get(func_name, None)
-            if func and inspect.iscoroutinefunction(func):
-                _, func_return = await self.a_execute_function(func_call)
-            else:
-                _, func_return = self.execute_function(func_call)
+            _, func_return = self.execute_function(func_call)
             return True, func_return
 
         return False, None
@@ -1701,7 +1653,7 @@ class ConversableAgent(LLMAgent):
         tool_returns = []
         for tool_call in message.get("tool_calls", []):
             function_call = tool_call.get("function", {})
-            func = self._function_map.get(function_call.get("name", None), None)
+            func = None
             if inspect.iscoroutinefunction(func):
                 try:
                     # get the running loop if it was already created
@@ -2128,66 +2080,6 @@ class ConversableAgent(LLMAgent):
         reply = await loop.run_in_executor(None, functools.partial(self.get_human_input, prompt))
         return reply
 
-    def run_code(self, code, **kwargs):
-        """Run the code and return the result.
-
-        Override this function to modify the way to run the code.
-        Args:
-            code (str): the code to be executed.
-            **kwargs: other keyword arguments.
-
-        Returns:
-            A tuple of (exitcode, logs, image).
-            exitcode (int): the exit code of the code execution.
-            logs (str): the logs of the code execution.
-            image (str or None): the docker image used for the code execution.
-        """
-        return execute_code(code, **kwargs)
-
-    def execute_code_blocks(self, code_blocks):
-        """Execute the code blocks and return the result."""
-        iostream = IOStream.get_default()
-
-        logs_all = ""
-        for i, code_block in enumerate(code_blocks):
-            lang, code = code_block
-            if not lang:
-                lang = infer_lang(code)
-            iostream.print(
-                colored(
-                    f"\n>>>>>>>> EXECUTING CODE BLOCK {i} (inferred language is {lang})...",
-                    "red",
-                ),
-                flush=True,
-            )
-            if lang in ["bash", "shell", "sh"]:
-                exitcode, logs, image = self.run_code(code, lang=lang, **self._code_execution_config)
-            elif lang in PYTHON_VARIANTS:
-                if code.startswith("# filename: "):
-                    filename = code[11 : code.find("\n")].strip()
-                else:
-                    filename = None
-                exitcode, logs, image = self.run_code(
-                    code,
-                    lang="python",
-                    filename=filename,
-                    **self._code_execution_config,
-                )
-            else:
-                # In case the language is not supported, we return an error message.
-                exitcode, logs, image = (
-                    1,
-                    f"unknown language {lang}",
-                    None,
-                )
-                # raise NotImplementedError
-            if image is not None:
-                self._code_execution_config["use_docker"] = image
-            logs_all += "\n" + logs
-            if exitcode != 0:
-                return exitcode, logs_all
-        return exitcode, logs_all
-
     @staticmethod
     def _format_json_str(jstr):
         """Remove newlines outside of quotes, and handle JSON escape sequences.
@@ -2234,40 +2126,11 @@ class ConversableAgent(LLMAgent):
         "function_call" deprecated as of [OpenAI API v1.1.0](https://github.com/openai/openai-python/releases/tag/v1.1.0)
         See https://platform.openai.com/docs/api-reference/chat/create#chat-create-function_call
         """
-        iostream = IOStream.get_default()
 
         func_name = func_call.get("name", "")
-        func = self._function_map.get(func_name, None)
 
         is_exec_success = False
-        if func is not None:
-            # Extract arguments from a json-like string and put it into a dict.
-            input_string = self._format_json_str(func_call.get("arguments", "{}"))
-            try:
-                arguments = json.loads(input_string)
-            except json.JSONDecodeError as e:
-                arguments = None
-                content = f"Error: {e}\n The argument must be in JSON format."
-
-            # Try to execute the function
-            if arguments is not None:
-                iostream.print(
-                    colored(f"\n>>>>>>>> EXECUTING FUNCTION {func_name}...", "magenta"),
-                    flush=True,
-                )
-                try:
-                    content = func(**arguments)
-                    is_exec_success = True
-                except Exception as e:
-                    content = f"Error: {e}"
-        else:
-            content = f"Error: Function {func_name} not found."
-
-        if verbose:
-            iostream.print(
-                colored(f"\nInput arguments: {arguments}\nOutput:\n{content}", "magenta"),
-                flush=True,
-            )
+        content = f"Error: Function {func_name} not found."
 
         return is_exec_success, {
             "name": func_name,
@@ -2291,38 +2154,11 @@ class ConversableAgent(LLMAgent):
         "function_call" deprecated as of [OpenAI API v1.1.0](https://github.com/openai/openai-python/releases/tag/v1.1.0)
         See https://platform.openai.com/docs/api-reference/chat/create#chat-create-function_call
         """
-        iostream = IOStream.get_default()
 
         func_name = func_call.get("name", "")
-        func = self._function_map.get(func_name, None)
 
         is_exec_success = False
-        if func is not None:
-            # Extract arguments from a json-like string and put it into a dict.
-            input_string = self._format_json_str(func_call.get("arguments", "{}"))
-            try:
-                arguments = json.loads(input_string)
-            except json.JSONDecodeError as e:
-                arguments = None
-                content = f"Error: {e}\n The argument must be in JSON format."
-
-            # Try to execute the function
-            if arguments is not None:
-                iostream.print(
-                    colored(f"\n>>>>>>>> EXECUTING ASYNC FUNCTION {func_name}...", "magenta"),
-                    flush=True,
-                )
-                try:
-                    if inspect.iscoroutinefunction(func):
-                        content = await func(**arguments)
-                    else:
-                        # Fallback to sync function if the function is not async
-                        content = func(**arguments)
-                    is_exec_success = True
-                except Exception as e:
-                    content = f"Error: {e}"
-        else:
-            content = f"Error: Function {func_name} not found."
+        content = f"Error: Function {func_name} not found."
 
         return is_exec_success, {
             "name": func_name,
@@ -2407,21 +2243,6 @@ class ConversableAgent(LLMAgent):
             message = await self.a_get_human_input(">")
 
         return self._handle_carryover(message, kwargs)
-
-    def register_function(self, function_map: dict[str, Callable | None]):
-        """Register functions to the agent.
-
-        Args:
-            function_map: a dictionary mapping function names to functions. if function_map[name] is None, the function will be removed from the function_map.
-        """
-        for name, func in function_map.items():
-            self._assert_valid_name(name)
-            if func is None and name not in self._function_map.keys():
-                warnings.warn(f"The function {name} to remove doesn't exist", name)
-            if name in self._function_map:
-                warnings.warn(f"Function '{name}' is being overridden.", UserWarning)
-        self._function_map.update(function_map)
-        self._function_map = {k: v for k, v in self._function_map.items() if v is not None}
 
     def update_function_signature(self, func_sig: str | dict, is_remove: None):
         """update a function_signature in the LLM configuration for function_call.
@@ -2511,16 +2332,6 @@ class ConversableAgent(LLMAgent):
             del self.llm_config["tools"]
 
         self.client = OpenAIWrapper(**self.llm_config)
-
-    def can_execute_function(self, name: list[str] | str) -> bool:
-        """Whether the agent can execute the function."""
-        names = name if isinstance(name, list) else [name]
-        return all([n in self._function_map for n in names])
-
-    @property
-    def function_map(self) -> dict[str, Callable]:
-        """Return the function map."""
-        return self._function_map
 
     def _wrap_function(self, func: F) -> F:
         """Wrap the function to dump the return value to json.
@@ -2622,47 +2433,6 @@ class ConversableAgent(LLMAgent):
                 self.update_tool_signature(f, is_remove=False)
             else:
                 raise ValueError(f"Unsupported API style: {api_style}")
-
-            return func
-
-        return _decorator
-
-    def register_for_execution(
-        self,
-        name: str | None = None,
-    ) -> Callable[[F], F]:
-        """Decorator factory for registering a function to be executed by an agent.
-
-        It's return value is used to decorate a function to be registered to the agent.
-
-        Args:
-            name (optional(str)): name of the function. If None, the function name will be used (default: None).
-
-        Returns:
-            The decorator for registering a function to be used by an agent.
-
-        """
-
-        def _decorator(func: F) -> F:
-            """Decorator for registering a function to be used by an agent.
-
-            Args:
-                func: the function to be registered.
-
-            Returns:
-                The function to be registered, with the _description attribute set to the function description.
-
-            Raises:
-                ValueError: if the function description is not provided and not propagated by a previous decorator.
-
-            """
-            # name can be overwritten by the parameter, by default it is the same as function name
-            if name:
-                func._name = name
-            elif not hasattr(func, "_name"):
-                func._name = func.__name__
-
-            self.register_function({func._name: self._wrap_function(func)})
 
             return func
 
@@ -2851,33 +2621,6 @@ class ConversableAgent(LLMAgent):
             return None
         else:
             return self.client.total_usage_summary
-
-
-def register_function(
-    f: Callable[..., Any],
-    *,
-    caller: ConversableAgent,
-    executor: ConversableAgent,
-    name: str | None = None,
-    description: str,
-) -> None:
-    """Register a function to be proposed by an agent and executed for an executor.
-
-    This function can be used instead of function decorators `@ConversationAgent.register_for_llm` and
-    `@ConversationAgent.register_for_execution`.
-
-    Args:
-        f: the function to be registered.
-        caller: the agent calling the function, typically an instance of ConversableAgent.
-        executor: the agent executing the function, typically an instance of UserProxy.
-        name: name of the function. If None, the function name will be used (default: None).
-        description: description of the function. The description is used by LLM to decode whether the function
-            is called. Make sure the description is properly describing what the function does or it might not be
-            called by LLM when needed.
-
-    """
-    f = caller.register_for_llm(name=name, description=description)(f)
-    executor.register_for_execution(name=name)(f)
 
 
 class AssistantAgent(ConversableAgent):

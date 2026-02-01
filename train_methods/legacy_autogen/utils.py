@@ -84,78 +84,6 @@ def content_str(content: str | list[UserMessageTextContentPart | UserMessageImag
     return rst
 
 
-def infer_lang(code: str) -> str:
-    """infer the language for the code.
-    TODO: make it robust.
-    """
-    if code.startswith("python ") or code.startswith("pip") or code.startswith("python3 "):
-        return "sh"
-
-    # check if code is a valid python code
-    try:
-        compile(code, "test", "exec")
-        return "python"
-    except SyntaxError:
-        # not a valid python code
-        return UNKNOWN
-
-
-# TODO: In the future move, to better support https://spec.commonmark.org/0.30/#fenced-code-blocks
-#       perhaps by using a full Markdown parser.
-def extract_code(
-    text: str | list, pattern: str = CODE_BLOCK_PATTERN, detect_single_line_code: bool = False
-) -> list[tuple[str, str]]:
-    """Extract code from a text.
-
-    Args:
-        text (str or List): The content to extract code from. The content can be
-            a string or a list, as returned by standard GPT or multimodal GPT.
-        pattern (str, optional): The regular expression pattern for finding the
-            code block. Defaults to CODE_BLOCK_PATTERN.
-        detect_single_line_code (bool, optional): Enable the new feature for
-            extracting single line code. Defaults to False.
-
-    Returns:
-        list: A list of tuples, each containing the language and the code.
-          If there is no code block in the input text, the language would be "unknown".
-          If there is code block but the language is not specified, the language would be "".
-    """
-    text = content_str(text)
-    if not detect_single_line_code:
-        match = re.findall(pattern, text, flags=re.DOTALL)
-        return match if match else [(UNKNOWN, text)]
-
-    # Extract both multi-line and single-line code block, separated by the | operator
-    # `([^`]+)`: Matches inline code.
-    code_pattern = re.compile(CODE_BLOCK_PATTERN + r"|`([^`]+)`")
-    code_blocks = code_pattern.findall(text)
-
-    # Extract the individual code blocks and languages from the matched groups
-    extracted = []
-    for lang, group1, group2 in code_blocks:
-        if group1:
-            extracted.append((lang.strip(), group1.strip()))
-        elif group2:
-            extracted.append(("", group2.strip()))
-
-    return extracted
-
-
-def generate_code(pattern: str = CODE_BLOCK_PATTERN, **config) -> tuple[str, float]:
-    """(openai<1) Generate code.
-
-    Args:
-        pattern (Optional, str): The regular expression pattern for finding the code block.
-            The default pattern is for finding a code block in a markdown file.
-        config (Optional, dict): The configuration for the API call.
-
-    Returns:
-        str: The generated code.
-        float: The cost of the generation.
-    """
-    response = Completion.create(**config)
-    return extract_code(Completion.extract_text(response)[0], pattern), response["cost"]
-
 
 _IMPROVE_FUNCTION_CONFIG = {
     "prompt": """Improve the function '{func_name}' to achieve the objective '{objective}'.
@@ -286,44 +214,6 @@ def in_docker_container() -> bool:
     return os.path.exists("/.dockerenv")
 
 
-def decide_use_docker(use_docker: bool | None) -> bool | None:
-    if use_docker is None:
-        env_var_use_docker = os.environ.get("AUTOGEN_USE_DOCKER", "True")
-
-        truthy_values = {"1", "true", "yes", "t"}
-        falsy_values = {"0", "false", "no", "f"}
-
-        # Convert the value to lowercase for case-insensitive comparison
-        env_var_use_docker_lower = env_var_use_docker.lower()
-
-        # Determine the boolean value based on the environment variable
-        if env_var_use_docker_lower in truthy_values:
-            use_docker = True
-        elif env_var_use_docker_lower in falsy_values:
-            use_docker = False
-        elif env_var_use_docker_lower == "none":  # Special case for 'None' as a string
-            use_docker = None
-        else:
-            # Raise an error for any unrecognized value
-            raise ValueError(
-                f'Invalid value for AUTOGEN_USE_DOCKER: {env_var_use_docker}. Please set AUTOGEN_USE_DOCKER to "1/True/yes", "0/False/no", or "None".'
-            )
-    return use_docker
-
-
-def check_can_use_docker_or_throw(use_docker) -> None:
-    if use_docker is not None:
-        inside_docker = in_docker_container()
-        docker_installed_and_running = is_docker_running()
-        if use_docker and not inside_docker and not docker_installed_and_running:
-            raise RuntimeError(
-                "Code execution is set to be run in docker (default behaviour) but docker is not running.\n"
-                "The options available are:\n"
-                "- Make sure docker is running (advised approach for code execution)\n"
-                '- Set "use_docker": False in code_execution_config\n'
-                '- Set AUTOGEN_USE_DOCKER to "0/False/no" in your environment variables'
-            )
-
 
 def _sanitize_filename_for_docker_tag(filename: str) -> str:
     """Convert a filename to a valid docker tag.
@@ -397,11 +287,6 @@ def execute_code(
 
     running_inside_docker = in_docker_container()
     docker_running = is_docker_running()
-
-    # SENTINEL is used to indicate that the user did not explicitly set the argument
-    if use_docker is SENTINEL:
-        use_docker = decide_use_docker(use_docker=None)
-    check_can_use_docker_or_throw(use_docker)
 
     timeout = timeout or DEFAULT_TIMEOUT
     original_filename = filename
