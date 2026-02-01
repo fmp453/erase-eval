@@ -15,13 +15,11 @@ from termcolor import colored
 from train_methods.legacy_autogen.cache import AbstractCache
 from train_methods.legacy_autogen.chat import ChatResult, a_initiate_chats, initiate_chats, _post_process_carryover_item, consolidate_chat_info
 from train_methods.legacy_autogen.client import ModelClient, OpenAIWrapper
-from train_methods.legacy_autogen.coding import CodeExecutor
 from train_methods.legacy_autogen.stream import IOStream
 from train_methods.legacy_autogen.utils import (
     content_str,
     load_basemodels_if_needed, 
-    serialize_to_str,
-    get_function_schema
+    serialize_to_str
 )
 
 __all__ = ("ConversableAgent",)
@@ -370,11 +368,8 @@ class ConversableAgent(LLMAgent):
         self._description = description
 
     @property
-    def code_executor(self) -> CodeExecutor | None:
-        """The code executor used by this agent. Returns None if code execution is disabled."""
-        if not hasattr(self, "_code_executor"):
-            return None
-        return self._code_executor
+    def code_executor(self) -> None:
+        return None
 
     def register_reply(
         self,
@@ -2284,80 +2279,7 @@ class ConversableAgent(LLMAgent):
 
         return wrapped_func
 
-    def register_for_llm(
-        self,
-        *,
-        name: str | None = None,
-        description: str | None = None,
-        api_style: Literal["function", "tool"] = "tool",
-    ) -> Callable[[F], F]:
-        """Decorator factory for registering a function to be used by an agent.
-
-        It's return value is used to decorate a function to be registered to the agent. The function uses type hints to
-        specify the arguments and return type. The function name is used as the default name for the function,
-        but a custom name can be provided. The function description is used to describe the function in the
-        agent's configuration.
-
-        Args:
-            name (optional(str)): name of the function. If None, the function name will be used (default: None).
-            description (optional(str)): description of the function (default: None). It is mandatory
-                for the initial decorator, but the following ones can omit it.
-            api_style: (literal): the API style for function call.
-                For Azure OpenAI API, use version 2023-12-01-preview or later.
-                `"function"` style will be deprecated. For earlier version use
-                `"function"` if `"tool"` doesn't work.
-                See [Azure OpenAI documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/function-calling?tabs=python) for details.
-
-        Returns:
-            The decorator for registering a function to be used by an agent.
-        """
-
-        def _decorator(func: F) -> F:
-            """Decorator for registering a function to be used by an agent.
-
-            Args:
-                func: the function to be registered.
-
-            Returns:
-                The function to be registered, with the _description attribute set to the function description.
-
-            Raises:
-                ValueError: if the function description is not provided and not propagated by a previous decorator.
-                RuntimeError: if the LLM config is not set up before registering a function.
-
-            """
-            # name can be overwritten by the parameter, by default it is the same as function name
-            if name:
-                func._name = name
-            elif not hasattr(func, "_name"):
-                func._name = func.__name__
-
-            # description is propagated from the previous decorator, but it is mandatory for the first one
-            if description:
-                func._description = description
-            else:
-                if not hasattr(func, "_description"):
-                    raise ValueError("Function description is required, none found.")
-
-            # get JSON schema for the function
-            f = get_function_schema(func, name=func._name, description=func._description)
-
-            # register the function to the agent if there is LLM config, raise an exception otherwise
-            if self.llm_config is None:
-                raise RuntimeError("LLM config must be setup before registering a function for LLM.")
-
-            if api_style == "function":
-                f = f["function"]
-                self.update_function_signature(f, is_remove=False)
-            elif api_style == "tool":
-                self.update_tool_signature(f, is_remove=False)
-            else:
-                raise ValueError(f"Unsupported API style: {api_style}")
-
-            return func
-
-        return _decorator
-
+    
     def register_model_client(self, model_client_cls: ModelClient, **kwargs):
         """Register a model client.
 
