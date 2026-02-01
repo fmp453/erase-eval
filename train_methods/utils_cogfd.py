@@ -9,45 +9,24 @@ import re
 import pprint
 from dataclasses import dataclass
 from json import JSONDecodeError
-from typing import Optional, Any
+from typing import Any
 
 
 import torch
-
-from torch import nn
+import torch.nn as nn
 from transformers import RobertaPreTrainedModel, XLMRobertaConfig, XLMRobertaModel
 from transformers.utils import ModelOutput
+from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 
 from train_methods.legacy_autogen.legacy_autogen import GroupChat
 from train_methods.legacy_autogen.legacy_autogen_conversable_agent import ConversableAgent, AssistantAgent
 
 @dataclass
 class TransformationModelOutput(ModelOutput):
-    """
-    Base class for text model's outputs that also contains a pooling of the last hidden states.
-
-    Args:
-        text_embeds (`torch.Tensor` of shape `(batch_size, output_dim)` *optional* returned when model is initialized with `with_projection=True`):
-            The text embeddings obtained by applying the projection layer to the pooler_output.
-        last_hidden_state (`torch.Tensor` of shape `(batch_size, sequence_length, hidden_size)`):
-            Sequence of hidden-states at the output of the last layer of the model.
-        hidden_states (`tuple(torch.Tensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-            Tuple of `torch.Tensor` (one for the output of the embeddings, if the model has an embedding layer, + one
-            for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
-
-            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.
-        attentions (`tuple(torch.Tensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-            Tuple of `torch.Tensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
-            sequence_length)`.
-
-            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
-            heads.
-    """
-
-    projection_state: Optional[torch.Tensor] = None
-    last_hidden_state: torch.Tensor = None
-    hidden_states: Optional[tuple[torch.Tensor]] = None
-    attentions: Optional[tuple[torch.Tensor]] = None
+    projection_state: torch.Tensor | None = None
+    last_hidden_state: torch.Tensor | None = None
+    hidden_states: tuple[torch.Tensor] | None = None
+    attentions: tuple[torch.Tensor] | None = None
 
 
 class RobertaSeriesConfig(XLMRobertaConfig):
@@ -75,7 +54,7 @@ class RobertaSeriesModelWithTransformation(RobertaPreTrainedModel):
     base_model_prefix = "roberta"
     config_class = RobertaSeriesConfig
 
-    def __init__(self, config):
+    def __init__(self, config: RobertaSeriesConfig):
         super().__init__(config)
         self.roberta = XLMRobertaModel(config)
         self.transformation = nn.Linear(config.hidden_size, config.project_dim)
@@ -87,23 +66,22 @@ class RobertaSeriesModelWithTransformation(RobertaPreTrainedModel):
 
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
+        input_ids: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        token_type_ids: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+        head_mask: torch.Tensor | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+        encoder_hidden_states: torch.Tensor | None = None,
+        encoder_attention_mask: torch.Tensor | None = None,
+        output_attentions: bool | None = None,
+        return_dict: bool | None = None,
+        output_hidden_states: bool | None = None,
     ):
-        r""" """
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        outputs = self.base_model(
+        outputs: BaseModelOutputWithPoolingAndCrossAttentions = self.base_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -138,9 +116,7 @@ class RobertaSeriesModelWithTransformation(RobertaPreTrainedModel):
             )
 
 
-"""
-generating concept logic graph
-"""
+# generating concept logic graph
 
 def generate_and_save_concept_graph(
     concept_combination_x: str,
