@@ -4,7 +4,6 @@ import time
 
 from typing import Protocol, Any, Callable
 
-import tiktoken
 from openai import APIError, APITimeoutError, AzureOpenAI, OpenAI
 from openai.resources import Completions
 from openai.types.chat import ChatCompletion
@@ -101,99 +100,6 @@ def get_key(config: dict[str, Any]) -> str:
             config, copied = config.copy() if not copied else config, True
             config.pop(key)
     return json.dumps(config, sort_keys=True)
-
-def _num_token_from_text(text: str, model: str = "gpt-3.5-turbo-0613"):
-    """Return the number of tokens used by a string."""
-    try:
-        encoding = tiktoken.encoding_for_model(model)
-    except KeyError:
-        print(f"Model {model} not found. Using cl100k_base encoding.")
-        encoding = tiktoken.get_encoding("cl100k_base")
-    return len(encoding.encode(text))
-
-def _num_token_from_messages(messages: list | dict, model="gpt-3.5-turbo-0613"):
-    """Return the number of tokens used by a list of messages.
-
-    retrieved from https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb/
-    """
-    if isinstance(messages, dict):
-        messages = [messages]
-
-    try:
-        encoding = tiktoken.encoding_for_model(model)
-    except KeyError:
-        print(f"Model {model} not found. Using cl100k_base encoding.")
-        encoding = tiktoken.get_encoding("cl100k_base")
-    if model in {
-        "gpt-3.5-turbo-0613",
-        "gpt-3.5-turbo-16k-0613",
-        "gpt-4-0314",
-        "gpt-4-32k-0314",
-        "gpt-4-0613",
-        "gpt-4-32k-0613",
-    }:
-        tokens_per_message = 3
-        tokens_per_name = 1
-    elif model == "gpt-3.5-turbo-0301":
-        tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
-        tokens_per_name = -1  # if there's a name, the role is omitted
-    elif "gpt-3.5-turbo" in model:
-        print("gpt-3.5-turbo may update over time. Returning num tokens assuming gpt-3.5-turbo-0613.")
-        return _num_token_from_messages(messages, model="gpt-3.5-turbo-0613")
-    elif "gpt-4" in model:
-        print("gpt-4 may update over time. Returning num tokens assuming gpt-4-0613.")
-        return _num_token_from_messages(messages, model="gpt-4-0613")
-    elif "gemini" in model:
-        print("Gemini is not supported in tiktoken. Returning num tokens assuming gpt-4-0613.")
-        return _num_token_from_messages(messages, model="gpt-4-0613")
-    elif "claude" in model:
-        print("Claude is not supported in tiktoken. Returning num tokens assuming gpt-4-0613.")
-        return _num_token_from_messages(messages, model="gpt-4-0613")
-    elif "mistral-" in model or "mixtral-" in model:
-        print("Mistral.AI models are not supported in tiktoken. Returning num tokens assuming gpt-4-0613.")
-        return _num_token_from_messages(messages, model="gpt-4-0613")
-    else:
-        raise NotImplementedError(
-            f"""_num_token_from_messages() is not implemented for model {model}. See https://github.com/openai/openai-python/blob/main/chatml.md for information on how messages are converted to tokens."""
-        )
-    num_tokens = 0
-    for message in messages:
-        num_tokens += tokens_per_message
-        for key, value in message.items():
-            if value is None:
-                continue
-
-            # function calls
-            if not isinstance(value, str):
-                try:
-                    value = json.dumps(value)
-                except TypeError:
-                    print(
-                        f"Value {value} is not a string and cannot be converted to json. It is a type: {type(value)} Skipping."
-                    )
-                    continue
-
-            num_tokens += len(encoding.encode(value))
-            if key == "name":
-                num_tokens += tokens_per_name
-    num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
-    return num_tokens
-
-def count_token(input: str | list | dict, model: str = "gpt-3.5-turbo-0613") -> int:
-    """Count number of tokens used by an OpenAI model.
-    Args:
-        input: (str, list, dict): Input to the model.
-        model: (str): Model name.
-
-    Returns:
-        int: Number of tokens from the input.
-    """
-    if isinstance(input, str):
-        return _num_token_from_text(input, model=model)
-    elif isinstance(input, list) or isinstance(input, dict):
-        return _num_token_from_messages(input, model=model)
-    else:
-        raise ValueError(f"input must be str, list or dict, but we got {type(input)}")
 
 
 class PlaceHolderClient:
@@ -389,13 +295,7 @@ class OpenAIClient:
             iostream.print("\033[0m\n")
 
             # Prepare the final ChatCompletion object based on the accumulated data
-            model = chunk.model.replace("gpt-35", "gpt-3.5")  # hack for Azure API
-            try:
-                prompt_tokens = count_token(params["messages"], model)
-            except NotImplementedError as e:
-                # Catch token calculation error if streaming with customized models.
-                print(str(e))
-                prompt_tokens = 0
+            prompt_tokens = 0
             response = ChatCompletion(
                 id=chunk.id,
                 model=chunk.model,
