@@ -2,12 +2,11 @@
 # https://github.com/cloneofsimo/lora/blob/master/lora_diffusion/cli_lora_pti.py
 
 
-import os
 import re
 import math
 import itertools
-from typing import Optional, Any, Union
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -86,8 +85,9 @@ def get_models(pretrained_model_name_or_path: str, placeholder_tokens: list[str]
         placeholder_token_ids,
     )
 
+
 def text2img_dataloader(train_dataset, train_batch_size: int, tokenizer: CLIPTokenizer):
-    def collate_fn(examples):
+    def collate_fn(examples: dict[str, Any]):
         input_ids = [example["instance_prompt_ids"] for example in examples]
         uncond_ids = [example["uncond_prompt_ids"] for example in examples]
         pixel_values = [example["instance_images"] for example in examples]
@@ -168,8 +168,7 @@ def loss_step(batch: dict[str, torch.Tensor], unet: UNet2DConditionModel, vae: A
         model_pred = model_pred * mask
         target = target * mask
 
-    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-    return loss
+    return F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
 
 def train_inversion(
@@ -200,7 +199,7 @@ def train_inversion(
     index_updates = ~index_no_updates
     loss_sum = 0.0
 
-    for epoch in range(math.ceil(num_steps / len(dataloader))):
+    for _ in range(math.ceil(num_steps / len(dataloader))):
         unet.eval()
         text_encoder.train()
         for batch in dataloader:
@@ -225,7 +224,7 @@ def train_inversion(
                             lambda_ = min(1.0, 100 * lr_scheduler.get_last_lr()[0])
                             text_encoder.get_input_embeddings().weight[index_updates] = F.normalize(text_encoder.get_input_embeddings().weight[index_updates, :], dim=-1) * (pre_norm + lambda_ * (0.4 - pre_norm))
 
-                        current_norm = text_encoder.get_input_embeddings().weight[index_updates, :].norm(dim=-1)
+                        text_encoder.get_input_embeddings().weight[index_updates, :].norm(dim=-1)
                         
                         text_encoder.get_input_embeddings().weight[index_no_updates] = orig_embeds_params[index_no_updates]
 
@@ -244,7 +243,7 @@ def train_inversion(
                     text_encoder=text_encoder,
                     placeholder_token_ids=placeholder_token_ids,
                     placeholder_tokens=placeholder_tokens,
-                    save_path=os.path.join(save_path, f"step_inv_{global_step}.safetensors"),
+                    save_path=Path(save_path, f"step_inv_{global_step}.safetensors"),
                     save_lora=False,
                 )
 
@@ -255,15 +254,15 @@ def ti_component(
     args: Arguments,
     output_dir: str,
     placeholder_tokens: str = "<s>",
-    placeholder_token_at_data: Optional[str] = None,
-    initializer_tokens: Optional[str] = None,
+    placeholder_token_at_data: str | None = None,
+    initializer_tokens: str | None = None,
     device="cuda:0",
 ):
     torch.manual_seed(args.seed)
     
     if output_dir is not None:
         output_dir = output_dir.replace(" ", "-")
-        os.makedirs(output_dir, exist_ok=True)
+        Path(output_dir).mkdir(exist_ok=True)
     
     placeholder_tokens = placeholder_tokens.split("|")
     if initializer_tokens is None:
@@ -352,6 +351,7 @@ def ti_component(
 
     del ti_optimizer
 
+
 def parse_safeloras_embeds(safeloras) -> dict[str, torch.Tensor]:
     embeds = {}
     metadata = safeloras.metadata()
@@ -369,7 +369,7 @@ def apply_learned_embed_in_clip(
     learned_embeds: dict[str, torch.Tensor],
     text_encoder: CLIPTextModel,
     tokenizer: CLIPTokenizer,
-    token: Optional[Union[str, list[str]]]=None,
+    token: str | list[str] | None=None,
     idempotent: bool=False,
 ):
     if isinstance(token, str):
@@ -466,16 +466,20 @@ def attn_component(
             self.attn_probs = []
             self.logs = []
             self.concept_positions = None
-        def __call__(self, attn_prob, m_name) -> Any:
+        
+        def __call__(self, attn_prob, m_name) -> None:
             bs, _ = self.concept_positions.shape
             head_num = attn_prob.shape[0] // bs
             target_attns = attn_prob.masked_select(self.concept_positions[:,None,:].repeat(head_num, 1, 1)).reshape(-1, self.concept_positions[0].sum())
             self.attn_probs.append(target_attns)
             self.logs.append(m_name)
+        
         def set_concept_positions(self, concept_positions):
             self.concept_positions = concept_positions
-        def loss(self):
+        
+        def loss(self) -> torch.Tensor:
             return torch.cat(self.attn_probs).norm()
+        
         def zero_attn_probs(self):
             self.attn_probs = []
             self.logs = []
@@ -485,7 +489,10 @@ def attn_component(
         def __init__(self, attn_controller: "AttnController", module_name) -> None:
             self.attn_controller = attn_controller
             self.module_name = module_name
-        def __call__(self, attn, hidden_states, encoder_hidden_states=None, attention_mask=None):
+        
+        def __call__(
+            self, attn, hidden_states: torch.Tensor, encoder_hidden_states=None, attention_mask=None
+        ) -> torch.Tensor:
             batch_size, sequence_length, _ = hidden_states.shape
             attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size=batch_size)
 
@@ -591,9 +598,9 @@ def attn_component(
     progress_bar = trange(global_step, max_train_steps)
     progress_bar.set_description("Steps")
 
-    for epoch in range(first_epoch, num_train_epochs):
+    for _ in range(first_epoch, num_train_epochs):
         unet.train()
-        for step, batch in enumerate(train_dataloader):
+        for _, batch in enumerate(train_dataloader):
             
             with torch.no_grad():
                 latents: torch.Tensor = vae.encode(batch["pixel_values"].to(device)).latent_dist.sample()
@@ -628,5 +635,4 @@ def attn_component(
             if global_step >= max_train_steps:
                 break
 
-    # output_dir: models/CONCEPT_NAME/fmn/CONCEPT_NAME-attn
     unet.save_pretrained(Path(output_dir).parent)

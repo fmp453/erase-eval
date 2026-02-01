@@ -1,60 +1,19 @@
-import random, os
 from pathlib import Path
-from typing import Optional
 
-import safetensors
 import torch
-import numpy as np
 from diffusers import UNet2DConditionModel, StableDiffusionPipeline
-from safetensors.torch import load_file
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from utils import Arguments
+from infer_methods.infer_utils import load_state_dict
+from train_methods.train_utils import seed_everything, tokenize
 from train_methods.utils_cpe import CPELayer_ResAG, CPENetwork_ResAG
 
 UNET_NAME = "unet"
 TEXT_ENCODER_NAME = "text_encoder"
 
-def seed_everything(seed: int):
 
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
-
-
-def load_metadata_from_safetensors(safetensors_file: str) -> dict:
-    """r
-    This method locks the file. see https://github.com/huggingface/safetensors/issues/164
-    If the file isn't .safetensors or doesn't have metadata, return empty dict.
-    """
-    if os.path.splitext(safetensors_file)[1] != ".safetensors":
-        return {}
-
-    with safetensors.safe_open(safetensors_file, framework="pt", device="cpu") as f:
-        metadata = f.metadata()
-    if metadata is None:
-        metadata = {}
-    return metadata
-
-def load_state_dict(file_name, dtype):
-    if os.path.splitext(file_name)[1] == ".safetensors":
-        sd = load_file(file_name)
-        metadata = load_metadata_from_safetensors(file_name)
-    else:
-        sd = torch.load(file_name, map_location="cpu")
-        metadata = {}
-
-    for key in list(sd.keys()):
-        if type(sd[key]) == torch.Tensor:
-            sd[key] = sd[key].to(dtype)
-
-    return sd, metadata
-
-def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: Optional[int] = None, device = "cuda") -> tuple[CLIPTokenizer, CLIPTextModel, UNet2DConditionModel, StableDiffusionPipeline]:
+def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: int | None = None, device = "cuda") -> tuple[CLIPTokenizer, CLIPTextModel, UNet2DConditionModel, StableDiffusionPipeline]:
     pipe = StableDiffusionPipeline.from_pretrained(
         checkpoint_path,
         upcast_attention=True if v2 else False,
@@ -73,15 +32,13 @@ def load_checkpoint_model(checkpoint_path: str, v2: bool = False, clip_skip: Opt
 
     return tokenizer, text_encoder, unet, pipe
 
-def text_tokenize(tokenizer: CLIPTokenizer, prompts: list[str]):
-    return tokenizer(prompts, padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt").input_ids
 
 @torch.no_grad()
-def text_encode(text_encoder: CLIPTextModel, tokens):
+def text_encode(text_encoder: CLIPTextModel, tokens: torch.Tensor):
     return text_encoder(tokens.to(text_encoder.device))[0]
 
 def encode_prompts(tokenizer: CLIPTokenizer, text_encoder: CLIPTokenizer, prompts: list[str], return_tokens: bool = False):
-    text_tokens = text_tokenize(tokenizer, prompts)
+    text_tokens = tokenize(prompts, tokenizer).input_ids
     text_embeddings = text_encode(text_encoder, text_tokens)
 
     if return_tokens:
@@ -134,6 +91,7 @@ def infer_with_cpe(args: Arguments, model_path: list[str]):
     network.to(device)
     network.eval()
     network.set_inference_mode()
+    Path(args.images_dir).mkdir(exist_ok=True)
 
     with torch.no_grad():
         prompt_embeds = encode_prompts(tokenizer, text_encoder, [args.prompt])
@@ -152,7 +110,6 @@ def infer_with_cpe(args: Arguments, model_path: list[str]):
                 prompt_embeds=prompt_embeds,
             ).images
 
-        os.makedirs(args.images_dir, exist_ok=True)
         for i, image in enumerate(images):
             image[i].save(f"{args.images_dir}/{i:02}.png")
 

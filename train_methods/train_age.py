@@ -80,13 +80,12 @@ def train_age(args: Arguments) -> None:
     if not Path('models/embedding_matrix_dict_Imagenet.pt').exists():
         save_embedding_matrix(tokenizer=tokenizer, text_encoder=text_encoder, model_name='SD-v1-4', save_mode='dict', vocab='Imagenet')
 
-
     # Search the closest tokens in the vocabulary for each erased word, using the similarity matrix
     concept_dict = ConceptDict()
     concept_dict.load_all_concepts()
 
     print('ignore_special_tokens:', args.ignore_special_tokens)
-    
+
     all_sim_dict = dict()
     for word in erased_words:
         if args.vocab in ['EN3K', 'Imagenet', 'CLIP']:
@@ -177,14 +176,12 @@ def train_age(args: Arguments) -> None:
 
         # clone the emb_c_t for the time step
         emb_0 = emb_c_t.clone().detach()
-
         t_enc = torch.randint(ddim_steps, (1,), device=unet.device)
         # time step from 1000 to 0 (0 being good)
         og_num = round((int(t_enc)/ddim_steps)*1000)
         og_num_lim = round((int(t_enc+1)/ddim_steps)*1000)
 
         t_enc_ddpm = torch.randint(og_num, og_num_lim, (1,), device=unet.device)
-
         start_code = torch.randn((1, 4, 64, 64)).to(unet.device)
 
         with torch.no_grad():

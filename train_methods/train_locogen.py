@@ -2,12 +2,13 @@
 
 import torch
 from diffusers import UNet2DConditionModel
+from transformers import CLIPTextModel, CLIPTokenizer
 
 from train_methods.train_utils import get_devices, get_models, tokenize
 from utils import Arguments
 
 # Total number of computable operations / modules -- 709
-def high_level_layers(unet: UNet2DConditionModel):
+def high_level_layers(unet: UNet2DConditionModel) -> list[str]:
     # Counter for the list
     
     # Total list of all modules
@@ -55,7 +56,6 @@ def train_edit(args: Arguments, layer_edit_modules, key_embeddings: torch.Tensor
 def train(args: Arguments):
     
     device = get_devices(args)[0]
-
     tokenizer, text_encoder, _, unet, _, _ = get_models(args)
     
     text_encoder.to(device)
@@ -79,16 +79,16 @@ def train(args: Arguments):
         return prompts
     
     # Function to generate output embeddings from the text-encoder
-    def generate_text_embeddings(tokenizer, text_encoder, key_prompt, value=False):
+    def generate_text_embeddings(tokenizer: CLIPTokenizer, text_encoder: CLIPTextModel, key_prompt: list[str], value=False):
         # Obtaining the embeddings of the last subject token
         # Key : Text-Embedding
-        key_embeddings = []
+        key_embeddings: list[torch.Tensor] = []
         key_tokens = []
         for prompt_curr in key_prompt:
             text_input_curr= tokenize(prompt_curr, tokenizer)
             # Append the embeddings
             with torch.no_grad():
-                text_embeddings = text_encoder(text_input_curr.input_ids.to(text_encoder.device))[0]
+                text_embeddings: torch.Tensor = text_encoder(text_input_curr.input_ids.to(text_encoder.device))[0]
                 key_embeddings.append(text_embeddings[0])
                 key_tokens.append(text_input_curr['input_ids'][0])
 
@@ -142,7 +142,7 @@ def train(args: Arguments):
     # Finished storing the layers which are edited
     key_embeddings = generate_text_embeddings(tokenizer, text_encoder, key_prompt)
     target_prompt = ['a painting'] * len(key_embeddings) if args.loco_concept_type == "style" else ["a photo"] * len(key_embeddings)
-    
+
     # Flag
     value_embeddings = generate_text_embeddings(tokenizer, text_encoder, target_prompt, value=True)
 

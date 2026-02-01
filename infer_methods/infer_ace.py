@@ -1,13 +1,12 @@
-import os
+from pathlib import Path
 from typing import Literal
 
-import safetensors
 import torch
 from diffusers import LMSDiscreteScheduler, AutoencoderKL
 from PIL import Image
-from safetensors.torch import load_file
 from tqdm.auto import tqdm
 
+from infer_methods.infer_utils import load_state_dict
 from train_methods.train_ace import ACELayer, ACENetwork
 from train_methods.train_utils import get_models, get_devices, tokenize, get_condition
 from utils import Arguments
@@ -37,49 +36,22 @@ def calculate_matching_score(
         scores.append(torch.tensor(tokenuni).to("cpu"))
     return torch.max(torch.stack(scores), dim=0)[0]
 
-def get_images(latents: torch.Tensor, vae: AutoencoderKL):
-    latents = 1 / 0.18215 * latents
-    with torch.no_grad():
-        image = vae.decode(latents).sample
 
+@torch.no_grad()
+def get_images(latents: torch.Tensor, vae: AutoencoderKL) -> list[Image.Image]:
+    latents = 1 / 0.18215 * latents
+    image = vae.decode(latents).sample
     image = (image / 2 + 0.5).clamp(0, 1)
     image = image.detach().cpu().permute(0, 2, 3, 1).numpy()
     images = (image * 255).round().astype("uint8")
     return [Image.fromarray(image) for image in images]
 
 
-def save_images(pil_images, folder_path):
-    os.makedirs(f"{folder_path}", exist_ok=True)
+def save_images(pil_images: list[Image.Image], folder_path: str):
+    Path(folder_path).mkdir(exist_ok=True)
     for num, im in enumerate(pil_images):
         im.save(f"{folder_path}/{num:02}.png")
 
-def load_state_dict(file_name):
-    if os.path.splitext(file_name)[1] == ".safetensors":
-        sd = load_file(file_name)
-        metadata = load_metadata_from_safetensors(file_name)
-    else:
-        sd = torch.load(file_name, map_location="cpu")
-        metadata = {}
-
-    for key in list(sd.keys()):
-        if isinstance(sd[key], torch.Tensor):
-            sd[key] = sd[key].to(dtype=torch.float32)
-
-    return sd, metadata
-
-def load_metadata_from_safetensors(safetensors_file: str) -> dict[str, str]:
-    """r
-    This method locks the file. see https://github.com/huggingface/safetensors/issues/164
-    If the file isn't .safetensors or doesn't have metadata, return empty dict.
-    """
-    if os.path.splitext(safetensors_file)[1] != ".safetensors":
-        return {}
-
-    with safetensors.safe_open(safetensors_file, framework="pt", device="cpu") as f:
-        metadata = f.metadata()
-    if metadata is None:
-        metadata = {}
-    return metadata
 
 @torch.no_grad()
 def generate_images(args: Arguments):
@@ -110,7 +82,7 @@ def generate_images(args: Arguments):
     
     print(f"erased_prompts is {erased_prompts}")
     
-    os.makedirs(args.images_dir, exist_ok=True)    
+    Path(args.images_dir).mkdir(exist_ok=True)
     prompt = [args.prompt] * args.num_images_per_prompt
     seed = args.seed
     weighted_ace = dict.fromkeys(aces[0].keys())

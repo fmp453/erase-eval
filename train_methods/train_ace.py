@@ -2,10 +2,8 @@
 
 import gc
 import json
-import os
 import random
 from copy import deepcopy
-from typing import Optional
 
 import numpy as np
 import torch
@@ -14,6 +12,7 @@ from torch.utils.data import DataLoader
 
 from safetensors.torch import save_file
 from diffusers import UNet2DConditionModel, DDIMScheduler
+from pathlib import Path
 from tqdm import tqdm
 
 from utils import Arguments
@@ -24,7 +23,6 @@ from train_methods.train_utils import get_condition, get_models, predict_noise, 
 class ACELayer(nn.Module):
     """
     replaces forward method of the original Linear, instead of replacing the original Linear module.
-
     """
 
     def __init__(
@@ -80,7 +78,7 @@ class ACELayer(nn.Module):
         self.org_module.forward = self.forward
         del self.org_module
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
 
 
@@ -172,14 +170,14 @@ class ACENetwork(nn.Module):
 
         return all_params
 
-    def save_weights(self, file, metadata: Optional[dict] = None):
+    def save_weights(self, file: str, metadata: dict | None=None):
         state_dict = self.state_dict()
 
         for key in list(state_dict.keys()):
             if not key.startswith("lora"):
                 del state_dict[key]
 
-        if os.path.splitext(file)[1] == ".safetensors":
+        if file.endswith(".safetensors"):
             save_file(state_dict, file, metadata)
         else:
             torch.save(state_dict, file)
@@ -202,6 +200,7 @@ class InfiniteDataLoader(DataLoader):
             for batch in super().__iter__():
                 yield batch
 
+
 @torch.no_grad()
 def diffusion_to_get_x_t(
     unet: UNet2DConditionModel,
@@ -223,7 +222,7 @@ def diffusion_to_get_x_t(
 
     return latents
 
-# memo: argument `tensor_path` is removed because this is not used in official readme and there is no desc about this.
+
 def train(args: Arguments):
 
     torch.autograd.set_detect_anomaly(True)
@@ -263,7 +262,7 @@ def train(args: Arguments):
 
     losses = []
     opt = torch.optim.Adam(unet_lora_params, lr=args.ace_lr)
-    criteria = torch.nn.MSELoss()
+    criteria = nn.MSELoss()
     history = []
     is_sc_clip = args.ace_surrogate_concept_clip_path is not None
     if not is_sc_clip:
@@ -280,7 +279,6 @@ def train(args: Arguments):
     
     for _, data in zip(pbar, anchor_dataloader):
         word = random.sample(words, 1)[0]
-        # get text embeddings for unconditional and conditional prompts
         emb_0 = get_condition([''], tokenizer, text_encoder)
         emb_p = get_condition(word, tokenizer, text_encoder)
         emb_n = get_condition(word, tokenizer, text_encoder)
@@ -390,9 +388,9 @@ def train(args: Arguments):
         gc.collect()
 
     folder_path = f'{args.save_dir}/ace/{args.concepts.replace(" ", "_")}'
-    os.makedirs(folder_path, exist_ok=True)
+    Path(folder_path).mkdir(exist_ok=True)
     network.save_weights(
-        os.path.join(folder_path, "model.safetensors"),
+        Path(folder_path, "model.safetensors"),
         metadata=model_metadata,
     )
 

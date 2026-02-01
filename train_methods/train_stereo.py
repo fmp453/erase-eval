@@ -1,6 +1,5 @@
 # https://github.com/koushiksrivats/robust-concept-erasing/blob/main
 
-import os
 import random
 import time
 import string
@@ -8,7 +7,6 @@ import math
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -21,7 +19,7 @@ from tqdm import tqdm
 from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, UNet2DConditionModel, get_scheduler
 
 from train_methods.data import TextualInversionDataset
-from train_methods.train_utils import get_models, get_devices, get_condition, gather_parameters, predict_noise, sample_until
+from train_methods.train_utils import get_models, get_devices, get_condition, gather_parameters, predict_noise, sample_until, seed_everything
 from utils import Arguments
 
 
@@ -34,6 +32,7 @@ class MomentumBuffer:
         new_average = self.momentum * self.running_average
         self.running_average = update_value + new_average
 
+
 def project(
     v0: torch.Tensor,  # [B, C, H, W]
     v1: torch.Tensor,  # [B, C, H, W]
@@ -44,6 +43,7 @@ def project(
     v0_parallel = (v0 * v1).sum(dim=[-1, -2, -3], keepdim=True) * v1
     v0_orthogonal = v0 - v0_parallel
     return v0_parallel.to(dtype), v0_orthogonal.to(dtype)
+
 
 def normalized_guidance(
     pred_cond: torch.Tensor,   # [B, C, H, W]
@@ -74,7 +74,7 @@ def normalized_compositional_guidance(
     pred_conds: list[torch.Tensor], # List of [B, C, H, W] conditional predictions
     pred_uncond: torch.Tensor,  # [B, C, H, W] unconditional prediction
     guidance_scales: list[float],  # List of guidance scales for each condition (can be + or -)
-    momentum_buffers: Optional[list[MomentumBuffer]] = None, # List of MomentumBuffers for each condition
+    momentum_buffers: list[MomentumBuffer] | None = None, # List of MomentumBuffers for each condition
     eta: float = 1.0,
     norm_threshold: float = 0.0,
 ):
@@ -129,15 +129,8 @@ def train_erasing(
     save_dir,
 ) -> UNet2DConditionModel:
     # Set the random seed for reproducibility
-    seed = args.seed
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
+    seed_everything(args.seed)
     nsteps = 50
-
     parameters = gather_parameters(args.stereo_method, unet)
 
     optimizer = optim.AdamW(parameters, lr=args.stereo_ste_lr)
@@ -222,12 +215,7 @@ def train_concept_inversion(
 ) -> tuple[CLIPTokenizer, CLIPTextModel]:
     
     # Set the random seed for reproducibility
-    seed = args.seed
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    seed_everything(args.seed)
 
     for param in text_encoder.get_input_embeddings().parameters():
         param.requires_grad = True
@@ -351,6 +339,7 @@ def generate_unique_placeholder_token(saved_tokens: dict[str, torch.Tensor], ite
     return placeholder_token
 
 
+@torch.no_grad()
 def inference_and_save(
     args: Arguments,
     prompt,
@@ -375,37 +364,35 @@ def inference_and_save(
 
     generator = torch.Generator().manual_seed(args.seed)
 
-    iteration_dir = os.path.join(args.data_dir, f"iteration_{iteration}")
-    os.makedirs(iteration_dir, exist_ok=True)
+    iteration_dir = Path(args.data_dir, f"iteration_{iteration}")
+    iteration_dir.mkdir(exist_ok=True)
 
-    with torch.no_grad():
-        erased_images = pipe(
-            f"{args.stereo_generic_prompt} {prompt}",
+    erased_images = pipe(
+        f"{args.stereo_generic_prompt} {prompt}",
+        width=args.image_size,
+        height=args.image_size,
+        num_inference_steps=50,
+        num_images_per_prompt=args.num_images_per_prompt,
+        generator=generator,
+        guidance_scale=args.guidance_scale
+    ).images
+
+    for i, img in enumerate(erased_images):
+        img.save(Path(iteration_dir, f"erased_image_{i}.png"))
+
+    for token in list(saved_tokens.values()):
+        attack_images = pipe(
+            f"{args.stereo_generic_prompt} {token}",
             width=args.image_size,
             height=args.image_size,
             num_inference_steps=50,
             num_images_per_prompt=args.num_images_per_prompt,
             generator=generator,
             guidance_scale=args.guidance_scale
-        ).images
-
-    for i, img in enumerate(erased_images):
-        img.save(os.path.join(iteration_dir, f"erased_image_{i}.png"))
-
-    with torch.no_grad():
-        for token in list(saved_tokens.values()):
-            attack_images = pipe(
-                f"{args.stereo_generic_prompt} {token}",
-                width=args.image_size,
-                height=args.image_size,
-                num_inference_steps=50,
-                num_images_per_prompt=args.num_images_per_prompt,
-                generator=generator,
-                guidance_scale=args.guidance_scale
-            )
-            for i, img in enumerate(attack_images):
-                img.save(os.path.join(iteration_dir, f"attack_image_placeholder_{token}_{i}.png"))
-            torch.cuda.empty_cache()
+        )
+        for i, img in enumerate(attack_images):
+            img.save(Path(iteration_dir, f"attack_image_placeholder_{token}_{i}.png"))
+        torch.cuda.empty_cache()
 
     print(f"Generated and saved images for iteration {iteration}.")
 
@@ -490,9 +477,7 @@ def search_thoroughly_enough(
 
     # Final model and token saving after all iterations
     final_model_path = save_dir / "ste_stage_model.pt"
-    torch.save({
-        'saved_tokens': saved_tokens
-    }, final_model_path)
+    torch.save({'saved_tokens': saved_tokens}, final_model_path)
     print(f"\nIterative erasure and attack complete. Final model saved to {final_model_path}")
     print(f"Placeholder tokens used for attack: {saved_tokens}")
 

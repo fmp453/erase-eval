@@ -1,8 +1,7 @@
 # Forget-Me-Not: Learning to Forget in Text-to-Image Diffusion Models (FMN)
 
-import os
 import shutil
-import warnings
+from pathlib import Path
 
 from transformers import CLIPTokenizer
 from diffusers import StableDiffusionPipeline
@@ -11,8 +10,6 @@ from train_methods.train_utils import get_devices
 from train_methods.utils_fmn import ti_component, attn_component
 from utils import Arguments
 
-
-warnings.filterwarnings("ignore")
 
 def tokenize(s, tokenizer: CLIPTokenizer):
     tokens = tokenizer.convert_ids_to_tokens(tokenizer.encode(s, add_special_tokens=False))
@@ -23,7 +20,7 @@ def tokenize(s, tokenizer: CLIPTokenizer):
         if len(tokenizer.encode(tokens[i], add_special_tokens=False)) == 1:
             res.append(tokens[i])
         else:
-            res = res + tokenize(tokens[i].replace("</w>", ""))
+            res += tokenize(tokens[i].replace("</w>", ""))
     return res
 
 def make_initial_tokens(concept: str, tokenizer_version: str):
@@ -69,9 +66,9 @@ def make_placeholder_tokens(initializer_tokens: str):
     res = ""
     for i in range(n:=len(initializer_tokens.split("|"))):
         if n - 1 != i:
-            res = res + f"<s{i+1}>|"
+            res = f"{res}<s{i+1}>|"
         else:
-            res = res + f"<s{i+1}>"
+            res = f"{res}<s{i+1}>"
     
     return res
 
@@ -81,11 +78,11 @@ def make_placeholder_token_at_data(placeholder_tokens: str):
 def generation(args: Arguments):
     print("generate images for FMN")
 
-    device = args.device.split(",")[0]
+    device = get_devices(args)[0]
     pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(args.sd_version).to(device=f"cuda:{device}")
     pipe.safety_checker = None
     prompt = f"a photo of {args.concepts}"
-    os.makedirs(args.instance_data_dir, exist_ok=True)
+    Path(args.instance_data_dir).mkdir(exist_ok=True)
     
     for i in range(2):
         images = pipe(prompt, num_images_per_prompt=5).images

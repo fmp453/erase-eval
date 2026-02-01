@@ -3,7 +3,6 @@
 # ref: https://github.com/nannullna/safe-diffusion/blob/main/train_sdd.py
 
 import random
-import warnings
 
 import torch
 import torch.optim as optim
@@ -19,7 +18,6 @@ from diffusers.optimization import get_scheduler
 from utils import Arguments
 from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices, get_models
 
-warnings.filterwarnings("ignore")
 
 def train_step(
     args: Arguments,
@@ -34,11 +32,9 @@ def train_step(
     unet_student: UNet2DConditionModel,
     devices: list[torch.device]
 ) -> torch.Tensor:
-    """Train the model a single step for a given prompt and return the loss."""
 
     unet_student.train()
 
-    # Encode prompt
     prompt_embeds = encode_prompt(
         prompt=prompt, 
         removing_prompt=removing_prompt,

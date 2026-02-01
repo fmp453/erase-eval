@@ -1,51 +1,14 @@
-import os
-import random
 from pathlib import Path
 
-import numpy as np
-import safetensors
 import torch
 from diffusers import StableDiffusionPipeline
-from safetensors.torch import load_file
 
 from utils import Arguments
-from train_methods.train_utils import get_models, get_condition, get_devices
+from infer_methods.infer_utils import load_state_dict
+from train_methods.train_utils import get_models, get_condition, get_devices, seed_everything
 from train_methods.train_gloce import GLoCELayerOutProp, GLoCENetworkOutProp
 from train_methods.train_gloce import get_module_name_type, get_modules_list
 
-
-def seed_everything(seed: int):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
-
-def load_metadata_from_safetensors(safetensors_file: str) -> dict:
-    if os.path.splitext(safetensors_file)[1] != ".safetensors":
-        return {}
-
-    with safetensors.safe_open(safetensors_file, framework="pt", device="cpu") as f:
-        metadata = f.metadata()
-    if metadata is None:
-        metadata = {}
-    return metadata
-
-def load_state_dict(file_name):
-    if os.path.splitext(file_name)[1] == ".safetensors":
-        sd = load_file(file_name)
-        metadata = load_metadata_from_safetensors(file_name)
-    else:
-        sd = torch.load(file_name, map_location="cpu")
-        metadata = {}
-
-    for key in sd.keys():
-        if isinstance(sd[key], torch.Tensor):
-            sd[key] = sd[key]
-
-    return sd, metadata
 
 def infer_with_gloce(args: Arguments):
     args.gloce_method = args.gloce_method.split(",")
@@ -105,7 +68,7 @@ def infer_with_gloce(args: Arguments):
         print(f"loaded concepts: {n_concept + 1}")
         for k, m in network.named_modules():
             if m.__class__.__name__ == "GLoCELayerOutProp":
-                m.eta = args.eta
+                m.eta = args.gloce_eta
                         
                 for k_child, m_child in m.named_children():
                     module_name = f"{k}.{k_child}"
@@ -139,8 +102,8 @@ def infer_with_gloce(args: Arguments):
                 num_images_per_prompt=args.num_images_per_prompt,
                 prompt_embeds=prompt_embeds,
             ).images
-        
-        os.makedirs(f"{args.images_dir}/gloce", exist_ok=True)
+
+        Path(args.images_dir, "gloce").mkdir(exist_ok=True)
         for i, image in enumerate(images):
             image.save(f"{args.images_dir}/gloce/{args.prompt.replace(' ', '-')}.png")
 

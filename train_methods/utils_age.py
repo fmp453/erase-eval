@@ -5,14 +5,13 @@ from train_methods.consts import IMAGENET_1K
 
 class ConceptDict:
     def __init__(self):
-        self.all_concepts = {}
+        self.all_concepts: dict[str, list] = {}
 
-    def load_concepts(self, concept_name, csv_file_path):
+    def load_concepts(self, concept_name: str, csv_file_path: str):
         
         data = []
         with open(csv_file_path, mode='r') as file:
             reader = csv.reader(file)
-            # next(reader)  # Skip the header
             for row in reader:
                 data.append(row[0])
 
@@ -36,7 +35,6 @@ class ConceptDict:
         return self.all_concepts[concept_name]
 
     def get_concepts_as_dict(self, concept_name):
-        # format: vocab[token] = index
         if concept_name not in self.all_concepts:
             raise ValueError(f"Concept name '{concept_name}' not found in the dictionary.") 
         vocab = {}
@@ -77,4 +75,3 @@ class ConceptDict:
         self.load_concepts('artistic', 'captions/artistic_painting.csv')
 
         self.load_imagenet_concepts()
-

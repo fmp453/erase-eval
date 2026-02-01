@@ -2,9 +2,8 @@
 # - https://github.com/cloneofsimo/lora/blob/master/lora_diffusion/lora.py
 # - https://github.com/kohya-ss/sd-scripts/blob/main/networks/lora.py
 
-import os
+
 import math
-from typing import Optional, List
 
 import torch
 import torch.nn as nn
@@ -23,13 +22,13 @@ class SPMLayer(nn.Module):
         self.spm_name = spm_name
         self.dim = dim
 
-        if org_module.__class__.__name__ == "Linear":
+        if org_module.__class__.__name__ == "Linear" and isinstance(org_module, nn.Linear):
             in_dim = org_module.in_features
             out_dim = org_module.out_features
             self.lora_down = nn.Linear(in_dim, dim, bias=False)
             self.lora_up = nn.Linear(dim, out_dim, bias=False)
 
-        elif org_module.__class__.__name__ == "Conv2d":
+        elif org_module.__class__.__name__ == "Conv2d" and isinstance(org_module, nn.Conv2d):
             in_dim = org_module.in_channels
             out_dim = org_module.out_channels
 
@@ -116,10 +115,10 @@ class SPMNetwork(nn.Module):
         self,
         prefix: str,
         root_module: nn.Module,
-        target_replace_modules: List[str],
+        target_replace_modules: list[str],
         rank: int,
         multiplier: float,
-    ) -> list:
+    ) -> list[SPMLayer]:
         spm_layers = []
 
         for name, module in root_module.named_modules():
@@ -128,13 +127,12 @@ class SPMNetwork(nn.Module):
                     if child_module.__class__.__name__ in ["Linear", "Conv2d"]:
                         spm_name = prefix + "." + name + "." + child_name
                         spm_name = spm_name.replace(".", "_")
-                        # print(f"{spm_name}")
                         spm_layer = self.module(spm_name, child_module, multiplier, rank, self.alpha, **self.module_kwargs)
                         spm_layers.append(spm_layer)
 
         return spm_layers
 
-    def prepare_optimizer_params(self, text_encoder_lr, unet_lr, default_lr):
+    def prepare_optimizer_params(self, default_lr):
         all_params = []
 
         if self.unet_spm_layers:
@@ -147,8 +145,8 @@ class SPMNetwork(nn.Module):
 
         return all_params
 
-    def save_weights(self, file, dtype=None, metadata: Optional[dict] = None):
-        state_dict = self.state_dict()
+    def save_weights(self, file: str, dtype=None, metadata: dict | None = None):
+        state_dict: dict[str, torch.Tensor] = self.state_dict()
 
         if dtype is not None:
             for key in list(state_dict.keys()):
@@ -160,7 +158,7 @@ class SPMNetwork(nn.Module):
             if not key.startswith("lora"):
                 del state_dict[key]
 
-        if os.path.splitext(file)[1] == ".safetensors":
+        if file.endswith(".safetensors"):
             save_file(state_dict, file, metadata)
         else:
             torch.save(state_dict, file)
@@ -172,4 +170,3 @@ class SPMNetwork(nn.Module):
     def __exit__(self, exc_type, exc_value, tb):
         for spm_layer in self.unet_spm_layers:
             spm_layer.multiplier = 0
-

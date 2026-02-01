@@ -1,11 +1,12 @@
 # https://github.com/cloneofsimo/lora/blob/master/lora_diffusion/lora.py
 
 import json
-from typing import Optional, Type
+from typing import Type
 
 import torch
 import torch.nn as nn
 from safetensors.torch import save_file as safe_save
+from transformers import CLIPTextModel
 
 TEXT_ENCODER_DEFAULT_TARGET_REPLACE = {"CLIPAttention"}
 UNET_DEFAULT_TARGET_REPLACE = {"CrossAttention", "Attention", "GEGLU"}
@@ -49,9 +50,9 @@ class LoraInjectedConv2d(nn.Module):
         in_channels: int,
         out_channels: int,
         kernel_size,
-        stride=1,
-        padding=0,
-        dilation=1,
+        stride: int = 1,
+        padding: int = 0,
+        dilation: int = 1,
         groups: int = 1,
         bias: bool = True,
         r: int = 4,
@@ -121,8 +122,8 @@ class LoraInjectedConv2d(nn.Module):
         self.selector.weight.data = self.selector.weight.data.to(self.lora_up.weight.device).to(self.lora_up.weight.dtype)
 
 @torch.no_grad()
-def inspect_lora(model: nn.Module):
-    moved = {}
+def inspect_lora(model: LoraInjectedConv2d | LoraInjectedLinear):
+    moved: dict[str, list] = {}
 
     for name, _module in model.named_modules():
         if _module.__class__.__name__ in ["LoraInjectedLinear", "LoraInjectedConv2d"]:
@@ -141,9 +142,9 @@ def inspect_lora(model: nn.Module):
 
 def _find_modules(
     model: nn.Module,
-    ancestor_class: Optional[set[str]] = None,
+    ancestor_class: set[str] | None = None,
     search_class: list[Type[nn.Module]] = [nn.Linear],
-    exclude_children_of: Optional[list[Type[nn.Module]]] = [
+    exclude_children_of: list[Type[nn.Module]] | None = [
         LoraInjectedLinear,
         LoraInjectedConv2d,
     ],
@@ -175,14 +176,12 @@ def _find_modules(
                 # Skip this linear if it's a child of a LoraInjectedLinear
                 if exclude_children_of and any([isinstance(parent, _class) for _class in exclude_children_of]):
                     continue
-                # Otherwise, yield it
                 yield parent, name, module
 
-def extract_lora_ups_down(model, target_replace_module=DEFAULT_TARGET_REPLACE):
 
+def extract_lora_ups_down(model, target_replace_module=DEFAULT_TARGET_REPLACE) -> list[tuple[nn.Module, ...]]:
     loras = []
-
-    for _m, _n, _child_module in _find_modules(
+    for _, _, _child_module in _find_modules(
         model,
         target_replace_module,
         search_class=[LoraInjectedLinear, LoraInjectedConv2d],
@@ -193,6 +192,7 @@ def extract_lora_ups_down(model, target_replace_module=DEFAULT_TARGET_REPLACE):
         raise ValueError("No lora injected.")
 
     return loras
+
 
 def save_lora_weight(
     model,
@@ -218,10 +218,11 @@ def _ti_lora_path(path: str) -> str:
     assert path.endswith(".pt"), "Only .pt files are supported"
     return ".".join(path.split(".")[:-1] + ["ti", "pt"])
 
+
 def save_all(
     unet,
-    text_encoder,
-    save_path,
+    text_encoder: CLIPTextModel,
+    save_path: str,
     placeholder_token_ids=None,
     placeholder_tokens=None,
     save_lora=True,
@@ -245,7 +246,6 @@ def save_all(
 
         # save text encoder
         if save_lora:
-
             save_lora_weight(unet, save_path, target_replace_module=target_replace_module_unet)
             print(f"Unet saved to {save_path}")
 
@@ -261,23 +261,20 @@ def save_all(
         embeds = {}
 
         if save_lora:
-
             loras["unet"] = (unet, target_replace_module_unet)
             loras["text_encoder"] = (text_encoder, target_replace_module_text)
 
         if save_ti:
             for tok, tok_id in zip(placeholder_tokens, placeholder_token_ids):
                 learned_embeds = text_encoder.get_input_embeddings().weight[tok_id]
-                # print(f"Current Learned Embeddings for {tok}:, id {tok_id} ", learned_embeds[:4])
                 embeds[tok] = learned_embeds.detach().cpu()
 
         save_safeloras_with_embeds(loras, embeds, save_path)
 
 def extract_lora_as_tensor(model, target_replace_module=DEFAULT_TARGET_REPLACE, as_fp16=True):
-
     loras = []
 
-    for _m, _n, _child_module in _find_modules(
+    for _, _, _child_module in _find_modules(
         model,
         target_replace_module,
         search_class=[LoraInjectedLinear, LoraInjectedConv2d],
@@ -299,13 +296,6 @@ def save_safeloras_with_embeds(
     embeds: dict[str, torch.Tensor] = {},
     outpath="./lora.safetensors",
 ):
-    """
-    Saves the Lora from multiple modules in a single safetensor file.
-
-    modelmap is a dictionary of {
-        "module name": (module, target_replace_module)
-    }
-    """
     weights = {}
     metadata = {}
 

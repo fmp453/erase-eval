@@ -2,29 +2,18 @@
 # Set You Straight: Auto-Steering Denoising Trajectories to Sidestep Unwanted Concepts (ACMMM 2025)
 
 
-import os
 import random
 from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from diffusers import UNet2DConditionModel
 from tqdm import tqdm
 
-from train_methods.train_utils import get_devices, get_models, get_condition, apply_model, gather_parameters, sample_until
+from train_methods.train_utils import get_devices, get_models, get_condition, apply_model, gather_parameters, sample_until, seed_everything
 from utils import Arguments
-
-def seed_everything(TORCH_SEED):
-	random.seed(TORCH_SEED)
-	os.environ['PYTHONHASHSEED'] = str(TORCH_SEED)
-	np.random.seed(TORCH_SEED)
-	torch.manual_seed(TORCH_SEED)
-	torch.cuda.manual_seed_all(TORCH_SEED)
-	torch.backends.cudnn.deterministic = True
-	torch.backends.cudnn.benchmark = False
 
 
 def train_ant(args: Arguments):
@@ -34,7 +23,7 @@ def train_ant(args: Arguments):
     devices = get_devices(args)
     gradients = defaultdict(float)
     save_path = Path(args.save_dir)
-    gradient_path = Path("gradient") / Path(f"{args.ant_method}_{args.ant_lr}")
+    gradient_path = Path("gradient", f"{args.ant_method}_{args.ant_lr}")
 
     words = [args.concepts.split(",")]
 
@@ -100,8 +89,8 @@ def train_ant(args: Arguments):
         e_p_minus.requires_grad = False
         
         # The loss function of ANT model
-        loss_1 = criteria(e_n_plus.to(devices[0]), e_0_plus.to(devices[0]) + (args.negative_guidance*(e_p_plus.to(devices[0]) - e_0_plus.to(devices[0])))) 
-        loss_3 = criteria(e_n_minus.to(devices[0]), e_0_minus.to(devices[0]) - (args.negative_guidance*(e_p_minus.to(devices[0]) - e_0_minus.to(devices[0]))))
+        loss_1 = criteria(e_n_plus.to(devices[0]), e_0_plus.to(devices[0]) + (args.negative_guidance * (e_p_plus.to(devices[0]) - e_0_plus.to(devices[0])))) 
+        loss_3 = criteria(e_n_minus.to(devices[0]), e_0_minus.to(devices[0]) - (args.negative_guidance * (e_p_minus.to(devices[0]) - e_0_minus.to(devices[0]))))
         loss_2 = criteria(e_0_plus.to(devices[0]), e_n0_plus.to(devices[0]))
         loss_4 = criteria(e_0_minus.to(devices[0]), e_n0_minus.to(devices[0]))
         loss: torch.Tensor = loss_3 + args.ant_alpha_2 * loss_4 + args.ant_alpha_1 * (loss_1 + args.ant_alpha_2 * loss_2)

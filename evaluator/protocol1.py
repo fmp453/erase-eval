@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import subprocess
+from pathlib import Path
 
 from openai import OpenAI
 
@@ -33,8 +34,8 @@ class PromptGenerator:
             concept_type: str,
             original_output_dir_name: str,
             seed: int,
-            gpt_4o_version: str="gpt-4o-2024-08-06",
-            gpt_4o_mini_version: str="gpt-4o-mini-2024-07-18",
+            gpt_version: str="gpt-4.1-2025-04-14",
+            gpt_41_mini_version: str="gpt-4.1-mini-2025-04-14",
             num_trials: int=5,
             device: str="cuda:0"
         ):
@@ -43,8 +44,8 @@ class PromptGenerator:
         self.previous_prompts = []
         self.json_path = "captions/protocol1.json"
         self.client = OpenAI(api_key=OPENAI_API_KEY)
-        self.gpt_4o_version = gpt_4o_version
-        self.gpt_4o_mini_version = gpt_4o_mini_version
+        self.gpt_version = gpt_version
+        self.gpt_41_mini_version = gpt_41_mini_version
         self.original_output_dir_name = original_output_dir_name
         self.seed = seed
         self.num_trials = num_trials
@@ -58,7 +59,7 @@ Concept: {self.target_concept}
 Prompt:
 """
         final_prompt = self.client.chat.completions.create(
-            model=self.gpt_4o_version,
+            model=self.gpt_version,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT_FOR_GENERATION + EXAMPLE_PROMPT},
                 {"role": "user", "content": prompt}
@@ -67,7 +68,7 @@ Prompt:
 
         final_prompt = final_prompt.replace("\n", "")
 
-        if os.path.exists(self.json_path):
+        if Path(self.json_path).exists():
             # If it exists, read the existing content
             with open(self.json_path, "r", encoding="utf-8") as json_file:
                 existing_data = json.load(json_file)
@@ -92,7 +93,7 @@ Prompt:
             return base64.b64encode(image_file.read()).decode("utf-8")
         
     def generate_image(self, prompt):
-        os.makedirs(self.original_output_dir_name, exist_ok=True)
+        Path(self.original_output_dir_name).mkdir(exist_ok=True)
         self.original_dir = f"{self.original_output_dir_name}/{self.target_concept.replace(' ', '_')}_1"
         env = os.environ.copy()
         subprocess.run([
@@ -114,7 +115,7 @@ Concept: {self.target_concept}
 Image:
 ''' 
         response = self.client.chat.completions.create(
-            model=self.gpt_4o_mini_version,
+            model=self.gpt_41_mini_version,
             messages=[
                 {"role": "system", "content": EVALUATION_SYSTEM_PROMPT},
                 {"role": "user", 
@@ -152,7 +153,7 @@ Prompt:
 """
 
         final_prompt = self.client.chat.completions.create(
-            model=self.gpt_4o_version,
+            model=self.gpt_version,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT_FOR_GENERATION + additional_system_prompt},
                 {"role": "user", "content": prompt}
@@ -161,7 +162,7 @@ Prompt:
 
         final_prompt = final_prompt.replace("\n", "")
 
-        if os.path.exists(self.json_path):
+        if Path(self.json_path).exists():
             # If it exists, read the existing content
             with open(self.json_path, "r", encoding="utf-8") as json_file:
                 existing_data = json.load(json_file)

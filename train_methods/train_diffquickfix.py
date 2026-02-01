@@ -1,19 +1,16 @@
 # Localizing and Editing Knowledge in Text-to-Image Generative Models (DiffQuickFix)
-
 # almost of all is copied from https://github.com/adobe-research/DiffQuickFixRelease/blob/main/causal_trace_model_edit.ipynb
 
-import os
-import random
 from copy import deepcopy
 
-import numpy as np
 import torch
 import torch.nn as nn
 from transformers import CLIPTokenizer, CLIPTextModel
+from transformers.models.clip.modeling_clip import CLIPAttention
 from diffusers import StableDiffusionPipeline
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionSafetyChecker
 
-from train_methods.train_utils import get_devices
+from train_methods.train_utils import get_devices, seed_everything, tokenize
 from utils import Arguments
 
 class SafteyChecker(StableDiffusionSafetyChecker):
@@ -28,24 +25,15 @@ class SafteyChecker(StableDiffusionSafetyChecker):
         has_nsfw_concepts = [False for _ in range(len(images))]
         return images, has_nsfw_concepts
 
-def set_seed(seed: int=42) -> None:
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    # Set a fixed value for the hash seed
-    os.environ["PYTHONHASHSEED"] = str(seed)
 
 def decode_tokens(tokenizer: CLIPTokenizer, token_array):
     if hasattr(token_array, "shape") and len(token_array.shape) > 1:
         return [decode_tokens(tokenizer, row) for row in token_array]
     return [tokenizer.decode([t]) for t in token_array]
 
+
 # maybe under construction
 def train_edit(model, projection_matrices, og_matrices, contexts, values, old_texts, new_texts, lamb=0.01):
-    print(f'############## Editing function #################')
     # Contexts for the three projection matrices
     context_k = contexts
   
@@ -93,8 +81,6 @@ def train_edit(model, projection_matrices, og_matrices, contexts, values, old_te
 
 def train(args: Arguments):
     seed = args.seed
-
-
     anchor_prompt = args.concepts
 
    # Define the target prompt: Prompt to which the original anchor_prompt needs to be translated to 
@@ -109,7 +95,7 @@ def train(args: Arguments):
     text_encoder: CLIPTextModel = sd_pipeline.text_encoder
     tokenizer: CLIPTokenizer = sd_pipeline.tokenizer
 
-    set_seed(seed)
+    seed_everything(seed)
 
     # Define the self-attention layer which needs to be edited 
     self_layer = 0 ## Default = 0, found via causal tracing in the paper
@@ -122,27 +108,14 @@ def train(args: Arguments):
 
     # Obtain the projection layers of the self-attentions which needs to be udpated 
     # Layers which need to get appended
-    ca_layers = []
-    for n, m in text_encoder.named_modules():
-        if 'encoder.layers.' + str(self_layer) + '.self_attn' == n:
+    ca_layers: list[CLIPAttention] = []
+    for name, m in text_encoder.named_modules():
+        if f'encoder.layers.{self_layer}.self_attn' == name:
             ca_layers.append(m)
 
     # Projection Matrices
     projection_matrices = [l.out_proj for l in ca_layers]
     og_matrices = [deepcopy(l.out_proj) for l in ca_layers]
-
-    # Count parameters
-    def count_parameters(model: nn.Module):
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-    # parameters
-    params = 0
-    for l in projection_matrices:
-        params += l.in_features * l.out_features
-
-    print(f'Params to update : {params}')
-    print(f"Total params: {count_parameters(sd_pipeline.unet)}")
-    print(f"Percentage: {(params / count_parameters(sd_pipeline.unet)) * 100}%")
 
     # CREATING THE TRAINING DATA FOR MODEL EDITING 
     # # Setup sentences #
@@ -164,9 +137,9 @@ def train(args: Arguments):
     module_k_proj = None 
 
     # Iterate through the text_model modules
-    for n,m in text_encoder.named_modules():
+    for n, m in text_encoder.named_modules():
         # Only use the out_proj layer as output
-        if 'encoder.layers.' + str(self_layer) + '.self_attn.out_proj' in n:
+        if f'encoder.layers.{self_layer}.self_attn.out_proj' in n:
             text_modules.append(n)
             module_k_proj = m 
 
@@ -218,7 +191,7 @@ def train(args: Arguments):
     # Iterate through the texts and obtain the token embeddings 
     for old_text, new_text in zip(old_texts, new_texts):
         # Tokens Old
-        tokens: torch.Tensor = tokenizer([old_text, new_text], padding="max_length", max_length=tokenizer.model_max_length, truncation=True, return_tensors="pt").input_ids 
+        tokens: torch.Tensor = tokenize(prompt=[old_text, new_text], tokenizer=tokenizer).input_ids 
         
         # Obtain the relevant token indexes 
         old_index, new_index = find_index(tokens)
@@ -273,7 +246,6 @@ def train(args: Arguments):
         values_indexes.append(subject_new_texts[i][0])
 
         temp = 0
-
         if len(subject_old_texts[i]) <= len(subject_new_texts[i]):
             max_turn = len(subject_old_texts[i])
         else:

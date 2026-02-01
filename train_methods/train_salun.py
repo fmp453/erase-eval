@@ -1,11 +1,9 @@
 # SalUn: Empowering Machine Unlearning via Gradient-based Weight Saliency in Both Image Classification and Generation
-
 # ref: https://github.com/nannullna/safe-diffusion/blob/main/train_sdd.py
 
-import os
 import random
 import shutil
-import warnings
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -13,6 +11,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 from tqdm import trange
+from PIL import Image
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
@@ -25,9 +24,8 @@ from diffusers.optimization import get_scheduler
 from utils import Arguments
 from train_methods.consts import imagenette_labels
 from train_methods.data import Imagenette, NSFW, SalUnDataset
-from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, tokenize, get_devices, get_models, get_condition
+from train_methods.train_utils import prepare_extra_step_kwargs, sample_until, gather_parameters, encode_prompt, get_devices, get_models, get_condition
 
-warnings.filterwarnings("ignore")
 
 def train_step(
     args: Arguments,
@@ -177,7 +175,7 @@ def salun(args: Arguments, mask_path: str):
     unet_student.eval()
     unet_student.save_pretrained(args.save_dir)
 
-def _convert_image_to_rgb(image):
+def _convert_image_to_rgb(image: Image.Image):
     return image.convert("RGB")
 
 def get_transform(interpolation=InterpolationMode.BICUBIC, size=512):
@@ -217,7 +215,7 @@ def setup_forget_data(args: Arguments, device: torch.device):
         pipe.requires_safety_checker = False
         num_images_per_prompt = 5
         pipe.to(device)
-        os.makedirs("salun-data/train", exist_ok=True)
+        Path("salun-data/train").mkdir(exist_ok=True)
         for i in trange(800 // num_images_per_prompt):
             generator = torch.Generator(device).manual_seed(args.seed)
             images = pipe(descriptions, guidance_scale=args.guidance_scale, num_images_per_prompt=num_images_per_prompt, generator=generator).images
@@ -229,8 +227,8 @@ def setup_forget_data(args: Arguments, device: torch.device):
         train_dl = DataLoader(train_set, batch_size=args.salun_masking_batch_size)
         return train_dl, descriptions
 
-def generate_mask(args: Arguments):
-    
+def generate_mask(args: Arguments) -> Path:
+
     device = get_devices(args)[0]
     tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(args.sd_version, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.sd_version, subfolder="text_encoder")
@@ -295,8 +293,8 @@ def generate_mask(args: Arguments):
         for name in gradients:
             gradients[name] = torch.abs_(gradients[name])
 
-        mask_path = os.path.join("mask", args.concepts)
-        os.makedirs(mask_path, exist_ok=True)
+        mask_path = Path("mask", args.concepts)
+        Path(mask_path).mkdir(exist_ok=True)
 
         threshold = 0.5
         sorted_dict_positions = {}
@@ -326,7 +324,7 @@ def generate_mask(args: Arguments):
             threshold_tensor = threshold_tensor.reshape(tensor.shape)
             hard_dict[key] = threshold_tensor
             start_index += num_elements
-        torch.save(hard_dict, res:=os.path.join(mask_path, f"with_{str(threshold)}.pt"))
+        torch.save(hard_dict, res:=Path(mask_path, f"with_{str(threshold)}.pt"))
 
     return res
 
@@ -416,7 +414,7 @@ def generate_nsfw_mask(args: Arguments):
             hard_dict[key] = threshold_tensor
             start_index += num_elements
 
-        torch.save(hard_dict, res:=os.path.join(f"mask/nude_{threshold}.pt"))
+        torch.save(hard_dict, res:=Path(f"mask/nude_{threshold}.pt"))
 
     return res
 
@@ -431,5 +429,5 @@ def main(args: Arguments):
     mask_path = masking(args)
     salun(args, mask_path)
 
-    if os.path.isdir("salun-data"):
+    if Path("salun-data").is_dir():
         shutil.rmtree("salun-data")

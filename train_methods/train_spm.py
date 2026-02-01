@@ -9,7 +9,7 @@ import gc
 import random
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 from pydantic import BaseModel, model_validator
 
 import torch
@@ -83,17 +83,17 @@ class PromptEmbedsPair:
     batch_size: int
     dynamic_crops: bool
 
-    loss_fn: torch.nn.Module
+    loss_fn: nn.Module
     action: Literal["erase", "erase_with_la"]
 
     def __init__(
         self,
-        loss_fn: torch.nn.Module,
+        loss_fn: nn.Module,
         target: torch.FloatTensor,
         positive: torch.FloatTensor,
         unconditional: torch.FloatTensor,
         neutral: torch.FloatTensor,
-        settings: Optional[PromptSettings]=None
+        settings: PromptSettings | None=None
     ) -> None:
         self.loss_fn = loss_fn
         self.target = target
@@ -287,7 +287,7 @@ def train(
         module=SPMLayer,
     ).to(device)
 
-    trainable_params = network.prepare_optimizer_params(text_encoder_lr, unet_lr, lr)
+    trainable_params = network.prepare_optimizer_params(lr)
     optimizer = bnb.optim.AdamW8bit(trainable_params, lr=lr)
     lr_scheduler = get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_steps)
     criteria = nn.MSELoss()
@@ -304,7 +304,7 @@ def train(
                 settings.unconditional,
             ]:
                 if cache[prompt] == None:
-                    input_ids = tokenize([prompt], tokenizer).input_ids
+                    input_ids: torch.Tensor = tokenize([prompt], tokenizer).input_ids
                     cache[prompt] = text_encoder(input_ids.to(text_encoder.device))[0]
 
             prompt_pair = PromptEmbedsPair(
@@ -414,7 +414,7 @@ def train(
 
         loss["loss"].backward()
         if max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm, norm_type=2)
+            nn.utils.clip_grad_norm_(trainable_params, max_grad_norm, norm_type=2)
         optimizer.step()
         lr_scheduler.step()
 

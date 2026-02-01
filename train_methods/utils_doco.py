@@ -51,8 +51,8 @@ class CustomDiffusionAttnProcessor:
             if attn.cross_attention_norm:
                 encoder_hidden_states = attn.norm_cross(encoder_hidden_states)
 
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
+        key: torch.Tensor = attn.to_k(encoder_hidden_states)
+        value: torch.Tensor = attn.to_v(encoder_hidden_states)
         if crossattn:
             detach = torch.ones_like(key)
             detach[:, :1, :] = detach[:, :1, :] * 0.
@@ -72,6 +72,7 @@ class CustomDiffusionAttnProcessor:
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
 
+
 class CustomDiffusionPipeline(StableDiffusionPipeline):
     _optional_components = ["safety_checker","feature_extractor", "modifier_token_id"]
 
@@ -85,15 +86,7 @@ class CustomDiffusionPipeline(StableDiffusionPipeline):
         feature_extractor: CLIPFeatureExtractor,
         modifier_token_id: list = [],
     ):
-        super().__init__(vae,
-                         text_encoder,
-                         tokenizer,
-                         unet,
-                         scheduler,
-                         None,
-                         feature_extractor,
-                         None)
-
+        super().__init__(vae, text_encoder, tokenizer, unet, scheduler, None, feature_extractor, None)
         self.modifier_token_id = modifier_token_id
 
     def save_pretrained(self, save_path, parameter_group="cross-attn", all=False):
@@ -102,8 +95,11 @@ class CustomDiffusionPipeline(StableDiffusionPipeline):
         else:
             delta_dict = {'unet': {}}
             if parameter_group == 'embedding':
+                assert isinstance(self.text_encoder, CLIPTextModel)
                 delta_dict['text_encoder'] = self.text_encoder.state_dict()
+            assert isinstance(self.unet, UNet2DConditionModel)
             for name, params in self.unet.named_parameters():
+                assert isinstance(params, torch.Tensor)
                 if parameter_group == "cross-attn":
                     if 'attn2.to_k' in name or 'attn2.to_v' in name:
                         delta_dict['unet'][name] = params.cpu().clone()
@@ -157,7 +153,7 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
         aesthetic_weight=0.1,
     )
 
-    os.makedirs(f"{class_images_dir}/images", exist_ok=True)
+    Path(f"{class_images_dir}/images").mkdir(exist_ok=True)
     if len(list(Path(f"{class_images_dir}/images").iterdir())) >= num_class_images:
         return
 
@@ -196,8 +192,6 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
                         f3.write(f"{class_images_dir}/images/{total}.jpg" + "\n")
                         total += 1
                         pbar.update(1)
-                    else:
-                        continue
                 except:
                     continue
     else:
@@ -207,7 +201,7 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
                 count += 1
                 f1.write(images["caption"] + "\n")
                 pbar.update(1)
-    return
+
 
 def get_anchor_prompts(
     class_prompt,
@@ -233,7 +227,7 @@ def get_anchor_prompts(
         ]
         while True:
             completion = client.chat.completions.create(
-                model="gpt-4o-2024-11-20",
+                model="gpt-4.1-2025-04-14",
                 messages=messages
             )
             class_prompt_collection += [
@@ -270,10 +264,6 @@ def clean_prompt(class_prompt_collection):
     class_prompt_collection = [x.replace('"', "") for x in class_prompt_collection]
     return class_prompt_collection
 
-def safe_dir(dir: Path):
-    if not dir.exists():
-        dir.mkdir()
-    return dir
 
 def adjust_gradient(model: nn.Module, optim: torch.optim.Optimizer, norm_grad, loss_a: torch.Tensor, loss_b: torch.Tensor, lambda_=1):
     optim.zero_grad()
@@ -290,8 +280,8 @@ def adjust_gradient(model: nn.Module, optim: torch.optim.Optimizer, norm_grad, l
     for (p, b_grad) in zip([p[1] for p in model.named_parameters() if ("attn2" in p[0] and p[1].grad != None)], b_grads):
         if p.grad is not None and b_grad is not None:
             # Normalize gradients
-            b_grad_norm = b_grad / (torch.linalg.norm(b_grad) + 1e-8)
-            a_grad_norm = p.grad / (torch.linalg.norm(p.grad) + 1e-8)
+            b_grad_norm: torch.Tensor = b_grad / (torch.linalg.norm(b_grad) + 1e-8)
+            a_grad_norm: torch.Tensor = p.grad / (torch.linalg.norm(p.grad) + 1e-8)
             # Calculate dot product between gradients
             dot_product = torch.dot(a_grad_norm.flatten(), b_grad_norm.flatten())
             # If gradients are in opposite directions, adjust gradient

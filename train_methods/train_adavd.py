@@ -1,8 +1,7 @@
 # Precise, Fast, and Low-cost Concept Erasure in Value Space: Orthogonal Complement Matters
 
-import os, sys
 from copy import deepcopy
-from typing import Optional
+from pathlib import Path
 
 from tqdm import tqdm
 from einops import rearrange
@@ -18,9 +17,17 @@ from utils import Arguments
 
 
 class VisualAttentionProcess(nn.Module):
-
-    def __init__(self, module_name=None, atten_type='original', target_records=None, record=False, 
-    record_type=None, sigmoid_setting=None, decomp_timestep=0,  **kwargs):
+    def __init__(
+        self,
+        module_name=None,
+        atten_type='original',
+        target_records=None,
+        record=False,
+        record_type=None,
+        sigmoid_setting: tuple[float, ...]=(0.0),
+        decomp_timestep=0,
+        **kwargs
+    ):
         super().__init__()
         self.module_name = module_name
         self.atten_type = atten_type
@@ -37,15 +44,14 @@ class VisualAttentionProcess(nn.Module):
     
 
 class AttnProcessor():
-
     def __init__(
         self, 
         module_name=None, 
         atten_type='original', 
         target_records=None, 
         record=False, 
-        record_type: Optional[str]=None, 
-        sigmoid_setting=None, 
+        record_type: str | None=None, 
+        sigmoid_setting: tuple[float, ...]=(0.0, 0.0, 0.0),
         decomp_timestep=0
     ) -> None:
         self.module_name = module_name
@@ -57,7 +63,7 @@ class AttnProcessor():
         self.sigmoid_setting = sigmoid_setting
         self.decomp_timestep=decomp_timestep
 
-    def sigmoid(self, x, setting): 
+    def sigmoid(self, x: torch.Tensor, setting: tuple[float, ...]) -> torch.Tensor:
         a, b, c = setting
         return c / (1 + torch.exp(-a * (x - b)))
 
@@ -65,7 +71,7 @@ class AttnProcessor():
         self,
         target_value: torch.Tensor | list[torch.Tensor],
         pro_record: torch.Tensor,
-        ortho_basis: Optional[torch.Tensor]=None,
+        ortho_basis: torch.Tensor | None=None,
         project_matrix=None
     ): 
 
@@ -148,7 +154,7 @@ class AttnProcessor():
         self,
         attn: Attention,
         hidden_states: torch.Tensor,
-        encoder_hidden_states=None,
+        encoder_hidden_states: torch.Tensor | None=None,
         attention_mask=None,
         temb=None,
     ):
@@ -250,15 +256,6 @@ def set_attenprocessor(
         m: Attention
         if name.endswith('attn2') or name.endswith('attn1'):
             cross_attention_dim = None if name.endswith("attn1") else unet.config.cross_attention_dim
-            if name.startswith("mid_block"):
-                hidden_size = unet.config.block_out_channels[-1]
-            elif name.startswith("up_blocks"):
-                block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-            elif name.startswith("down_blocks"):
-                block_id = int(name[len("down_blocks.")])
-                hidden_size = unet.config.block_out_channels[block_id]
-
             m.set_processor(VisualAttentionProcess(
                 module_name=name, 
                 atten_type=atten_type,
@@ -318,21 +315,18 @@ def main(args: Arguments):
     device = get_devices(args)[0]
     mode_list = args.adavd_mode.replace(' ', '').split(',')
 
-    # region [If certain concept is already sampled, then skip it.]
     concept_list, concept_list_tmp = [], [item.strip() for item in args.adavd_contents.split(',')]
     if 'retain' in mode_list:
         for concept in concept_list_tmp:
-            check_path = os.path.join(args.save_dir, args.concepts.replace(', ', '_'), concept, 'retain')
-            os.makedirs(check_path, exist_ok=True)
-            if len(os.listdir(check_path)) != len(template_dict[args.adavd_erase_type]) * 10:
+            check_path = Path(args.save_dir, args.concepts.replace(', ', '_'), concept, 'retain')
+            check_path.mkdir(exist_ok=True)
+            if len(Path(check_path).iterdir()) != len(template_dict[args.adavd_erase_type]) * 10:
                 concept_list.append(concept)
     else:
         concept_list = concept_list_tmp
     if len(concept_list) == 0: 
-        sys.exit()
-    # endregion
+        exit()
 
-    # region [Prepare Models]
     tokenizer, text_encoder, vae, unet, ddim_scheduler, _ = get_models(args)
     scheduler = DPMSolverMultistepScheduler.from_config(ddim_scheduler.config)
     text_encoder.to(device)
@@ -342,16 +336,13 @@ def main(args: Arguments):
         unet_erase = deepcopy(unet)
     if 'retain' in mode_list: 
         unet_retain = deepcopy(unet)
-    # endregion
 
-    # region [Prepare embeddings]
     target_concepts = [item.strip() for item in args.concepts.split(',')]
     target_concept_encodings_ = [get_condition(prompt=concept, tokenizer=tokenizer, text_encoder=text_encoder) for concept in target_concepts]
     target_eot_idxs = [get_eot_idx(tokenize(prompt=concept, tokenizer=tokenizer).input_ids) for concept in target_concepts]
     target_concept_encoding = [get_spread_embedding(target_concept_encoding_, idx) for (target_concept_encoding_, idx) in zip(target_concept_encodings_, target_eot_idxs)]
     target_concept_encoding = torch.concat(target_concept_encoding)
     uncond_encoding = get_condition(prompt='', tokenizer=tokenizer, text_encoder=text_encoder)
-    # endregion
 
     if 'erase' in mode_list or 'retain' in mode_list:
         unet = set_attenprocessor(unet, atten_type='original', record=True, record_type=args.adavd_record_type)

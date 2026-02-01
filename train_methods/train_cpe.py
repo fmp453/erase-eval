@@ -1,38 +1,27 @@
 # Concept Pinpoint Eraser for Text-to-image Diffusion Models via Residual Attention Gate
 # https://github.com/Hyun1A/CPE
-
 # - https://huggingface.co/spaces/baulab/Erasing-Concepts-In-Diffusion/blob/main/train.py
 
 from pathlib import Path
 import pandas as pd
 import random
 import math
-import os
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import bitsandbytes as bnb
 from tqdm import tqdm
 from diffusers import PNDMScheduler
+from diffusers.models.attention_processor import Attention
 from torch.optim.lr_scheduler import LRScheduler
 from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType
 
 from train_methods.train_spm import PromptSettings, PromptEmbedsPair
 from train_methods.utils_cpe import CPELayer_ResAG, CPENetwork_ResAG, PromptTuningLayer, AnchorSamplerGensim
-from train_methods.train_utils import get_devices, get_models, get_condition
+from train_methods.train_utils import get_devices, get_models, get_condition, seed_everything
 from utils import Arguments
 
-
-def seed_everything(seed: int):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
 
 def get_scheduler_fix(optimizer, iterations, lr_scheduler_num_cycles, lr_warmup_steps, num_processes: int = 1):
     num_training_steps = iterations * num_processes  
@@ -64,10 +53,9 @@ def train_erase_one_stage(
     for _ in pbar:
         loss: dict[str, torch.Tensor] = {}
         optimizer.zero_grad()
-        # Prepare for erasing prompt 
         prompt_one = prompts
 
-        cache = dict()      
+        cache: dict[str, torch.Tensor] = {}
         with torch.no_grad():            
             prompt_pairs: list[PromptEmbedsPair] = []
 
@@ -91,7 +79,6 @@ def train_erase_one_stage(
                 prompt_pairs.append(prompt_pair)
 
         # Prepare for anchoring prompt
-        with torch.no_grad():
             anchors = anchor_sampler.sample_mixup_batch_cache(
                 prompt_pair,
                 embeddings_anchor_cache=embeddings_anchor_cache,
@@ -261,7 +248,7 @@ def train_adv_one_stage(
                 prompt_pairs.append(prompt_pair)
 
         # Prepare adversairal prompt
-        embeddings_adv = adv_prompts.forward(prompt_pair.target)
+        embeddings_adv: torch.Tensor = adv_prompts.forward(prompt_pair.target)
         len_emb_adv = embeddings_adv.size(0)
 
         loss_prompt_adv_to_k = 0
@@ -298,7 +285,7 @@ def train_adv_one_stage(
         loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv"].backward()
 
         if args.max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(trainable_params_adv, args.max_grad_norm, norm_type=2)
+            nn.utils.clip_grad_norm_(trainable_params_adv, args.max_grad_norm, norm_type=2)
         optimizer_adv.step()
         lr_scheduler_adv.step()
 
@@ -306,10 +293,7 @@ def train_adv_one_stage(
         
     return network, adv_prompts
 
-def train(
-    args: Arguments,
-    prompts: list[PromptSettings],
-):
+def train(args: Arguments, prompts: list[PromptSettings]):
     model_metadata = {
         "prompts": ",".join([prompt.target for prompt in prompts]),
         "rank": str(args.cpe_network_rank),
@@ -358,10 +342,10 @@ def train(
     lipschitz_o = []
     lipschitz_q = []
     lipschitz_ov = []
-    
-    unet_modules = dict()
+
     for name, module in unet.named_modules():
         if ("attn2" in name) and (module.__class__.__name__ == "Attention"):
+            assert isinstance(module, Attention)
             mat_o = module.to_out[0].weight.detach()
             mat_q = module.to_q.weight.detach()
             mat_v = module.to_v.weight.detach()
@@ -529,7 +513,7 @@ def train(
             args.cpe_lr = train_lr
             args.cpe_lr_scheduler_num_cycles = train_lr_scheduler_num_cycles
 
-        trainable_params = network.prepare_optimizer_params(args.cpe_text_encoder_lr, args.cpe_unet_lr, args.cpe_lr)
+        trainable_params = network.prepare_optimizer_params(args.cpe_lr)
 
         pbar = tqdm(range(args.cpe_iterations))
 
@@ -590,7 +574,7 @@ def train(
                 lr_scheduler_num_cycles=args.cpe_lr_scheduler_num_cycles,
                 lr_warmup_steps=args.cpe_lr_warmup_steps
             )
-            criteria_adv = torch.nn.MSELoss()        
+            criteria_adv = nn.MSELoss()        
 
             network, adv_prompts = train_adv_one_stage(
                 args=args,
@@ -618,13 +602,11 @@ def train(
     save_path.mkdir(parents=True, exist_ok=True)
     network.save_weights(
         save_path / "model_last.safetensors",
-        dtype=torch.float32,
         metadata=model_metadata,
     )
 
     adv_prompts.save_weights(
         save_path / "model_adv_prompts_last.safetensors",
-        dtype=torch.float32,
         metadata=model_metadata,
     )
 
@@ -655,18 +637,18 @@ def main(args: Arguments):
     ]
 
     base_path = args.save_dir
-    
+
     for p_idx, p in enumerate(prompts):
         args.save_dir = base_path.replace(args.cpe_replace_word.upper(), p.target.replace(' ', '_'))
 
         if (p_idx < args.cpe_st_prompt_idx) or (p_idx > args.cpe_end_prompt_idx):
             continue
-    
-        os.makedirs(args.save_dir, exist_ok=True)
-        if args.cpe_skip_learned and os.path.isfile(f"{args.save_dir}/model_last.safetensors"):
+
+        Path(args.save_dir).mkdir(exist_ok=True)
+        if args.cpe_skip_learned and Path(f"{args.save_dir}/model_last.safetensors").is_file():
             print(f"{p_idx} {p.target} has already been trained")
             continue
-                
+
         print(p_idx, [p])
         seed_everything(args.seed)
         train(args, [p])

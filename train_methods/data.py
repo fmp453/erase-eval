@@ -1,28 +1,44 @@
-import os
 import random
+import shutil
 from itertools import product
 from pathlib import Path
-from typing import Optional
+from typing import Literal, TYPE_CHECKING
 
+import gdown
 import numpy as np
 import pandas as pd
 import torch
-import PIL
 from datasets import load_dataset
 from PIL import Image
+from safetensors.torch import safe_open, save_file
 from torchvision import transforms
 from torch.utils.data import Dataset
+from tqdm.auto import tqdm
 from transformers import CLIPTokenizer
 
 from train_methods.train_utils import prompt_augmentation, tokenize
-from train_methods.templates import imagenet_style_templates_small, imagenet_templates_small, person_templates_small
+from train_methods.templates import (
+    imagenet_style_templates_small,
+    imagenet_templates_small,
+    person_templates_small,
+    SIMPLE_DECONCEPT_TEMPLATES,
+    SIMPLE_DESTYLE_TEMPLATES,
+    NSFW_TEMPLATES,
+    CON_DECON_DICT,
+    SYNONYMS_DICT,
+)
+
+if TYPE_CHECKING:
+    from train_methods.mce_models import (
+        Pipeline
+    )
 
 PIL_INTERPOLATION = {
-    "linear": PIL.Image.Resampling.BILINEAR,
-    "bilinear": PIL.Image.Resampling.BILINEAR,
-    "bicubic": PIL.Image.Resampling.BICUBIC,
-    "lanczos": PIL.Image.Resampling.LANCZOS,
-    "nearest": PIL.Image.Resampling.NEAREST,
+    "linear": Image.Resampling.BILINEAR,
+    "bilinear": Image.Resampling.BILINEAR,
+    "bicubic": Image.Resampling.BICUBIC,
+    "lanczos": Image.Resampling.LANCZOS,
+    "nearest": Image.Resampling.NEAREST,
 }
 
 class MACEDataset(Dataset):
@@ -30,11 +46,11 @@ class MACEDataset(Dataset):
         self,
         tokenizer: CLIPTokenizer,
         size: int=512,
-        multi_concept: Optional[list[str, str]]=None,
-        mapping: Optional[list[str]]=None,
-        batch_size: Optional[int]=None,
+        multi_concept: list[str, str] | None=None,
+        mapping: list[str] | None=None,
+        batch_size: int | None=None,
         train_seperate: bool=False,
-        input_data_path: Optional[str]=None
+        input_data_path: str | None=None,
     ):  
         self.size = size
         self.tokenizer = tokenizer
@@ -57,12 +73,12 @@ class MACEDataset(Dataset):
             c, t = data
             
             if input_data_path is not None:
-                p = Path(os.path.join(input_data_path, c.replace("-", " ")).replace(" ", "-"))
+                p = Path(input_data_path, c)
                 if not p.exists():
                     raise ValueError(f"Instance {p} images root doesn't exists.")
                 
                 if t == "object":
-                    p_mask = Path(os.path.join(input_data_path, c.replace("-", " ")).replace(f'{c.replace("-", " ")}', f'{c.replace("-", " ")}-mask').replace(" ", "-"))
+                    p_mask = Path(input_data_path, c.replace("-", " ").replace(f'{c.replace("-", " ")}', f'{c.replace("-", " ")}-mask').replace(" ", "-"))
                     if not p_mask.exists():
                         raise ValueError(f"Instance {p_mask} images root doesn't exists.")
             else:
@@ -161,10 +177,9 @@ class AblatingConceptDataset(Dataset):
         prompt_path: str,
         tokenizer: CLIPTokenizer,
         concept: str,
-        anchor_concept: Optional[str]=None,
+        anchor_concept: str | None=None,
         aug: bool=True
     ):
-        
         self.size = 512
         self.tokenizer = tokenizer
         self.interpolation = Image.Resampling.BILINEAR
@@ -262,7 +277,6 @@ class AblatingConceptDataset(Dataset):
             "instance_anchor_prompt_ids": tokenize(instance_anchor_prompt, self.tokenizer).input_ids
         }
         return example
-
 
 class DocoDataset(Dataset):
     # 多分上と同じ
@@ -422,18 +436,18 @@ class ForgetMeNotDataset(Dataset):
         size: int=512,
         center_crop: bool=False,
         use_pooler: bool=False,
-        multi_concept: Optional[list[str]]=None,
+        multi_concept: list[str] | None=None,
         data_dir: str="fmn-data"
     ):  
         self.use_pooler = use_pooler
         self.size = size
         self.center_crop = center_crop
         self.tokenizer = tokenizer
-        self.instance_images_path  = []
-        self.instance_prompt  = []
+        self.instance_images_path = []
+        self.instance_prompt = []
 
         token_idx = 1
-        for c, t, num_tok in multi_concept:
+        for _, t, num_tok in multi_concept:
             p = Path(data_dir)
             if not p.exists():
                 raise ValueError(f"Instance {p} images root doesn't exists.")                   
@@ -471,8 +485,8 @@ class ForgetMeNotDataset(Dataset):
 
         example["instance_prompt"] = instance_prompt
         example["instance_images"] = self.image_transforms(instance_image)
-
         example["instance_prompt_ids"] = tokenize(instance_prompt, self.tokenizer).input_ids
+
         prompt_ids = self.tokenizer(
             instance_prompt,
             truncation=True,
@@ -485,7 +499,7 @@ class ForgetMeNotDataset(Dataset):
         concept_positions = [0] * self.tokenizer.model_max_length
         for i, tok_id in enumerate(prompt_ids):
             if tok_id == concept_ids[0] and prompt_ids[i:i + len(concept_ids)] == concept_ids:
-                concept_positions[i:i + len(concept_ids)] = [1]*len(concept_ids)
+                concept_positions[i:i + len(concept_ids)] = [1] * len(concept_ids)
             if self.use_pooler and tok_id == pooler_token_id:
                 concept_positions[i] = 1
         example["concept_positions"] = torch.tensor(concept_positions)[None]               
@@ -497,11 +511,12 @@ class FMNPivotalTuningDataset(Dataset):
         self,
         instance_data_root: str,
         tokenizer: CLIPTokenizer,
-        token_map: Optional[dict]=None,
-        use_template: Optional[str]=None,
+        token_map: dict[str, str] | None=None,
+        use_template: str | None=None,
         size: int=512,
         blur_amount: int=20,
     ):
+        assert token_map is not None
         self.size = size
         self.blur_amount = blur_amount
         self.tokenizer = tokenizer
@@ -509,7 +524,7 @@ class FMNPivotalTuningDataset(Dataset):
         if not self.instance_data_root.exists():
             raise ValueError("Instance images root doesn't exists.")
 
-        self.instance_images_path = list(Path(instance_data_root).iterdir())
+        self.instance_images_path = list(self.instance_data_root.iterdir())
         self.num_instance_images = len(self.instance_images_path)
         self.token_map = token_map
         self.use_template = use_template
@@ -544,7 +559,7 @@ class FMNPivotalTuningDataset(Dataset):
             input_tok = list(self.token_map.values())[0]
             text = random.choice(self.templates).format(input_tok)
         else:
-            text = self.instance_images_path[index % self.num_instance_images].stem
+            text: str = self.instance_images_path[index % self.num_instance_images].stem
             if self.token_map is not None:
                 for token, value in self.token_map.items():
                     text = text.replace(token, value)
@@ -637,18 +652,18 @@ class AnchorsDataset(Dataset):
 class TextualInversionDataset(Dataset):
     def __init__(
         self,
-        data_root,
+        data_root: str,
         tokenizer: CLIPTokenizer,
-        learnable_property="object",  # [object, style]
+        learnable_property: Literal["object", "style", "person"]="object",
         size=512,
         repeats=100,
         interpolation="bicubic",
         flip_p=0.5,
-        set="train",
+        set: Literal["train", "test"]="train",
         placeholder_token="*",
         center_crop=False,
-        iteration=None,       # New argument for the iteration
-        num_iterations=None   # New argument for the number of images per subset
+        iteration: int | None=None, # New argument for the iteration
+        num_iterations: int | None =None # New argument for the number of images per subset
     ):
         self.data_root = data_root
         self.tokenizer = tokenizer
@@ -660,7 +675,7 @@ class TextualInversionDataset(Dataset):
         self.iteration = iteration
         self.num_iterations = num_iterations
 
-        self.image_paths = [os.path.join(self.data_root, file_path) for file_path in os.listdir(self.data_root)]
+        self.image_paths = [Path(self.data_root, file_path) for file_path in Path(self.data_root).iterdir()]
         self.num_images = len(self.image_paths)
 
         # Dynamically calculate images_per_subset based on total images and number of iterations
@@ -726,13 +741,8 @@ class TextualInversionDataset(Dataset):
 
         if self.center_crop:
             crop = min(img.shape[0], img.shape[1])
-            (
-                h,
-                w,
-            ) = (
-                img.shape[0],
-                img.shape[1],
-            )
+            h = img.shape[0]
+            w = img.shape[1]
             img = img[(h - crop) // 2 : (h + crop) // 2, (w - crop) // 2 : (w + crop) // 2]
 
         image = Image.fromarray(img)
@@ -836,3 +846,316 @@ class COGFDDataset(Dataset):
         ).attention_mask
 
         return example
+
+class MCEDataset(Dataset):
+    def __init__(
+        self,
+        metadata,
+        deconceptmeta,
+        pipe: Pipeline,
+        num_inference_steps,
+        save_dir,
+        seed: int,
+        device: str,
+        size: int=45,
+        concept=None,
+        neutral_concept=None,
+        only_deconcept_latent=False,  # only use deconcept latent for training
+        keep_old=False,
+        style=True,
+        num_saved_latents=2,  # number of latents to be saved
+        img_size=None,
+        with_synonyms=False,
+        with_flowedit=True,
+    ):
+        self.metadata = metadata
+        self.deconceptmeta = deconceptmeta
+        self.save_dir = save_dir
+        self.size = size
+        self.pipe = pipe
+        self.seed = seed
+        self.device = device
+        self.num_inference_steps = num_inference_steps
+        self.df = None
+        self.concept = concept
+        self.neutral_concept = neutral_concept
+        self.only_deconcept_latent = only_deconcept_latent
+        self.keep_old = keep_old
+        self.style = style
+        self.num_saved_latent = num_saved_latents
+        self.img_size = img_size
+        self.with_synonyms = with_synonyms
+        self.with_flowedit = with_flowedit
+
+        if with_flowedit:
+            from diffusers import FluxPipeline
+
+            pipe_flowedit = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", torch_dtype=torch.bfloat16).to(
+                device
+            )
+            self.pipe_flowedit = pipe_flowedit
+
+        self._validity_check()
+        self.prepare_metadata()
+
+        if with_flowedit:
+            del self.pipe_flowedit
+
+        # get adjective synonyms
+        update_con_decon_dict = CON_DECON_DICT.copy()
+        # get all concept adj list, e.g. gun, nude and etc.
+        concept_adj_list = [*SYNONYMS_DICT.keys()]
+
+        for k, v in CON_DECON_DICT.items():
+            for adj in concept_adj_list:
+                if adj in k:
+                    # update con_decon_dict with new key and value
+                    synon_adj_list = SYNONYMS_DICT[adj]
+                    for synon_adj in synon_adj_list:
+                        new_key = k.replace(adj, synon_adj)
+                        update_con_decon_dict[new_key] = v
+        
+        self.CON_DECON_DICT = update_con_decon_dict
+
+    def _validity_check(self):
+        Path(self.save_dir).mkdir(exist_ok=True)
+
+        if not self.keep_old:
+            shutil.rmtree(self.save_dir)
+            Path(self.save_dir).mkdir(exist_ok=True)
+
+        if not Path(self.metadata).exists():
+            base_dir = Path(self.metadata).parent
+            base_dir.mkdir(exist_ok=True)
+            print(f"save_dir {self.metadata} does not exist, downloading the meta data ...")
+            if "gcc" in self.metadata:
+                url = "https://drive.google.com/file/d/1VCWJ9YeLwqbT_TyvdV_aZWp0qkpHdEkz/view?usp=sharing"
+                gdown.download(url, self.metadata, fuzzy=True)
+            else:
+                raise ValueError("metadata not found, please provide the correct metadata path or download link")
+
+    def _generate_data_with_synonyms(self, template_list):
+        """
+        Replace parts of the concept with synonyms and apply templates to generate data.
+        Returns:
+            list: A list of data generated by applying templates to the concept and its synonyms.
+        """
+        # Get all keys from the synonyms dictionary
+        synonyms_keys = [*SYNONYMS_DICT.keys()]
+
+        # Create a list starting with the original concept
+        concept_list = [self.concept]
+
+        # Replace the first matching key in the concept with its synonyms
+        for key in synonyms_keys:
+            if key in self.concept:
+                synonym_list = SYNONYMS_DICT[key]
+                concept_list.extend(self.concept.replace(key, synonym) for synonym in synonym_list)
+                break
+
+        # Generate data by applying templates to the concept list
+        data = []
+        num_concepts = len(concept_list)
+
+        for index, template in enumerate(template_list):
+            pos = index % num_concepts
+            data.append(template(concept_list[pos]))
+
+        return data
+
+    def _load_and_merge_metadata(self):
+        # load concept to template and convert to df
+        if self.style == "style":
+            deconcept_template = SIMPLE_DESTYLE_TEMPLATES
+        elif self.style == "concept":
+            deconcept_template = SIMPLE_DECONCEPT_TEMPLATES
+        elif self.style == "nsfw":
+            deconcept_template = NSFW_TEMPLATES
+        else:
+            raise ValueError("style should be either concept or style, change the config setting")
+
+        if self.with_synonyms:
+            data = self._generate_data_with_synonyms(deconcept_template)
+        else:
+            data = [t(self.concept) for t in deconcept_template]
+
+        deconceptdf = pd.DataFrame(data, columns=["prompt"])
+        # add value to deconceptdf
+        deconceptdf["value"] = 1
+        deconceptdf = deconceptdf.iloc[: self.size, :]
+
+        # load metadata for reconstruction
+        df = pd.read_csv(self.metadata, sep="\t")
+        # delete the last column
+        df = df.iloc[: self.size, :-1]
+        df["value"] = 0
+        # rename the first column to prompt without knowing the column name
+        df.rename(columns={df.columns[0]: "prompt"}, inplace=True)
+
+        # concatenate the two dataframes and reset the index
+        self.df = pd.concat([df, deconceptdf], ignore_index=True)
+
+        assert len(deconceptdf) == len(df), "metadata length mismatch, reduce the data.size in config file"
+
+        # get every second row
+        self.df.iloc[::2, :] = deconceptdf
+        self.df.iloc[1::2, :] = df
+
+    def _generate_latents(self, prompt, num_inference_steps):
+        g_cpu = torch.Generator(self.device).manual_seed(self.seed)
+        preparation_phase_output = self.pipe.inference_preparation_phase(
+            prompt,
+            generator=g_cpu,
+            num_inference_steps=num_inference_steps,
+            output_type="latent",
+            width=self.img_size,
+            height=self.img_size,
+        )
+        intermediate_latents = [preparation_phase_output.latents]
+        timesteps = preparation_phase_output.timesteps
+        for timesteps_idx, time in enumerate(timesteps):
+            latents = self.pipe.inference_denoising_step(timesteps_idx, time, preparation_phase_output)
+            preparation_phase_output.latents = latents
+            intermediate_latents.append(latents)
+        assert len(intermediate_latents) == num_inference_steps + 1, "Intermediate latents length mismatch"
+        return intermediate_latents, preparation_phase_output
+
+    def _generate_image(self, intermediate_latents, preparation_phase_output):
+        prompt_embeds = preparation_phase_output.prompt_embeds
+        g_cpu = torch.Generator(self.device).manual_seed(self.seed)
+        return self.pipe.inference_aft_denoising(
+            intermediate_latents[-1], prompt_embeds, g_cpu, "pil", True, self.device
+        )
+
+    def _initialize_save_paths(self):
+        self.ptpaths, self.imgpaths, self.idxlist = [], [], []
+        self.size = len(self.df)
+        for i in range(self.size):
+            self.ptpaths.append(Path(self.save_dir, f"{i}.pt"))
+            self.imgpaths.append(Path(self.save_dir, f"{i}.png"))
+            self.idxlist.append(i)
+
+    def _contain_concept(self, prompt: str) -> None | dict[str, str]:
+        for k, v in self.CON_DECON_DICT.items():
+            # k is the concept, v is the neutral concept
+            if k in prompt:
+                return {"concept": k, "neutral_concept": v}
+        return None
+
+    @torch.no_grad()
+    def prepare_metadata(self):
+        self._load_and_merge_metadata()
+        self._initialize_save_paths()
+        print("Generating latent tensors and images ...")
+        with tqdm(total=len(self.df)) as pbar:
+            for p, i, idx in zip(self.ptpaths, self.imgpaths, self.idxlist):
+                prompt: str = self.df["prompt"][idx]
+                concept_neutral_concet_dict = self._contain_concept(prompt)
+
+                # prompt w concept -> prompt w/o concept if only_deconcept_latent
+                if self.only_deconcept_latent and concept_neutral_concet_dict is not None:
+                    intermediate_latents, preparation_phase_output = self._generate_latents(
+                        prompt, self.num_inference_steps
+                    )
+                    img = self._generate_image(intermediate_latents, preparation_phase_output)
+                    image_tensor = torch.stack(intermediate_latents, dim=0).squeeze(1)
+                    img["images"][0].save(i)
+
+                    # neutralize the concept
+                    deconcept_prompt = prompt.replace(
+                        concept_neutral_concet_dict["concept"], concept_neutral_concet_dict["neutral_concept"]
+                    )
+
+                    if self.with_flowedit:
+                        from train_methods.utils_mce import FlowEditFLUX
+
+                        img = img["images"][0]
+                        img_src = self.pipe_flowedit.image_processor.preprocess(img).to(self.device)
+                        x0_src_denorm = self.pipe_flowedit.vae.encode(img_src.to(torch.bfloat16)).latent_dist.mode()
+                        x0_src = (
+                            x0_src_denorm - self.pipe_flowedit.vae.config.shift_factor
+                        ) * self.pipe_flowedit.vae.config.scaling_factor
+                        scheduler = self.pipe_flowedit.scheduler
+                        x0_tar, last_latent = FlowEditFLUX(
+                            self.pipe_flowedit,
+                            scheduler,
+                            x0_src,
+                            prompt,
+                            tar_prompt=deconcept_prompt,
+                            T_steps=28,
+                            n_avg=1,
+                            src_guidance_scale=1.5,
+                            tar_guidance_scale=5.5,
+                            n_min=0,
+                            n_max=24,
+                        )
+                        x0_tar_denorm = (
+                            x0_tar / self.pipe_flowedit.vae.config.scaling_factor
+                        ) + self.pipe_flowedit.vae.config.shift_factor
+                        img_tar = self.pipe.vae.decode(x0_tar_denorm, return_dict=False)[0]
+                        img_tar = self.pipe.image_processor.postprocess(img_tar)[0]
+                        deconcept_image_tensor = torch.stack([last_latent], dim=0).squeeze(1)
+
+                        # save deconcept image
+                        basename = "deconcept_" + Path(i).name
+                        i = Path(Path(i).parent, basename)
+                        img_tar.save(i)
+
+                    else:
+                        intermediate_latents_deconcept, preparation_phase_output_deconcept = self._generate_latents(
+                            deconcept_prompt, self.num_inference_steps
+                        )
+                        img_deconcept = self._generate_image(
+                            intermediate_latents_deconcept, preparation_phase_output_deconcept
+                        )
+                        deconcept_image_tensor = torch.stack(intermediate_latents_deconcept, dim=0).squeeze(1)
+
+                        # ensure the inital gaussian noise is the same for both concept and deconcept
+                        assert intermediate_latents[0].equal(intermediate_latents_deconcept[0]), "Latent mismatch"
+
+                        # save deconcept image
+                        basename = "deconcept_" + Path(i).name
+                        i = Path(Path(i).parent, basename)
+                        img_deconcept["images"][0].save(i)
+                else:
+                    intermediate_latents, preparation_phase_output = self._generate_latents(
+                        prompt, self.num_inference_steps
+                    )
+                    # use the denoised latent z_o for generating images
+                    img = self._generate_image(intermediate_latents, preparation_phase_output)
+                    deconcept_image_tensor = torch.tensor([]).to(self.device)
+                    image_tensor = torch.stack(intermediate_latents, dim=0).squeeze(1)
+                    img["images"][0].save(i)
+
+                # save latent tensors and images
+                tmp_image_tensor = {
+                    "latents": image_tensor[-self.num_saved_latent :],
+                    "deconcept_latents": deconcept_image_tensor[-self.num_saved_latent :],
+                }
+
+                save_file(tmp_image_tensor, p)
+                pbar.update()
+
+    def __len__(self):
+        if self.df is None:
+            return 0
+        return len(self.df)
+
+    def _load_safetenors(self, path: str) -> dict[str, torch.Tensor]:
+        latents = {}
+        with safe_open(path, framework="pt") as f:
+            for k in f.keys():
+                latents[k] = f.get_tensor(k)
+        return latents
+
+    def __getitem__(self, idx):
+        if self.df is None:
+            raise ValueError("metadata is not prepared")
+        latents = self._load_safetenors(Path(self.save_dir, f"{idx}.pt"))
+        return {
+            "image": latents["latents"].to(self.device),
+            "deconcept_image": latents["deconcept_latents"].to(self.device),
+            "prompt": self.df["prompt"][idx],
+            "value": self.df["value"][idx],
+            "path": self.imgpaths[idx]
+        }

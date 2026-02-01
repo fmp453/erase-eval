@@ -1,14 +1,11 @@
 # GLoCE: Localized Concept Erasure for Text-to-Image Diffusion Models Using Training-Free Gated Low-Rank Adaptation
 # https://github.com/Hyun1A/GLoCE/tree/main
 
-import os
 import math
-import random
 import yaml
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 
-import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -19,7 +16,7 @@ from diffusers import UNet2DConditionModel
 from safetensors.torch import save_file
 
 from utils import Arguments
-from train_methods.train_utils import get_condition, get_devices
+from train_methods.train_utils import get_condition, get_devices, seed_everything
 
 class PromptSettings(BaseModel):  # yaml
     target: str
@@ -41,7 +38,7 @@ class PromptSettings(BaseModel):  # yaml
 
         return values
     
-def load_prompts_from_yaml(path) -> list[PromptSettings]:
+def load_prompts_from_yaml(path: str) -> list[PromptSettings]:
     with open(path, "r") as f:
         prompts = yaml.safe_load(f)
 
@@ -50,15 +47,6 @@ def load_prompts_from_yaml(path) -> list[PromptSettings]:
 
     return [PromptSettings(**prompt) for prompt in prompts]
 
-
-def seed_everything(seed: int):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
 
 class ParamModule(nn.Module):
     def __init__(self, size):
@@ -112,11 +100,11 @@ class SimpleSelectorOutProp(nn.Module):
         Vh_gate = self.select_weight.weight # (N,D,1)        
         cont = torch.einsum("nds,bntd->bnts", Vh_gate,x_diff_norm)**2
         
-        select_scale = torch.sigmoid(self.imp_slope.unsqueeze(0).unsqueeze(-1)*( \
-                    cont.sum(dim=-1) - self.imp_center.unsqueeze(0).unsqueeze(-1)) ) # BN
+        select_scale = torch.sigmoid(
+            self.imp_slope.unsqueeze(0).unsqueeze(-1) * (cont.sum(dim=-1) - self.imp_center.unsqueeze(0).unsqueeze(-1))
+        ) # BN
 
-        select_scale, select_idx = select_scale.max(dim=1, keepdim=True) #
-
+        select_scale, select_idx = select_scale.max(dim=1, keepdim=True)
         return select_idx, select_scale
 
     def reset_select_cache(self):
@@ -157,7 +145,7 @@ class GLoCELayerOutProp(nn.Module):
         self.use_bias = use_bias
         self.use_gate = use_gate
 
-        if org_module.__class__.__name__ == "Linear":
+        if org_module.__class__.__name__ == "Linear" and isinstance(org_module, nn.Linear):
  
             out_dim = org_module.out_features
 
@@ -166,7 +154,6 @@ class GLoCELayerOutProp(nn.Module):
 
             self.bias = ParamModule((1, n_concepts, out_dim))
             self.debias = ParamModule((1, n_concepts, out_dim))
-
 
         # same as microsoft's
         nn.init.zeros_(self.lora_update.weight)    
@@ -188,7 +175,7 @@ class GLoCELayerOutProp(nn.Module):
             n_concepts=n_concepts, 
             is_last_layer=is_last_layer
         )
-        
+
         self.use_prompt_tuning = False    
         self.t_counter = 0
 
@@ -228,7 +215,7 @@ class GLoCELayerOutProp(nn.Module):
         if self.t_counter == self.n_step:
             self.t_counter = 0
 
-        return (1-select_scale.permute(0,2,1))*x + select_scale.permute(0,2,1)*mod_x_bias 
+        return (1 - select_scale.permute(0, 2, 1)) * x + select_scale.permute(0, 2, 1) * mod_x_bias
 
 class GLoCENetworkOutProp(nn.Module):
     TARGET_REPLACE_MODULE_TRANSFORMER = [
@@ -261,7 +248,6 @@ class GLoCENetworkOutProp(nn.Module):
         last_layer = "",
         st_step = 10,
     ) -> None:
-        
         super().__init__()
         
         self.n_concepts = n_concepts
@@ -282,7 +268,6 @@ class GLoCENetworkOutProp(nn.Module):
         self.module_name_list_all=module_name_list_all
         self.last_layer = last_layer
         self.st_step = st_step
-
 
         self.gloce_layers = self.create_modules(
             GLoCENetworkOutProp.GLoCE_PREFIX,
@@ -335,8 +320,7 @@ class GLoCENetworkOutProp(nn.Module):
 
         return gloce_layers
     
-    def save_weights(self, file, dtype=None, metadata: Optional[dict] = None):
-        
+    def save_weights(self, file: str, dtype=None, metadata: dict | None = None):
         state_dict: dict[str, torch.Tensor] = self.state_dict()
         
         state_dict_save = dict()
@@ -346,7 +330,7 @@ class GLoCENetworkOutProp(nn.Module):
                 v = v.detach().clone().to("cpu").to(dtype)
                 state_dict_save[key] = v
                 
-        if os.path.splitext(file)[1] == ".safetensors":
+        if file.endswith(".safetensors"):
             save_file(state_dict_save, file, metadata)
         else:
             torch.save(state_dict_save, file)
@@ -399,15 +383,15 @@ def get_registered_buffer(
     prompts_batch = []
     len_embs_batch = embeddings.size(0)
 
-    os.makedirs(register_buffer_path, exist_ok=True)
+    Path(register_buffer_path).mkdir(exist_ok=True)
 
-    if os.path.isfile(f"{register_buffer_path}/{register_buffer_fn}"):
+    if Path(register_buffer_path, register_buffer_fn).is_file():
         print(f"load precomputed registered_buffer for original models ... {register_buffer_path}/{register_buffer_fn}")
         registered_buffer = torch.load(f"{register_buffer_path}/{register_buffer_fn}", map_location=torch.device(device))
 
     else:
         print(f"compute registered_buffer for original models ... {register_buffer_path}/{register_buffer_fn}")
-        for batch_idx in range(int(math.ceil(float(len_embs_batch)/embs_batchsize))):
+        for batch_idx in range(int(math.ceil(float(len_embs_batch) / embs_batchsize))):
             if embs_batchsize * (batch_idx + 1) <= len_embs_batch:
                 embs_batch.append(embeddings[embs_batchsize * batch_idx : embs_batchsize * (batch_idx + 1)])
                 prompts_batch.append(prompts[embs_batchsize * batch_idx : embs_batchsize * (batch_idx + 1)])
@@ -472,7 +456,7 @@ def prepare_text_embedding_token(
         prmpt_temp_sel_base = replace_word
 
     prompt_scripts_list.append(prmpt_temp_sel_base)
-    if args.gloce_use_emb_cache and os.path.isfile(f"{emb_cache_path}/{args.gloce_emb_cache_fn}"):
+    if args.gloce_use_emb_cache and Path(f"{emb_cache_path}/{args.gloce_emb_cache_fn}").is_file():
         print("load pre-computed text emb cache...")
         emb_cache = torch.load(f"{emb_cache_path}/{args.gloce_emb_cache_fn}", map_location=torch.device(text_encoder.device))
         
@@ -640,7 +624,7 @@ def prepare_text_embedding_token(
             "prmpt_scripts_upd": prmpt_scripts_upd,
         }
 
-        os.makedirs(emb_cache_path, exist_ok=True)
+        Path(emb_cache_path).mkdir(exist_ok=True)
         torch.save(emb_cache, f"{emb_cache_path}/{args.gloce_emb_cache_fn}")
 
     return emb_cache
@@ -737,8 +721,8 @@ def get_modules_list(
 
     return org_modules, module_name_list
 
-def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules: dict[str, nn.Module]):
-    if os.path.isfile(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt"):
+def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules: dict[str, nn.Module]) -> dict[str, torch.Tensor]:
+    if Path(param_cache_path, f"vh_cache_dict_{find_module_name}.pt").is_file:
         param_vh_cache_dict = torch.load(f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt", map_location=torch.device(device)) 
         param_s_cache_dict = torch.load(f"{param_cache_path}/s_cache_dict_{find_module_name}.pt", map_location=torch.device(device))
     else:
@@ -746,18 +730,18 @@ def load_model_sv_cache(find_module_name, param_cache_path, device, org_modules:
         param_s_cache_dict = dict()
 
         for k, m in org_modules.items():
-            if m.__class__.__name__ == "Linear":
+            if m.__class__.__name__ == "Linear" and isinstance(m, nn.Linear):
                 _, S, Vh = torch.linalg.svd(m.weight, full_matrices=False) 
                 param_vh_cache_dict[k] = Vh.detach().cpu()
-                param_s_cache_dict[k] = S.detach().cpu()        
+                param_s_cache_dict[k] = S.detach().cpu()
 
-            elif m.__class__.__name__ == "Conv2d":
+            elif m.__class__.__name__ == "Conv2d" and isinstance(m, nn.Conv2d):
                 module_weight_flatten = m.weight.view(m.weight.size(0), -1)
                 _, S, Vh = torch.linalg.svd(module_weight_flatten, full_matrices=False) 
                 param_vh_cache_dict[k] = Vh.detach().cpu()
-                param_s_cache_dict[k] = S.detach().cpu()                
+                param_s_cache_dict[k] = S.detach().cpu()
 
-        os.makedirs(param_cache_path, exist_ok=True)
+        Path(param_cache_path).mkdir(exist_ok=True)
         torch.save(param_vh_cache_dict, f"{param_cache_path}/vh_cache_dict_{find_module_name}.pt")
         torch.save(param_s_cache_dict, f"{param_cache_path}/s_cache_dict_{find_module_name}.pt")
 
@@ -935,7 +919,7 @@ def train(args: Arguments):
     for gloce_module in network.gloce_layers:        
         n_forward = buffer_sel_basis_surrogate[gloce_module.find_name][gloce_module.gloce_org_name]['n_forward']
         n_sum_per_forward = buffer_sel_basis_surrogate[gloce_module.find_name][gloce_module.gloce_org_name]['n_sum_per_forward']
-        n_sum = n_forward*n_sum_per_forward
+        n_sum = n_forward * n_sum_per_forward
 
         stacked_buffer_surrogate = buffer_sel_basis_surrogate[gloce_module.find_name][gloce_module.gloce_org_name]['data'] / n_sum
         stacked_buffer_surrogate_mean = buffer_sel_basis_surrogate[gloce_module.find_name][gloce_module.gloce_org_name]["data_mean"] / n_sum

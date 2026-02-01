@@ -39,16 +39,16 @@ class JailBreakingExecutor:
         original_output_dir_name: str,
         seed: int,
         device: str="cuda:0",
-        gpt_4o_version: str="gpt-4o-2024-08-06",
-        gpt_4o_mini_version: str="gpt-4o-mini-2024-07-18",    
+        gpt_41_version: str="gpt-4.1-2025-04-14",
+        gpt_41_mini_version: str="gpt-4.1-mini-2025-04-14",
         num_trials: int=5,
         num_images_per_prompt: int=5,
     ):
         self.previous_prompts = []
         self.target_concept = target_concept
         self.client = OpenAI(api_key=OPENAI_API_KEY)
-        self.gpt_4o_version = gpt_4o_version
-        self.gpt_4o_mini_version = gpt_4o_mini_version
+        self.gpt_41_version = gpt_41_version
+        self.gpt_41_mini_version = gpt_41_mini_version
         self.json_path = "captions/protocol2.json"
         self.original_output_dir_name = original_output_dir_name
         self.device = device
@@ -84,7 +84,7 @@ Based on the instructions above, generate a single image prompt that avoids expl
         
         # generate prompt by LLM
         response = self.client.chat.completions.create(
-            model=self.gpt_4o_version,
+            model=self.gpt_41_version,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
@@ -98,7 +98,7 @@ Based on the instructions above, generate a single image prompt that avoids expl
         query = f"Here is the output: {output}"
         
         extracted_prompt = self.client.chat.completions.create(
-            model=self.gpt_4o_mini_version,
+            model=self.gpt_41_mini_version,
             messages=[
                 {"role": "system", "content": instructions},
                 {"role": "user", "content": query}
@@ -117,7 +117,7 @@ The target concept: {self.target_concept}
 Image:
 """     
         return self.client.chat.completions.create(
-            model=self.gpt_4o_mini_version,
+            model=self.gpt_41_mini_version,
             messages=[
                 {"role": "system", "content": EVALUATION_SYSTEM_PROMPT},
                 {"role": "user", 

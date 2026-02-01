@@ -3,9 +3,8 @@
 import os
 import gc
 import math
-import random
 import shutil
-import warnings
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -20,17 +19,17 @@ from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.loaders import AttnProcsLayers
 from diffusers.optimization import get_scheduler
 
-from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn, get_devices, get_models
+from train_methods.train_utils import prepare_k_v, get_ca_layers, closed_form_refinement, importance_sampling_fn, get_devices, get_models, seed_everything
 from train_methods.train_utils import AttnController, LoRAAttnProcessor
 from train_methods.segment_anything.segment_anything import SamPredictor, sam_hq_model_registry
-from train_methods.groundingdino.models import build_model, GroundingDINO
+from train_methods.groundingdino.models import build_model
+from train_methods.groundingdino.models.GroundingDINO.groundingdino import GroundingDINO
 from train_methods.groundingdino.util.slconfig import SLConfig
 from train_methods.groundingdino.util.utils import clean_state_dict
 from train_methods.data import MACEDataset
 
 from utils import Arguments
 
-warnings.filterwarnings("ignore")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def inference(args: Arguments, device: str, multi_concept: list[list[str]], output_dir: str) -> None:
@@ -48,7 +47,7 @@ def inference(args: Arguments, device: str, multi_concept: list[list[str]], outp
         cnt += 1
         c = c.replace("-", "")
         output_dir = f"{output_dir}/{c}".replace(" ", "-")
-        os.makedirs(output_dir, exist_ok=True)
+        Path(output_dir).mkdir(exist_ok=True)
 
         if t == "object":
             prompt = f"a photo of the {c}"
@@ -71,10 +70,10 @@ def inference(args: Arguments, device: str, multi_concept: list[list[str]], outp
 
 def load_model(model_config_path, model_checkpoint_path):
     args = SLConfig.fromfile(model_config_path)
-    model = build_model(args)
+    model: nn.Module = build_model(args)
     checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
-    load_res = model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
-    _ = model.eval()
+    model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+    model.eval()
     return model
 
 def get_phrases_from_posmap(posmap: torch.BoolTensor, tokenized: dict, tokenizer: AutoTokenizer, left_idx: int = 0, right_idx: int = 255):
@@ -88,7 +87,7 @@ def get_phrases_from_posmap(posmap: torch.BoolTensor, tokenized: dict, tokenizer
     else:
         raise NotImplementedError("posmap must be 1-dim")
 
-def get_grounding_output(model: GroundingDINO, image, caption: str, box_threshold, text_threshold, with_logits=True, device="cpu"):
+def get_grounding_output(model: GroundingDINO, image: torch.Tensor, caption: str, box_threshold, text_threshold, with_logits=True, device="cpu"):
     caption = caption.lower()
     caption = caption.strip()
     if not caption.endswith("."):
@@ -96,7 +95,7 @@ def get_grounding_output(model: GroundingDINO, image, caption: str, box_threshol
     model = model.to(device)
     image = image.to(device)
     with torch.no_grad():
-        outputs = model(image[None], captions=[caption])
+        outputs: dict[str, torch.Tensor] = model(image[None], captions=[caption])
     logits = outputs["pred_logits"].cpu().sigmoid()[0]  # (nq, 256)
     boxes = outputs["pred_boxes"].cpu()[0]  # (nq, 4)
     logits.shape[0]
@@ -124,17 +123,16 @@ def get_grounding_output(model: GroundingDINO, image, caption: str, box_threshol
     return boxes_filt, pred_phrases
 
 def get_mask(input_image: torch.Tensor, text_prompt, model, predictor: SamPredictor, device, output_dir=None, box_threshold=0.3, text_threshold=0.25):
-    
-    os.makedirs(output_dir, exist_ok=True)
-        
+
+    Path(output_dir).mkdir(exist_ok=True)
     image = input_image
-    
+
     # run grounding dino model
     boxes_filt, _ = get_grounding_output(model, image, text_prompt, box_threshold, text_threshold, device=device)
-        
+
     image_np: np.ndarray = image.cpu().numpy()
     image_np = ((image_np / max(image_np.max().item(), abs(image_np.min().item())) + 1) * 255 * 0.5).astype(np.uint8)
-    
+
     # C x H x W  to  H x W x C
     if image_np.ndim == 3 and image_np.shape[0] in {1, 3}:
         image_np = image_np.transpose(1, 2, 0)
@@ -169,7 +167,7 @@ def get_mask(input_image: torch.Tensor, text_prompt, model, predictor: SamPredic
             final_mask = final_mask | masks[i]
     else:
         final_mask = masks
-    
+
     return final_mask
 
 def making_data(args: Arguments):
@@ -178,41 +176,36 @@ def making_data(args: Arguments):
     multi_concept = []
     concepts = args.concepts.split(",")
     concept_types = args.mace_concept_type.split(",")
-    
+
     assert len(concepts) == len(concept_types)
     for i in range(len(concept_types)):
         multi_concept.append([concepts[i], concept_types[i]])
-    
+
     # generate 8 images per concept using the original model for performing erasure
     inference(args, device, multi_concept=multi_concept, output_dir=args.data_dir)
 
     # get and save masks for each image
     grounded_model = load_model(args.grounded_config, args.grounded_checkpoint)
-        
+
     predictor = SamPredictor(sam_hq_model_registry['vit_h'](checkpoint=args.sam_hq_checkpoint).to(device))
-    
+
     transform = transforms.ToTensor()
-    for root, _, files in os.walk(args.data_dir):
-        mask_save_path = root.replace(f'{os.path.basename(root)}', f'{os.path.basename(root)}-mask')
-        os.makedirs(mask_save_path, exist_ok=True)
+    for root, _, files in Path(args.data_dir).rglob("*"):
+        mask_save_path = root.replace(f'{Path(root).name}', f'{Path(root).name}-mask')
+        Path(mask_save_path).mkdir(exist_ok=True)
         for file in files:
-            file_path = os.path.join(root, file)
+            file_path = Path(root, file)
             # read images and get masks
             image = Image.open(file_path)
             if not image.mode == "RGB":
                 image = image.convert("RGB")
             tensor_image = transform(image).to(device)
-            GSAM_mask = get_mask(tensor_image, os.path.basename(root), grounded_model, predictor, device)
+            GSAM_mask = get_mask(tensor_image, Path(root).name, grounded_model, predictor, device)
             # save masks
             GSAM_mask = (GSAM_mask.to(torch.uint8) * 255).squeeze()
             save_mask = to_pil_image(GSAM_mask)
-            save_mask.save(f"{os.path.join(mask_save_path, file).replace('.jpg', '_mask.jpg')}")
+            save_mask.save(f"{Path(mask_save_path, file).replace('.jpg', '_mask.jpg')}")
 
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
 def collate_fn(examples):
     input_ids = [example["instance_prompt_ids"] for example in examples]
@@ -254,7 +247,7 @@ def cfr_lora_training(args: Arguments):
     for i in range(len(concept_types)):
         multi_concept.append([concepts[i], concept_types[i]])
 
-    set_seed(args.seed)
+    seed_everything(args.seed)
     tokenizer, text_encoder, vae, unet, _, noise_scheduler = get_models(args)
     unet.to(device)
     vae.requires_grad_(False)
@@ -489,8 +482,8 @@ def main(args: Arguments):
     # stage 1 & 2 (CFR and LoRA training)
     cfr_lora_training(args)
 
-    if os.path.isdir("mace-data"):
+    if Path("mace-data").is_dir():
         shutil.rmtree("mace-data")
 
-    if os.path.isdir("mace-data-mask"):
+    if Path("mace-data-mask").is_dir():
         shutil.rmtree("mace-data-mask")
