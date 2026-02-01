@@ -55,6 +55,7 @@ class InvalidCarryOverType(Exception):
         self.message = message
         super().__init__(self.message)
 
+
 class Agent(Protocol):
     """(In preview) A protocol for Agent.
 
@@ -256,7 +257,7 @@ def gather_usage_summary(agents: list[Agent]) -> dict[dict[str, dict], dict[str,
     }
 
 class ConversableAgent(LLMAgent):
-    """(In preview) A class for generic conversable agents which can be configured as assistant or user proxy.
+    """A class for generic conversable agents which can be configured as assistant or user proxy.
 
     After receiving each message, the agent will send a reply to the sender unless the msg is a termination msg.
     For example, AssistantAgent and UserProxyAgent are subclasses of this class,
@@ -3184,8 +3185,7 @@ def register_function(
 
 
 class AssistantAgent(ConversableAgent):
-    """(In preview) Assistant agent, designed to solve a task with LLM.
-
+    """
     AssistantAgent is a subclass of ConversableAgent configured with a default system message.
     The default system message is designed to solve a task with LLM,
     including suggesting python code blocks and debugging.
