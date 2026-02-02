@@ -12,7 +12,6 @@ from openai import BadRequestError
 from pydantic import BaseModel
 from termcolor import colored
 
-from train_methods.legacy_autogen.cache import AbstractCache
 from train_methods.legacy_autogen.chat import ChatResult, a_initiate_chats, initiate_chats, _post_process_carryover_item, consolidate_chat_info
 from train_methods.legacy_autogen.client import ModelClient, OpenAIWrapper
 from train_methods.legacy_autogen.stream import IOStream
@@ -984,7 +983,6 @@ class ConversableAgent(LLMAgent):
         recipient: "ConversableAgent",
         clear_history: bool = True,
         silent: bool | None = False,
-        cache: AbstractCache | None = None,
         max_turns: int | None = None,
         summary_method: str | Callable | None = DEFAULT_SUMMARY_METHOD,
         summary_args: dict | None = {},
@@ -1001,7 +999,6 @@ class ConversableAgent(LLMAgent):
             recipient: the recipient agent.
             clear_history (bool): whether to clear the chat history with the agent. Default is True.
             silent (bool or None): (Experimental) whether to print the messages for this conversation. Default is False.
-            cache (AbstractCache or None): the cache client to be used for this conversation. Default is None.
             max_turns (int or None): the maximum number of turns for the chat between the two agents. One turn means one conversation round trip. Note that this is different from
                 [max_consecutive_auto_reply](#max_consecutive_auto_reply) which is the maximum number of consecutive auto replies; and it is also different from [max_rounds in GroupChat](./groupchat#groupchat-objects) which is the maximum number of rounds in a group chat session.
                 If max_turns is set to None, the chat will continue until a termination condition is met. Default is None.
@@ -1084,7 +1081,7 @@ class ConversableAgent(LLMAgent):
         for agent in [self, recipient]:
             agent._raise_exception_on_async_reply_functions()
             agent.previous_cache = agent.client_cache
-            agent.client_cache = cache
+            agent.client_cache = None
         if isinstance(max_turns, int):
             self._prepare_chat(recipient, clear_history, reply_at_receive=False)
             for _ in range(max_turns):
@@ -1109,7 +1106,6 @@ class ConversableAgent(LLMAgent):
             summary_method,
             summary_args,
             recipient,
-            cache=cache,
         )
         for agent in [self, recipient]:
             agent.client_cache = agent.previous_cache
@@ -1127,7 +1123,6 @@ class ConversableAgent(LLMAgent):
         recipient: "ConversableAgent",
         clear_history: bool = True,
         silent: bool | None = False,
-        cache: AbstractCache | None = None,
         max_turns: int | None = None,
         summary_method: str | Callable | None = DEFAULT_SUMMARY_METHOD,
         summary_args: dict | None = {},
@@ -1150,7 +1145,7 @@ class ConversableAgent(LLMAgent):
         consolidate_chat_info(_chat_info, uniform_sender=self)
         for agent in [self, recipient]:
             agent.previous_cache = agent.client_cache
-            agent.client_cache = cache
+            agent.client_cache = None
         if isinstance(max_turns, int):
             self._prepare_chat(recipient, clear_history, reply_at_receive=False)
             for _ in range(max_turns):
@@ -1175,7 +1170,6 @@ class ConversableAgent(LLMAgent):
             summary_method,
             summary_args,
             recipient,
-            cache=cache,
         )
         for agent in [self, recipient]:
             agent.client_cache = agent.previous_cache
@@ -1193,7 +1187,6 @@ class ConversableAgent(LLMAgent):
         summary_method,
         summary_args,
         recipient: Agent | None = None,
-        cache: AbstractCache | None = None,
     ) -> str:
         """Get a chat summary from an agent participating in a chat.
 
@@ -1219,7 +1212,7 @@ class ConversableAgent(LLMAgent):
         if summary_method is None:
             return summary
         if "cache" not in summary_args:
-            summary_args["cache"] = cache
+            summary_args["cache"] = None
         if summary_method == "reflection_with_llm":
             summary_method = self._reflection_with_llm_as_summary
         elif summary_method == "last_msg":
@@ -1263,7 +1256,7 @@ class ConversableAgent(LLMAgent):
             raise ValueError("The summary_role in summary_arg must be a string.")
         try:
             summary = sender._reflection_with_llm(
-                prompt, msg_list, llm_agent=agent, cache=summary_args.get("cache"), role=role
+                prompt, msg_list, llm_agent=agent, role=role
             )
         except BadRequestError as e:
             warnings.warn(
@@ -1277,7 +1270,6 @@ class ConversableAgent(LLMAgent):
         prompt,
         messages,
         llm_agent: Agent | None = None,
-        cache: AbstractCache | None = None,
         role: str | None = None,
     ) -> str:
         """Get a chat summary using reflection with an llm client based on the conversation history.
@@ -1286,7 +1278,6 @@ class ConversableAgent(LLMAgent):
             prompt (str): The prompt (in this method it is used as system prompt) used to get the summary.
             messages (list): The messages generated as part of a chat conversation.
             llm_agent: the agent with an llm client.
-            cache (AbstractCache or None): the cache client to be used for this conversation.
             role (str): the role of the message, usually "system" or "user". Default is "system".
         """
         if not role:
@@ -1306,7 +1297,7 @@ class ConversableAgent(LLMAgent):
             llm_client = self.client
         else:
             raise ValueError("No OpenAIWrapper client is found.")
-        response = self._generate_oai_reply_from_client(llm_client=llm_client, messages=messages, cache=cache)
+        response = self._generate_oai_reply_from_client(llm_client=llm_client, messages=messages)
         return response
 
     def _check_chat_queue_for_sender(self, chat_queue: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1427,12 +1418,11 @@ class ConversableAgent(LLMAgent):
         if messages is None:
             messages = self._oai_messages[sender]
         extracted_response = self._generate_oai_reply_from_client(
-            client, self._oai_system_message + messages, self.client_cache
+            client, self._oai_system_message + messages
         )
         return (False, None) if extracted_response is None else (True, extracted_response)
 
-    def _generate_oai_reply_from_client(self, llm_client, messages, cache) -> str | dict | None:
-        # unroll tool_responses
+    def _generate_oai_reply_from_client(self, llm_client, messages) -> str | dict | None:
         all_messages = []
         for message in messages:
             tool_responses = message.get("tool_responses", [])
@@ -1445,7 +1435,7 @@ class ConversableAgent(LLMAgent):
                 all_messages.append(message)
 
         response = llm_client.create(
-            context=messages[-1].pop("context", None), messages=all_messages, cache=cache, agent=self
+            context=messages[-1].pop("context", None), messages=all_messages, agent=self
         )
         extracted_response = llm_client.extract_text_or_completion_object(response)[0]
 

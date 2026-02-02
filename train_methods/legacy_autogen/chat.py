@@ -1,6 +1,5 @@
 import asyncio
 import datetime
-import warnings
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
@@ -32,17 +31,12 @@ def consolidate_chat_info(chat_info, uniform_sender=None) -> None:
             ), "llm client must be set in either the recipient or sender when summary_method is reflection_with_llm."
 
 
-Prerequisite = tuple[int, int]
-
 @dataclass
 class ChatResult:
 
     chat_id: int = None
-    """chat id"""
     chat_history: list[dict[str, Any]] = None
-    """The chat history."""
     summary: str = None
-    """A summary obtained from the chat."""
     cost: dict[str, dict] = None  # keys: "usage_including_cached_inference", "usage_excluding_cached_inference"
     """The cost of the chat.
        The value for each usage type is a dictionary containing cost information for that specific type.
@@ -61,16 +55,11 @@ def _validate_recipients(chat_queue: list[dict[str, Any]]) -> None:
     for chat_info in chat_queue:
         assert "recipient" in chat_info, "recipient must be provided."
         receipts_set.add(chat_info["recipient"])
-    if len(receipts_set) < len(chat_queue):
-        warnings.warn(
-            "Repetitive recipients detected: The chat history will be cleared by default if a recipient appears more than once. To retain the chat history, please set 'clear_history=False' in the configuration of the repeating agent.",
-            UserWarning,
-        )
 
 
-def __create_async_prerequisites(chat_queue: list[dict[str, Any]]) -> list[Prerequisite]:
+def __create_async_prerequisites(chat_queue: list[dict[str, Any]]) -> list[tuple[int, int]]:
     """
-    Create list of Prerequisite (prerequisite_chat_id, chat_id)
+    Create list of tuple[int, int] (prerequisite_chat_id, chat_id)
     """
     prerequisites = []
     for chat_info in chat_queue:
@@ -80,17 +69,17 @@ def __create_async_prerequisites(chat_queue: list[dict[str, Any]]) -> list[Prere
         pre_chats = chat_info.get("prerequisites", [])
         for pre_chat_id in pre_chats:
             if not isinstance(pre_chat_id, int):
-                raise ValueError("Prerequisite chat id is not int.")
+                raise ValueError("tuple[int, int] chat id is not int.")
             prerequisites.append((chat_id, pre_chat_id))
     return prerequisites
 
 
-def __find_async_chat_order(chat_ids: set[int], prerequisites: list[Prerequisite]) -> list[int]:
+def __find_async_chat_order(chat_ids: set[int], prerequisites: list[tuple[int, int]]) -> list[int]:
     """Find chat order for async execution based on the prerequisite chats
 
     args:
         num_chats: number of chats
-        prerequisites: list of Prerequisite (prerequisite_chat_id, chat_id)
+        prerequisites: list of tuple[int, int] (prerequisite_chat_id, chat_id)
 
     returns:
         list: a list of chat_id in order.
