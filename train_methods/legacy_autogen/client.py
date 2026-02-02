@@ -386,29 +386,7 @@ class OpenAIWrapper:
         """
         Args:
             config_list: a list of config dicts to override the base_config.
-                They can contain additional kwargs as allowed in the [create](/docs/reference/oai/client#create) method. E.g.,
-
-        ```python
-        config_list=[
-            {
-                "model": "gpt-4",
-                "api_key": os.environ.get("AZURE_OPENAI_API_KEY"),
-                "api_type": "azure",
-                "base_url": os.environ.get("AZURE_OPENAI_API_BASE"),
-                "api_version": "2024-02-01",
-            },
-            {
-                "model": "gpt-3.5-turbo",
-                "api_key": os.environ.get("OPENAI_API_KEY"),
-                "api_type": "openai",
-                "base_url": "https://api.openai.com/v1",
-            },
-            {
-                "model": "llama-7B",
-                "base_url": "http://127.0.0.1:8080",
-            }
-        ]
-        ```
+                They can contain additional kwargs as allowed in the [create](/docs/reference/oai/client#create) method.
 
             base_config: base config. It can contain both keyword arguments for openai client
                 and additional kwargs.
@@ -585,7 +563,7 @@ class OpenAIWrapper:
         The config in each client will be overridden by the config.
 
         Args:
-            - context (Dict | None): The context to instantiate the prompt or messages. Default to None.
+            - context (dict | None): The context to instantiate the prompt or messages. Default to None.
                 It needs to contain keys that are used by the prompt template or the filter function.
                 E.g., `prompt="Complete the following sentence: {prefix}, context={"prefix": "Today I feel"}`.
                 The actual prompt will be:
@@ -594,14 +572,6 @@ class OpenAIWrapper:
             - agent (AbstractAgent | None): The object responsible for creating a completion if an agent.
             - filter_func (Callable | None): A function that takes in the context and the response
                 and returns a boolean to indicate whether the response is valid. E.g.,
-
-        ```python
-        def yes_or_no_filter(context, response):
-            return context.get("yes_or_no_choice", False) is False or any(
-                text in ["Yes.", "No."] for text in client.extract_text_or_completion_object(response)
-            )
-        ```
-
             - allow_format_str_template (bool | None): Whether to allow format string template in the config. Default to false.
             - api_version (str | None): The api version. Default to None. E.g., "2024-02-01".
         Raises:

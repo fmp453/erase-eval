@@ -8,7 +8,6 @@ import warnings
 from collections import defaultdict
 from typing import Any, Callable, Coroutine, Literal, Type, Protocol, TypeVar
 
-from openai import BadRequestError
 from pydantic import BaseModel
 from termcolor import colored
 
@@ -332,15 +331,6 @@ class ConversableAgent(LLMAgent):
                     Note: Be sure to register `None` as a trigger if you would like to trigger an auto-reply function with non-empty messages and `sender=None`.
             reply_func (Callable): the reply function.
                 The function takes a recipient agent, a list of messages, a sender agent and a config as input and returns a reply message.
-
-                ```python
-                def reply_func(
-                    recipient: ConversableAgent,
-                    messages: list[dict] | None = None,
-                    sender: Agent | None = None,
-                    config: Any | None = None,
-                ) -> Tuple[bool, str | dict | None]:
-                ```
             position (int): the position of the reply function in the reply function list.
                 The function registered later will be checked earlier by default.
                 To change the order, set the position to a positive integer.
@@ -465,17 +455,7 @@ class ConversableAgent(LLMAgent):
             chat_queue (list): a list of chat objects to be initiated. If use_async is used, then all messages in chat_queue must have a chat-id associated with them.
             trigger (Agent class, str, Agent instance, callable, or list): refer to `register_reply` for details.
             reply_func_from_nested_chats (Callable, str): the reply function for the nested chat.
-                The function takes a chat_queue for nested chat, recipient agent, a list of messages, a sender agent and a config as input and returns a reply message.
-                Default to "summary_from_nested_chats", which corresponds to a built-in reply function that get summary from the nested chat_queue.
-            ```python
-            def reply_func_from_nested_chats(
-                chat_queue: list[dict],
-                recipient: ConversableAgent,
-                messages: list[dict] | None = None,
-                sender: Agent | None = None,
-                config: Any | None = None,
-            ) -> tuple[bool, str | dict | None]:
-            ```
+                The function takes a chat_queue for nested chat, recipient agent, a list of messages, a sender agent and a config as input and returns a reply message. Default to "summary_from_nested_chats", which corresponds to a built-in reply function that get summary from the nested chat_queue.
             position (int): Ref to `register_reply` for details. Default to 2. It means we first check the termination and human reply, then check the registered nested chat reply.
             use_async: Uses a_initiate_chats internally to start nested chats. If the original chat is initiated with a_initiate_chats, you may set this to true so nested chats do not run in sync.
             kwargs: Ref to `register_reply` for details.
@@ -714,15 +694,6 @@ class ConversableAgent(LLMAgent):
                     will be modified to "assistant".
                 - context (dict): the context of the message, which will be passed to
                     [OpenAIWrapper.create](../oai/client#create).
-                    For example, one agent can send a message A as:
-        ```python
-        {
-            "content": lambda context: context["use_tool_msg"],
-            "context": {
-                "use_tool_msg": "Use tool X if they are relevant."
-            }
-        }
-        ```
                     Next time, one agent can send a message B with a different "use_tool_msg".
                     Then the content of message A will be refreshed to the new "use_tool_msg".
                     So effectively, this provides a way for an agent to send a "link" and modify
@@ -752,38 +723,7 @@ class ConversableAgent(LLMAgent):
         request_reply: bool | None = None,
         silent: bool | None = False,
     ):
-        """(async) Send a message to another agent.
-
-        Args:
-            message (dict or str): message to be sent.
-                The message could contain the following fields:
-                - content (str or List): Required, the content of the message. (Can be None)
-                - function_call (str): the name of the function to be called.
-                - name (str): the name of the function to be called.
-                - role (str): the role of the message, any role that is not "function"
-                    will be modified to "assistant".
-                - context (dict): the context of the message, which will be passed to
-                    [OpenAIWrapper.create](../oai/client#create).
-                    For example, one agent can send a message A as:
-        ```python
-        {
-            "content": lambda context: context["use_tool_msg"],
-            "context": {
-                "use_tool_msg": "Use tool X if they are relevant."
-            }
-        }
-        ```
-                    Next time, one agent can send a message B with a different "use_tool_msg".
-                    Then the content of message A will be refreshed to the new "use_tool_msg".
-                    So effectively, this provides a way for an agent to send a "link" and modify
-                    the content of the "link" later.
-            recipient (Agent): the recipient of the message.
-            request_reply (bool or None): whether to request a reply from the recipient.
-            silent (bool or None): (Experimental) whether to print the message sent.
-
-        Raises:
-            ValueError: if the message can't be converted into a valid ChatCompletion message.
-        """
+        """(async) Send a message to another agent."""
         message = await self._a_process_message_before_send(
             message, recipient, ConversableAgent._is_silent(self, silent)
         )
@@ -1009,16 +949,7 @@ class ConversableAgent(LLMAgent):
                 - when set to "reflection_with_llm", it returns a summary extracted using an llm client.
                     `llm_config` must be set in either the recipient or sender.
 
-            A callable summary_method should take the recipient and sender agent in a chat as input and return a string of summary. E.g.,
-
-            ```python
-            def my_summary_method(
-                sender: ConversableAgent,
-                recipient: ConversableAgent,
-                summary_args: dict,
-            ):
-                return recipient.last_message(sender)["content"]
-            ```
+            A callable summary_method should take the recipient and sender agent in a chat as input and return a string of summary.
             summary_args (dict): a dictionary of arguments to be passed to the summary_method.
                 One example key is "summary_prompt", and value is a string of text used to prompt a LLM-based agent (the sender or receiver agent) to reflect
                 on the conversation and extract a summary when summary_method is "reflection_with_llm".
@@ -1040,29 +971,6 @@ class ConversableAgent(LLMAgent):
                 - If a callable is provided, it will be called to get the initial message in the form of a string or a dict.
                     If the returned type is dict, it may contain the reserved fields mentioned above.
 
-                    Example of a callable message (returning a string):
-
-            ```python
-            def my_message(sender: ConversableAgent, recipient: ConversableAgent, context: dict) -> str | dict:
-                carryover = context.get("carryover", "")
-                if isinstance(message, list):
-                    carryover = carryover[-1]
-                final_msg = "Write a blogpost." + "\\nContext: \\n" + carryover
-                return final_msg
-            ```
-
-                    Example of a callable message (returning a dict):
-
-            ```python
-            def my_message(sender: ConversableAgent, recipient: ConversableAgent, context: dict) -> str | dict:
-                final_msg = {}
-                carryover = context.get("carryover", "")
-                if isinstance(message, list):
-                    carryover = carryover[-1]
-                final_msg["content"] = "Write a blogpost." + "\\nContext: \\n" + carryover
-                final_msg["context"] = {"prefix": "Today I feel"}
-                return final_msg
-            ```
             **kwargs: any additional information. It has the following reserved fields:
                 - "carryover": a string or a list of string to specify the carryover information to be passed to this chat.
                     If provided, we will combine this carryover (by attaching a "context: " string and the carryover content after the message content) with the "message" content when generating the initial chat
@@ -1103,8 +1011,6 @@ class ConversableAgent(LLMAgent):
                 msg2send = self.generate_init_message(message, **kwargs)
             self.send(msg2send, recipient, silent=silent)
         summary = self._summarize_chat(
-            summary_method,
-            summary_args,
             recipient,
         )
         for agent in [self, recipient]:
@@ -1167,8 +1073,6 @@ class ConversableAgent(LLMAgent):
                 msg2send = await self.a_generate_init_message(message, **kwargs)
             await self.a_send(msg2send, recipient, silent=silent)
         summary = self._summarize_chat(
-            summary_method,
-            summary_args,
             recipient,
         )
         for agent in [self, recipient]:
@@ -1184,23 +1088,12 @@ class ConversableAgent(LLMAgent):
 
     def _summarize_chat(
         self,
-        summary_method,
-        summary_args,
         recipient: Agent | None = None,
     ) -> str:
         """Get a chat summary from an agent participating in a chat.
 
         Args:
             summary_method (str or callable): the summary_method to get the summary.
-                The callable summary_method should take the recipient and sender agent in a chat as input and return a string of summary. E.g,
-                ```python
-                def my_summary_method(
-                    sender: ConversableAgent,
-                    recipient: ConversableAgent,
-                    summary_args: dict,
-                ):
-                    return recipient.last_message(sender)["content"]
-                ```
             summary_args (dict): a dictionary of arguments to be passed to the summary_method.
             recipient: the recipient agent in a chat.
             prompt (str): the prompt used to get a summary when summary_method is "reflection_with_llm".
@@ -1208,26 +1101,10 @@ class ConversableAgent(LLMAgent):
         Returns:
             str: a chat summary from the agent.
         """
-        summary = ""
-        if summary_method is None:
-            return summary
-        if "cache" not in summary_args:
-            summary_args["cache"] = None
-        if summary_method == "reflection_with_llm":
-            summary_method = self._reflection_with_llm_as_summary
-        elif summary_method == "last_msg":
-            summary_method = self._last_msg_as_summary
-
-        if isinstance(summary_method, Callable):
-            summary = summary_method(self, recipient, summary_args)
-        else:
-            raise ValueError(
-                "If not None, the summary_method must be a string from [`reflection_with_llm`, `last_msg`] or a callable."
-            )
-        return summary
+        return self._last_msg_as_summary(self, recipient)
 
     @staticmethod
-    def _last_msg_as_summary(sender, recipient, summary_args) -> str:
+    def _last_msg_as_summary(sender, recipient) -> str:
         """Get a chat summary from the last message of the recipient."""
         summary = ""
         try:
@@ -1241,28 +1118,6 @@ class ConversableAgent(LLMAgent):
                 )
         except (IndexError, AttributeError) as e:
             warnings.warn(f"Cannot extract summary using last_msg: {e}. Using an empty str as summary.", UserWarning)
-        return summary
-
-    @staticmethod
-    def _reflection_with_llm_as_summary(sender, recipient, summary_args):
-        prompt = summary_args.get("summary_prompt")
-        prompt = ConversableAgent.DEFAULT_SUMMARY_PROMPT if prompt is None else prompt
-        if not isinstance(prompt, str):
-            raise ValueError("The summary_prompt must be a string.")
-        msg_list = recipient.chat_messages_for_summary(sender)
-        agent = sender if recipient is None else recipient
-        role = summary_args.get("summary_role", None)
-        if role and not isinstance(role, str):
-            raise ValueError("The summary_role in summary_arg must be a string.")
-        try:
-            summary = sender._reflection_with_llm(
-                prompt, msg_list, llm_agent=agent, role=role
-            )
-        except BadRequestError as e:
-            warnings.warn(
-                f"Cannot extract summary using reflection_with_llm: {e}. Using an empty str as summary.", UserWarning
-            )
-            summary = ""
         return summary
 
     def _reflection_with_llm(
