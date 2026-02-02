@@ -137,11 +137,6 @@ def _post_process_carryover_item(carryover_item):
 def __post_carryover_processing(chat_info: dict[str, Any]) -> None:
     iostream = IOStream.get_default()
 
-    if "message" not in chat_info:
-        warnings.warn(
-            "message is not provided in a chat_queue entry. input() will be called to get the initial message.",
-            UserWarning,
-        )
     print_carryover = (
         ("\n").join([_post_process_carryover_item(t) for t in chat_info["carryover"]])
         if isinstance(chat_info["carryover"], list)
@@ -221,9 +216,7 @@ def initiate_chats(chat_queue: list[dict[str, Any]]) -> list[ChatResult]:
         chat_info["carryover"] = _chat_carryover + [
             r.summary for i, r in enumerate(finished_chats) if i not in finished_chat_indexes_to_exclude_from_carryover
         ]
-
-        if not chat_info.get("silent", False):
-            __post_carryover_processing(chat_info)
+        __post_carryover_processing(chat_info)
 
         sender = chat_info["sender"]
         chat_res = sender.initiate_chat(**chat_info)
@@ -231,16 +224,11 @@ def initiate_chats(chat_queue: list[dict[str, Any]]) -> list[ChatResult]:
     return finished_chats
 
 
-def __system_now_str():
-    ct = datetime.datetime.now()
-    return f" System time at {ct}. "
-
-
 def _on_chat_future_done(chat_future: asyncio.Future, chat_id: int):
     """
     Update ChatResult when async Task for Chat is completed.
     """
-    print(f"Update chat {chat_id} result on task completion." + __system_now_str())
+    print(f"Update chat {chat_id} result on task completion.  System time at {datetime.datetime.now()}.")
     chat_result = chat_future.result()
     chat_result.chat_id = chat_id
 
@@ -251,7 +239,7 @@ async def _dependent_chat_future(
     """
     Create an async Task for each chat.
     """
-    print(f"Create Task for chat {chat_id}." + __system_now_str())
+    print(f"Create Task for chat {chat_id}.  System time at {datetime.datetime.now()}.")
     _chat_carryover = chat_info.get("carryover", [])
     finished_chat_indexes_to_exclude_from_carryover = chat_info.get(
         "finished_chat_indexes_to_exclude_from_carryover", []
@@ -280,20 +268,11 @@ async def _dependent_chat_future(
     chat_res_future = asyncio.create_task(sender.a_initiate_chat(**chat_info))
     call_back_with_args = partial(_on_chat_future_done, chat_id=chat_id)
     chat_res_future.add_done_callback(call_back_with_args)
-    print(f"Task for chat {chat_id} created." + __system_now_str())
+    print(f"Task for chat {chat_id} created.  System time at {datetime.datetime.now()}.")
     return chat_res_future
 
 
 async def a_initiate_chats(chat_queue: list[dict[str, Any]]) -> dict[int, ChatResult]:
-    """(async) Initiate a list of chats.
-
-    args:
-        - Please refer to `initiate_chats`.
-
-
-    returns:
-        - (dict): a dict of ChatId: ChatResult corresponding to the finished chats in the chat_queue.
-    """
     consolidate_chat_info(chat_queue)
     _validate_recipients(chat_queue)
     chat_book = {chat_info["chat_id"]: chat_info for chat_info in chat_queue}

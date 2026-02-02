@@ -204,15 +204,6 @@ def generate_and_save_concept_graph(
 
     initial_message = f"X = {concept_combination_x}, Y = {combination_theme_y}"
     print(f"\n--- Starting chat for: '{initial_message}' ---")
-    
-    # Automatically trigger the chat to end after the initial response or based on specific conditions
-    def auto_end_chat():
-        # Trigger to end the conversation after the response is received
-        print("Automatically ending the conversation.")
-        return "exit"  # or any other appropriate method to end the conversation
-
-    # Call the function after some condition or time has passed
-    auto_end_chat()
 
     final_graph_string = None
     parsed_graph = None

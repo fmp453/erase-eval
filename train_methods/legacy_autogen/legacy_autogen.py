@@ -1,13 +1,12 @@
 """Legacy autogen (ver 2.0) for cogfd
 
 """
-import json
+
 import sys
 import random
 import re
-from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Union
+from typing import Any, Callable, Literal
 
 from termcolor import colored
 
@@ -17,10 +16,6 @@ from train_methods.legacy_autogen.client import ModelClient
 from train_methods.legacy_autogen.utils import content_str
 
 
-class AgentNameConflict(Exception):
-    def __init__(self, msg: str = "Found multiple agents with the same name.", *args: Any, **kwargs: Any):
-        super().__init__(msg, *args, **kwargs)
-
 class NoEligibleSpeaker(Exception):
     """Exception raised for early termination of a GroupChat."""
 
@@ -28,12 +23,6 @@ class NoEligibleSpeaker(Exception):
         self.message = message
         super().__init__(self.message)
 
-class UndefinedNextAgent(Exception):
-    """Exception raised when the provided next agents list does not overlap with agents in the group."""
-
-    def __init__(self, message: str = "The provided agents list does not overlap with agents in the group."):
-        self.message = message
-        super().__init__(self.message)
 
 @dataclass
 class GroupChat:
@@ -132,7 +121,7 @@ class GroupChat:
         filtered_agents = [agent for agent in agents if agent.name == name]
 
         if raise_on_name_conflict and len(filtered_agents) > 1:
-            raise AgentNameConflict()
+            raise ValueError("Found multiple agents with the same name.")
 
         return filtered_agents[0] if filtered_agents else None
 
@@ -152,7 +141,7 @@ class GroupChat:
 
         # Ensure the provided list of agents is a subset of self.agents
         if not set(agents).issubset(set(self.agents)):
-            raise UndefinedNextAgent()
+            raise ValueError("The provided agents list does not overlap with agents in the group.")
 
         # What index is the agent? (-1 if not present)
         idx = self.agent_names.index(agent.name) if agent.name in self.agent_names else -1
@@ -167,7 +156,7 @@ class GroupChat:
                     return self.agents[(offset + i) % len(self.agents)]
 
         # Explicitly handle cases where no valid next agent exists in the provided subset.
-        raise UndefinedNextAgent()
+        raise ValueError("The provided agents list does not overlap with agents in the group.")
 
     def select_speaker_msg(self, agents: list[Agent] | None = None) -> str:
         """Return the system message for selecting the next speaker. This is always the *first* message in the context."""

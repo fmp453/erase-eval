@@ -435,26 +435,6 @@ class CacheFactory:
         Returns:
             An instance of RedisCache, DiskCache, or CosmosDBCache.
 
-        Examples:
-
-        Creating a Redis cache
-
-        ```python
-        redis_cache = cache_factory("myseed", "redis://localhost:6379/0")
-        ```
-        Creating a Disk cache
-
-        ```python
-        disk_cache = cache_factory("myseed", None)
-        ```
-
-        Creating a Cosmos DB cache:
-        ```python
-        cosmos_cache = cache_factory("myseed", cosmosdb_config={
-                "connection_string": "your_connection_string",
-                "database_id": "your_database_id",
-                "container_id": "your_container_id"}
-            )
         ```
 
         """
@@ -467,7 +447,6 @@ class CacheFactory:
         # Default to DiskCache if neither Redis nor Cosmos DB configurations are provided
         path = os.path.join(cache_path_root, str(seed))
         return DiskCache(os.path.join(".", path))
-
 
 class Cache(AbstractCache):
     """
@@ -566,9 +545,9 @@ class Cache(AbstractCache):
         # create cache instance
         self.cache = CacheFactory.cache_factory(
             seed=self.config["cache_seed"],
-            redis_url=self.config.get("redis_url"),
-            cache_path_root=self.config.get("cache_path_root"),
-            cosmosdb_config=self.config.get("cosmos_db_config"),
+            redis_url=self.config.get("redis_url", ""),
+            cache_path_root=self.config.get("cache_path_root", ""),
+            cosmosdb_config=self.config.get("cosmos_db_config", ""),
         )
 
     def __enter__(self) -> "Cache":
