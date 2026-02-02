@@ -869,12 +869,6 @@ class GroupChatManager(ConversableAgent):
         """Returns the group chat managed by the group chat manager."""
         return self._groupchat
 
-    def chat_messages_for_summary(self, agent: Agent) -> list[dict]:
-        """The list of messages in the group chat as a conversation to summarize.
-        The agent is ignored.
-        """
-        return self._groupchat.messages
-
     def _prepare_chat(
         self,
         recipient: ConversableAgent,

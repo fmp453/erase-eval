@@ -167,13 +167,6 @@ class LLMAgent(Agent, Protocol):
     def system_message(self) -> str:
         """The system message of this agent."""
 
-    def update_system_message(self, system_message: str) -> None:
-        """Update this agent's system message.
-
-        Args:
-            system_message (str): system message for inference.
-        """
-
 
 class ConversableAgent(LLMAgent):
     """A class for generic conversable agents which can be configured as assistant or user proxy.
@@ -277,10 +270,6 @@ class ConversableAgent(LLMAgent):
             )
         self.client = None if self.llm_config is False else OpenAIWrapper(**self.llm_config)
 
-    @staticmethod
-    def _is_silent(agent: Agent, silent: bool | None = False) -> bool:
-        return silent
-
     @property
     def name(self) -> str:
         """Get the name of the agent."""
@@ -359,171 +348,11 @@ class ConversableAgent(LLMAgent):
             },
         )
 
-    def replace_reply_func(self, old_reply_func: Callable, new_reply_func: Callable):
-        """Replace a registered reply function with a new one.
-
-        Args:
-            old_reply_func (Callable): the old reply function to be replaced.
-            new_reply_func (Callable): the new reply function to replace the old one.
-        """
-        for f in self._reply_func_list:
-            if f["reply_func"] == old_reply_func:
-                f["reply_func"] = new_reply_func
-
-    @staticmethod
-    def _get_chats_to_run(
-        chat_queue: list[dict[str, Any]], recipient: Agent, messages: str | Callable, sender: Agent, config: Any
-    ) -> list[dict[str, Any]]:
-        """A simple chat reply function.
-        This function initiate one or a sequence of chats between the "recipient" and the agents in the
-        chat_queue.
-
-        It extracts and returns a summary from the nested chat based on the "summary_method" in each chat in chat_queue.
-
-        Returns:
-            Tuple[bool, str]: A tuple where the first element indicates the completion of the chat, and the second element contains the summary of the last chat if any chats were initiated.
-        """
-        last_msg = messages[-1].get("content")
-        chat_to_run = []
-        for i, c in enumerate(chat_queue):
-            current_c = c.copy()
-            if current_c.get("sender") is None:
-                current_c["sender"] = recipient
-            message = current_c.get("message")
-            # If message is not provided in chat_queue, we by default use the last message from the original chat history as the first message in this nested chat (for the first chat in the chat queue).
-            # NOTE: This setting is prone to change.
-            if message is None and i == 0:
-                message = last_msg
-            if callable(message):
-                message = message(recipient, messages, sender, config)
-            # We only run chat that has a valid message. NOTE: This is prone to change dependin on applications.
-            if message:
-                current_c["message"] = message
-                chat_to_run.append(current_c)
-        return chat_to_run
-
-    @staticmethod
-    def _summary_from_nested_chats(
-        chat_queue: list[dict[str, Any]], recipient: Agent, messages: str | Callable, sender: Agent, config: Any
-    ) -> tuple[bool, str | None]:
-        """A simple chat reply function.
-        This function initiate one or a sequence of chats between the "recipient" and the agents in the
-        chat_queue.
-
-        It extracts and returns a summary from the nested chat based on the "summary_method" in each chat in chat_queue.
-
-        Returns:
-            tuple[bool, str]: A tuple where the first element indicates the completion of the chat, and the second element contains the summary of the last chat if any chats were initiated.
-        """
-        chat_to_run = ConversableAgent._get_chats_to_run(chat_queue, recipient, messages, sender, config)
-        if not chat_to_run:
-            return True, None
-        res = initiate_chats(chat_to_run)
-        return True, res[-1].summary
-
-    @staticmethod
-    async def _a_summary_from_nested_chats(
-        chat_queue: list[dict[str, Any]], recipient: Agent, messages: str | Callable, sender: Agent, config: Any
-    ) -> tuple[bool, str | None]:
-        """A simple chat reply function.
-        This function initiate one or a sequence of chats between the "recipient" and the agents in the
-        chat_queue.
-
-        It extracts and returns a summary from the nested chat based on the "summary_method" in each chat in chat_queue.
-
-        Returns:
-            tuple[bool, str]: A tuple where the first element indicates the completion of the chat, and the second element contains the summary of the last chat if any chats were initiated.
-        """
-        chat_to_run = ConversableAgent._get_chats_to_run(chat_queue, recipient, messages, sender, config)
-        if not chat_to_run:
-            return True, None
-        res = await a_initiate_chats(chat_to_run)
-        index_of_last_chat = chat_to_run[-1]["chat_id"]
-        return True, res[index_of_last_chat].summary
-
-    def register_nested_chats(
-        self,
-        chat_queue: list[dict[str, Any]],
-        trigger: Type[Agent] | str | Agent | Callable[[Agent], bool] | list,
-        reply_func_from_nested_chats: str | Callable = "summary_from_nested_chats",
-        position: int = 2,
-        use_async: bool | None = None,
-        **kwargs,
-    ) -> None:
-        """Register a nested chat reply function.
-        Args:
-            chat_queue (list): a list of chat objects to be initiated. If use_async is used, then all messages in chat_queue must have a chat-id associated with them.
-            trigger (Agent class, str, Agent instance, callable, or list): refer to `register_reply` for details.
-            reply_func_from_nested_chats (Callable, str): the reply function for the nested chat.
-                The function takes a chat_queue for nested chat, recipient agent, a list of messages, a sender agent and a config as input and returns a reply message. Default to "summary_from_nested_chats", which corresponds to a built-in reply function that get summary from the nested chat_queue.
-            position (int): Ref to `register_reply` for details. Default to 2. It means we first check the termination and human reply, then check the registered nested chat reply.
-            use_async: Uses a_initiate_chats internally to start nested chats. If the original chat is initiated with a_initiate_chats, you may set this to true so nested chats do not run in sync.
-            kwargs: Ref to `register_reply` for details.
-        """
-        if use_async:
-            for chat in chat_queue:
-                if chat.get("chat_id") is None:
-                    raise ValueError("chat_id is required for async nested chats")
-
-        if use_async:
-            if reply_func_from_nested_chats == "summary_from_nested_chats":
-                reply_func_from_nested_chats = self._a_summary_from_nested_chats
-            if not callable(reply_func_from_nested_chats) or not inspect.iscoroutinefunction(
-                reply_func_from_nested_chats
-            ):
-                raise ValueError("reply_func_from_nested_chats must be a callable and a coroutine")
-
-            async def wrapped_reply_func(recipient, messages=None, sender=None, config=None):
-                return await reply_func_from_nested_chats(chat_queue, recipient, messages, sender, config)
-
-        else:
-            if reply_func_from_nested_chats == "summary_from_nested_chats":
-                reply_func_from_nested_chats = self._summary_from_nested_chats
-            if not callable(reply_func_from_nested_chats):
-                raise ValueError("reply_func_from_nested_chats must be a callable")
-
-            def wrapped_reply_func(recipient, messages=None, sender=None, config=None):
-                return reply_func_from_nested_chats(chat_queue, recipient, messages, sender, config)
-
-        functools.update_wrapper(wrapped_reply_func, reply_func_from_nested_chats)
-
-        self.register_reply(
-            trigger,
-            wrapped_reply_func,
-            position,
-            kwargs.get("config"),
-            kwargs.get("reset_config"),
-            ignore_async_in_sync_chat=(
-                not use_async if use_async is not None else kwargs.get("ignore_async_in_sync_chat")
-            ),
-        )
 
     @property
     def system_message(self) -> str:
         """Return the system message."""
         return self._oai_system_message[0]["content"]
-
-    def update_system_message(self, system_message: str) -> None:
-        """Update the system message.
-
-        Args:
-            system_message (str): system message for the ChatCompletion inference.
-        """
-        self._oai_system_message[0]["content"] = system_message
-
-    def update_max_consecutive_auto_reply(self, value: int, sender: Agent | None = None):
-        """Update the maximum number of consecutive auto replies.
-
-        Args:
-            value (int): the maximum number of consecutive auto replies.
-            sender (Agent): when the sender is provided, only update the max_consecutive_auto_reply for that sender.
-        """
-        if sender is None:
-            self._max_consecutive_auto_reply = value
-            for k in self._max_consecutive_auto_reply_dict:
-                self._max_consecutive_auto_reply_dict[k] = value
-        else:
-            self._max_consecutive_auto_reply_dict[sender] = value
 
     def max_consecutive_auto_reply(self, sender: Agent | None = None) -> int:
         """The maximum number of consecutive auto replies."""
@@ -533,10 +362,6 @@ class ConversableAgent(LLMAgent):
     def chat_messages(self) -> dict[Agent, list[dict]]:
         """A dictionary of conversations from agent to list of messages."""
         return self._oai_messages
-
-    def chat_messages_for_summary(self, agent: Agent) -> list[dict]:
-        """A list of messages as a conversation to summarize."""
-        return self._oai_messages[agent]
 
     def last_message(self, agent: Agent | None = None) -> dict | None:
         """The last message exchanged with the agent.
@@ -652,7 +477,7 @@ class ConversableAgent(LLMAgent):
         return True
 
     def _process_message_before_send(
-        self, message: dict | str, recipient: Agent, silent: bool
+        self, message: dict | str, recipient: Agent
     ) -> dict | str:
         """Process the message before sending it to the recipient."""
         hook_list = self.hook_lists["process_message_before_send"]
@@ -660,19 +485,19 @@ class ConversableAgent(LLMAgent):
             if inspect.iscoroutinefunction(hook):
                 continue
             message = hook(
-                sender=self, message=message, recipient=recipient, silent=ConversableAgent._is_silent(self, silent)
+                sender=self, message=message, recipient=recipient, silent=False
             )
         return message
 
     async def _a_process_message_before_send(
-        self, message: dict | str, recipient: Agent, silent: bool
+        self, message: dict | str, recipient: Agent
     ) -> dict | str:
         """(async) Process the message before sending it to the recipient."""
         hook_list = self.hook_lists["a_process_message_before_send"]
         for hook in hook_list:
             if not inspect.iscoroutinefunction(hook):
                 continue
-            message = await hook(sender=self, message=message, recipient=recipient, silent=silent)
+            message = await hook(sender=self, message=message, recipient=recipient, silent=False)
         return message
 
     def send(
@@ -705,7 +530,7 @@ class ConversableAgent(LLMAgent):
         Raises:
             ValueError: if the message can't be converted into a valid ChatCompletion message.
         """
-        message = self._process_message_before_send(message, recipient, ConversableAgent._is_silent(self, silent))
+        message = self._process_message_before_send(message, recipient)
         # When the agent composes and sends the message, the role of the message is "assistant"
         # unless it's "function".
         valid = self._append_oai_message(message, "assistant", recipient, is_sending=True)
@@ -724,9 +549,7 @@ class ConversableAgent(LLMAgent):
         silent: bool | None = False,
     ):
         """(async) Send a message to another agent."""
-        message = await self._a_process_message_before_send(
-            message, recipient, ConversableAgent._is_silent(self, silent)
-        )
+        message = await self._a_process_message_before_send(message, recipient)
         # When the agent composes and sends the message, the role of the message is "assistant"
         # unless it's "function".
         valid = self._append_oai_message(message, "assistant", recipient, is_sending=True)
@@ -798,7 +621,7 @@ class ConversableAgent(LLMAgent):
 
         iostream.print("\n", "-" * 80, flush=True, sep="")
 
-    def _process_received_message(self, message: dict | str, sender: Agent, silent: bool):
+    def _process_received_message(self, message: dict | str, sender: Agent):
         # When the agent receives a message, the role of the message is "user". (If 'role' exists and is 'function', it will remain unchanged.)
         valid = self._append_oai_message(message, "user", sender, is_sending=False)
 
@@ -807,8 +630,7 @@ class ConversableAgent(LLMAgent):
                 "Received message can't be converted into a valid ChatCompletion message. Either content or function_call must be provided."
             )
 
-        if not ConversableAgent._is_silent(sender, silent):
-            self._print_received_message(message, sender)
+        self._print_received_message(message, sender)
 
     def receive(
         self,
@@ -840,7 +662,7 @@ class ConversableAgent(LLMAgent):
         Raises:
             ValueError: if the message can't be converted into a valid ChatCompletion message.
         """
-        self._process_received_message(message, sender, silent)
+        self._process_received_message(message, sender)
         if request_reply is False or request_reply is None and self.reply_at_receive[sender] is False:
             return
         reply = self.generate_reply(messages=self.chat_messages[sender], sender=sender)
