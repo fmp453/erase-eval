@@ -1,6 +1,6 @@
 numpy==1.26.4
 pandas==2.2.3
-pillow==11.0.0
+pillow==12.1.1
 tqdm==4.66.6
 einops==0.8.0
 addict==2.4.0
