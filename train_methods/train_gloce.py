@@ -90,16 +90,16 @@ class SimpleSelectorOutProp(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.is_last_layer = is_last_layer
         
-    def forward(self, x: torch.Tensor, mask=None):
+    def forward(self, x: torch.Tensor, mask=None) -> tuple[torch.Tensor, ...]:
         ## x: (B,T,D)
-        
+
         x = x.unsqueeze(1)
         x_diff = x - self.select_mean_diff.weight.unsqueeze(0).unsqueeze(2) # BxNxTxD
         x_diff_norm =  x_diff / x_diff.norm(dim=3, keepdim=True)
 
         Vh_gate = self.select_weight.weight # (N,D,1)        
         cont = torch.einsum("nds,bntd->bnts", Vh_gate,x_diff_norm)**2
-        
+
         select_scale = torch.sigmoid(
             self.imp_slope.unsqueeze(0).unsqueeze(-1) * (cont.sum(dim=-1) - self.imp_center.unsqueeze(0).unsqueeze(-1))
         ) # BN
@@ -118,18 +118,18 @@ class GLoCELayerOutProp(nn.Module):
         gloce_name: str,
         gloce_org_name: str,
         org_module: nn.Module,
-        multiplier: float=1.0,
-        alpha: float=1,
-        gate_rank: int=1,
-        update_rank: int=4,
-        degen_rank: int=4,
-        n_concepts: int=1,
-        last_layer_name: str="",
-        use_update: bool=True,
-        use_degen: bool=True,
-        use_bias: bool=True,
-        use_gate: bool=True,
-        st_step: int=10,
+        multiplier: float = 1.0,
+        alpha: float = 1,
+        gate_rank: int = 1,
+        update_rank: int = 4,
+        degen_rank: int = 4,
+        n_concepts: int = 1,
+        last_layer_name: str = "",
+        use_update: bool = True,
+        use_degen: bool = True,
+        use_bias: bool = True,
+        use_gate: bool = True,
+        st_step: int = 10,
     ):
         """if alpha == 0 or None, alpha is rank (no scaling)."""
         super().__init__()
@@ -184,7 +184,7 @@ class GLoCELayerOutProp(nn.Module):
         self.org_module.forward = self.forward
         del self.org_module
 
-    def forward(self, x):
+    def forward(self, x) -> torch.Tensor:
         # x.shape: (B, 77, 768)
         x = self.org_forward(x)
         self.t_counter +=1
@@ -195,7 +195,7 @@ class GLoCELayerOutProp(nn.Module):
         if self.t_counter <= self.st_step:
             return x
 
-        select_idx, select_scale = self.selector(x) # (BxT)
+        select_idx, select_scale = self.selector(x)
                             
         debias = self.debias.weight.squeeze(0)[select_idx.squeeze(1)]
         x_debias = x-debias # BxTxD
@@ -910,7 +910,7 @@ def train(args: Arguments):
     )
 
     # Compute principal components for surrogate concept
-    Vh_sur_dict = dict()
+    Vh_sur_dict: dict[str, dict[str, torch.Tensor]] = dict()
     surrogate_mean_dict = dict()
     for find_name in args.gloce_method:
         Vh_sur_dict[find_name] = dict()
@@ -949,9 +949,9 @@ def train(args: Arguments):
     )
 
     # Compute principal components for target concept
-    target_mean_dict: dict[str, dict[str, nn.Module]] = dict()
-    target_cov_dict = dict()
-    Vh_tar_dict = dict()
+    target_mean_dict: dict[str, dict[str, torch.Tensor]] = dict()
+    target_cov_dict: dict[str, dict[str, torch.Tensor]] = dict()
+    Vh_tar_dict: dict[str, dict[str, torch.Tensor]] = dict()
     for find_name in args.gloce_method:
         target_mean_dict[find_name] = dict()
         Vh_tar_dict[find_name] = dict()
@@ -995,11 +995,11 @@ def train(args: Arguments):
         register_buffer_fn="stacked_gate.pt",
         register_func="register_sum_buffer_avg_spatial"
     )
-    
+
     # Compute principal components of surrogate for gate
     Vh_gate_dict: dict[str, dict[str, dict[str, nn.Module]]] = dict()
-    gate_mean_dict = dict()
-    rel_gate_dict = dict()
+    gate_mean_dict: dict[str, dict[str, torch.Tensor]] = dict()
+    rel_gate_dict: dict[str, dict[str, torch.Tensor]] = dict()
     for find_name in args.gloce_method:
         Vh_gate_dict[find_name] = dict()
         gate_mean_dict[find_name] = dict()

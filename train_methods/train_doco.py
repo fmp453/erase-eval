@@ -36,7 +36,7 @@ def init_discriminator(lr=0.0001, b1=0.5, b2=0.999) -> tuple[PatchGANDiscriminat
     return discriminator, criterion, optimizer_D
 
 
-def set_use_memory_efficient_attention(self, use_memory_efficient_attention_xformers: bool):
+def set_use_memory_efficient_attention(self: Attention, use_memory_efficient_attention_xformers: bool):
     processor = CustomDiffusionAttnProcessor()
     self.set_processor(processor)
 
@@ -230,7 +230,6 @@ def main(args: Arguments):
 
     discriminator, criterion, optimizer_D = init_discriminator(lr=args.doco_dlr)
 
-    # Dataset and DataLoaders creation:
     train_dataset = DocoDataset(
         concepts_list=concepts_list,
         concept_type=args.doco_concept_type,
