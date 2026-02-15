@@ -183,35 +183,13 @@ def encode_prompt(
     text_encoder: CLIPTextModel,
     tokenizer: CLIPTokenizer,
     unet: UNet2DConditionModel,
-    prompt,
-    num_images_per_prompt,
-    do_classifier_free_guidance,
-    negative_prompt=None,
+    prompt: list[str] | str | None,
+    num_images_per_prompt: int,
+    do_classifier_free_guidance: bool,
+    negative_prompt: str | list[str] | None = None,
     prompt_embeds: torch.Tensor | None = None,
     negative_prompt_embeds: torch.Tensor | None = None,
 ):
-    r"""
-    Encodes the prompt into text encoder hidden states. Textual Inversion, CLIP SKIP, or LoRA-tuned text encoder is not supported.
-
-    Args:
-        prompt (`str` or `List[str]`, *optional*):
-            prompt to be encoded
-        num_images_per_prompt (`int`):
-            number of images that should be generated per prompt
-        do_classifier_free_guidance (`bool`):
-            whether to use classifier free guidance or not
-        negative_prompt (`str` or `List[str]`, *optional*):
-            The prompt or prompts not to guide the image generation. If not defined, one has to pass
-            `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
-            less than `1`).
-        prompt_embeds (`torch.Tensor`, *optional*):
-            Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
-            provided, text embeddings will be generated from `prompt` input argument.
-        negative_prompt_embeds (`torch.Tensor`, *optional*):
-            Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-            weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
-            argument.
-    """
 
     device = text_encoder.device
 
@@ -334,55 +312,12 @@ def pipeline_with_logprob(
     output_type: str | None = "pil",
     return_unetoutput = False,
 ) -> tuple[torch.Tensor]:
-    r"""
-    Function invoked when calling the pipeline for generation.
-
-    Args:
-        prompt (`str` or `List[str]`, *optional*):
-            The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
-            instead.
-        num_inference_steps (`int`, *optional*, defaults to 50):
-            The number of denoising steps. More denoising steps usually lead to a higher quality image at the
-            expense of slower inference.
-        guidance_scale (`float`, *optional*, defaults to 7.5):
-            Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
-            `guidance_scale` is defined as `w` of equation 2. of [Imagen
-            Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
-            1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
-            usually at the expense of lower image quality.
-        negative_prompt (`str` or `List[str]`, *optional*):
-            The prompt or prompts not to guide the image generation. If not defined, one has to pass
-            `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
-            less than `1`).
-        num_images_per_prompt (`int`, *optional*, defaults to 1):
-            The number of images to generate per prompt.
-        eta (`float`, *optional*, defaults to 0.0):
-            Corresponds to parameter eta (η) in the DDIM paper: https://arxiv.org/abs/2010.02502. Only applies to
-            [`schedulers.DDIMScheduler`], will be ignored for others.
-        prompt_embeds (`torch.FloatTensor`, *optional*):
-            Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
-            provided, text embeddings will be generated from `prompt` input argument.
-        negative_prompt_embeds (`torch.FloatTensor`, *optional*):
-            Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-            weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
-            argument.
-        output_type (`str`, *optional*, defaults to `"pil"`):
-            The output format of the generate image. Choose between
-            [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
-
-    Returns:
-        `tuple` of [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`].
-        the first element is a list with the generated images, and the second element is a
-        list of `bool`s denoting whether the corresponding generated image likely represents "not-safe-for-work"
-        (nsfw) content, according to the `safety_checker`.
-    """
     # 0. Default height and width to unet
     # VAE's scale factor can be gotten from 
     # https://huggingface.co/CompVis/stable-diffusion-v1-4/blob/main/vae/config.json#L22
 
     height = unet.config.sample_size * vae.config.scaling_factor
     width = unet.config.sample_size * vae.config.scaling_factor
-
 
     # 2. Define call parameters
     if batch_size is None:
