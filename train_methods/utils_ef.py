@@ -38,20 +38,20 @@ def _get_variance(self: DDIMScheduler, timestep: torch.Tensor, prev_timestep: to
 
 def ddim_step_with_logprob(
     self: DDIMScheduler,
-    model_output: torch.FloatTensor,
+    model_output: torch.Tensor,
     timestep: torch.Tensor,
-    sample: torch.FloatTensor,
+    sample: torch.Tensor,
     eta: float = 1.0,
-    prev_sample: torch.FloatTensor | None = None,
+    prev_sample: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """
     Predict the sample at the previous timestep by reversing the SDE. Core function to propagate the diffusion
     process from the learned model outputs (most often the predicted noise).
 
     Args:
-        model_output (`torch.FloatTensor`): direct output from learned diffusion model.
+        model_output (`torch.Tensor`): direct output from learned diffusion model.
         timestep (`int`): current discrete timestep in the diffusion chain.
-        sample (`torch.FloatTensor`):
+        sample (`torch.Tensor`):
             current instance of sample being created by diffusion process.
         eta (`float`): weight of noise for added noise in diffusion step.
         sample: x_t
@@ -307,8 +307,8 @@ def pipeline_with_logprob(
     negative_prompt: str | list[str] | None = None,
     num_images_per_prompt: int | None = 1,
     eta: float = 0.0,
-    prompt_embeds: torch.FloatTensor | None = None,
-    negative_prompt_embeds: torch.FloatTensor | None = None,
+    prompt_embeds: torch.Tensor | None = None,
+    negative_prompt_embeds: torch.Tensor | None = None,
     output_type: str | None = "pil",
     return_unetoutput = False,
 ) -> tuple[torch.Tensor]:

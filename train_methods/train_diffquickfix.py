@@ -4,7 +4,6 @@
 from copy import deepcopy
 
 import torch
-import torch.nn as nn
 from transformers import CLIPTokenizer, CLIPTextModel
 from transformers.models.clip.modeling_clip import CLIPAttention
 from diffusers import StableDiffusionPipeline
@@ -21,7 +20,7 @@ class SafteyChecker(StableDiffusionSafetyChecker):
         has_nsfw_concepts = [False for _ in range(len(images))]
         return images, has_nsfw_concepts
 
-    def forward_onnx(self, clip_input: torch.FloatTensor, images: torch.FloatTensor):
+    def forward_onnx(self, clip_input: torch.Tensor, images: torch.Tensor):
         has_nsfw_concepts = [False for _ in range(len(images))]
         return images, has_nsfw_concepts
 

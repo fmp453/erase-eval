@@ -27,9 +27,9 @@ from utils import Arguments
 
 
 class PromptEmbedsCache:
-    prompts: dict[str, torch.FloatTensor] = {}
+    prompts: dict[str, torch.Tensor] = {}
 
-    def __setitem__(self, __name: str, __value: torch.FloatTensor) -> None:
+    def __setitem__(self, __name: str, __value: torch.Tensor) -> None:
         self.prompts[__name] = __value
 
     def __getitem__(self, __name: str):
@@ -72,10 +72,10 @@ class PromptSettings(BaseModel):  # yaml
         return values
 
 class PromptEmbedsPair:
-    target: torch.FloatTensor  # the concept that do not want to generate 
-    positive: torch.FloatTensor  # generate the concept
-    unconditional: torch.FloatTensor  # uncondition (default should be empty)
-    neutral: torch.FloatTensor  # base condition (default should be empty)
+    target: torch.Tensor  # the concept that do not want to generate 
+    positive: torch.Tensor  # generate the concept
+    unconditional: torch.Tensor  # uncondition (default should be empty)
+    neutral: torch.Tensor  # base condition (default should be empty)
     use_template: bool = False  # use clip template or not
 
     guidance_scale: float
@@ -89,10 +89,10 @@ class PromptEmbedsPair:
     def __init__(
         self,
         loss_fn: nn.Module,
-        target: torch.FloatTensor,
-        positive: torch.FloatTensor,
-        unconditional: torch.FloatTensor,
-        neutral: torch.FloatTensor,
+        target: torch.Tensor,
+        positive: torch.Tensor,
+        unconditional: torch.Tensor,
+        neutral: torch.Tensor,
         settings: PromptSettings | None=None
     ) -> None:
         self.loss_fn = loss_fn
@@ -124,11 +124,11 @@ class PromptEmbedsPair:
     
     def _erase(
         self,
-        target_latents: torch.FloatTensor,  # "van gogh"
-        positive_latents: torch.FloatTensor,  # "van gogh"
-        neutral_latents: torch.FloatTensor,  # ""
+        target_latents: torch.Tensor,  # "van gogh"
+        positive_latents: torch.Tensor,  # "van gogh"
+        neutral_latents: torch.Tensor,  # ""
         **kwargs,
-    ) -> torch.FloatTensor:
+    ) -> torch.Tensor:
         """Target latents are going not to have the positive concept."""
 
         erase_loss = self.loss_fn(
@@ -144,11 +144,11 @@ class PromptEmbedsPair:
     
     def _erase_with_la(
         self,
-        target_latents: torch.FloatTensor,  # "van gogh"
-        positive_latents: torch.FloatTensor,  # "van gogh"
-        neutral_latents: torch.FloatTensor,  # ""
-        anchor_latents: torch.FloatTensor, 
-        anchor_latents_ori: torch.FloatTensor, 
+        target_latents: torch.Tensor,  # "van gogh"
+        positive_latents: torch.Tensor,  # "van gogh"
+        neutral_latents: torch.Tensor,  # ""
+        anchor_latents: torch.Tensor, 
+        anchor_latents_ori: torch.Tensor, 
         **kwargs,
     ):
         anchoring_loss = self.loss_fn(anchor_latents, anchor_latents_ori)
@@ -190,10 +190,10 @@ def predict_noise(
     unet: UNet2DConditionModel,
     scheduler: PNDMScheduler,
     timestep: int,
-    latents: torch.FloatTensor,
-    text_embeddings: torch.FloatTensor,
+    latents: torch.Tensor,
+    text_embeddings: torch.Tensor,
     guidance_scale=1,
-) -> torch.FloatTensor:
+) -> torch.Tensor:
     # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
     latent_model_input = torch.cat([latents] * 2)
     latent_model_input = scheduler.scale_model_input(latent_model_input, timestep)
@@ -211,8 +211,8 @@ def predict_noise(
 def diffusion(
     unet: UNet2DConditionModel,
     scheduler: PNDMScheduler,
-    latents: torch.FloatTensor, 
-    text_embeddings: torch.FloatTensor,
+    latents: torch.Tensor, 
+    text_embeddings: torch.Tensor,
     total_timesteps: int = 1000,
     start_timesteps=0,
     guidance_scale=3
@@ -224,7 +224,7 @@ def diffusion(
 
     return latents
 
-def concat_embeddings(unconditional: torch.FloatTensor, conditional: torch.FloatTensor, n_imgs: int):
+def concat_embeddings(unconditional: torch.Tensor, conditional: torch.Tensor, n_imgs: int):
     return torch.cat([unconditional, conditional]).repeat_interleave(n_imgs, dim=0)
 
 def sample(prompt_pair: PromptEmbedsPair):
