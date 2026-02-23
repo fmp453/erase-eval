@@ -755,6 +755,98 @@ class TextualInversionDataset(Dataset):
         example["pixel_values"] = torch.from_numpy(image).permute(2, 0, 1)
         return example
 
+
+class COGFDDataset(Dataset):
+    def __init__(
+        self,
+        data_dir: str,
+        tokenizer: CLIPTokenizer,
+        size: int=512,
+        center_crop=False,
+        use_pooler=False,
+        task_info=None,
+        concept_combination=None,
+        labels=None
+    ):
+        self.use_pooler = use_pooler
+        self.size = size
+        self.center_crop = center_crop
+        self.tokenizer = tokenizer
+
+        if task_info is None or len(task_info) != 2:
+            raise ValueError("task_info must be a list/tuple of length 2 containing [concept, theme]")
+            
+        if concept_combination is None or len(concept_combination) == 0:
+            raise ValueError("concept_combination cannot be None or empty")
+            
+        if labels is None or len(labels) == 0:
+            raise ValueError("labels cannot be None or empty")
+            
+        if len(concept_combination) != len(labels):
+            raise ValueError(f"Length mismatch: concept_combination ({len(concept_combination)}) != labels ({len(labels)})")
+
+        self.instance_images_path = []
+        self.instance_prompt = []
+
+        p = Path(data_dir)
+        if not p.exists():
+            raise ValueError(f"Instance {p} images root doesn't exists.")
+
+        image_paths = list(p.iterdir())
+        if len(image_paths) == 0:
+            raise ValueError(f"No images found in {p}")
+            
+        self.instance_images_path += image_paths
+
+        self.prompts = concept_combination
+        self.labels = labels
+
+        self.num_instance_images = len(self.instance_images_path)
+        self._length = len(self.prompts)
+
+        self.image_transforms = transforms.Compose([
+            transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5]),
+        ])
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, index) -> dict:
+        if index >= self._length:
+            raise IndexError(f"Index {index} out of range for dataset of length {self._length}")
+            
+        example = {}
+        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
+        concept = self.prompts[index % self._length]
+        label = self.labels[index % self._length]
+
+        if not instance_image.mode == "RGB":
+            instance_image = instance_image.convert("RGB")
+        example["concept"] = concept
+        example["label"] = label
+        example["instance_images"] = self.image_transforms(instance_image)
+
+        example["prompt_ids"] = self.tokenizer(
+            concept,
+            truncation=True,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            return_tensors="pt",
+        ).input_ids
+
+        example["attention_mask"] = self.tokenizer(
+            concept,
+            truncation=True,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            return_tensors="pt",
+        ).attention_mask
+
+        return example
+
 class MCEDataset(Dataset):
     def __init__(
         self,
