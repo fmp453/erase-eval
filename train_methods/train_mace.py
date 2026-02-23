@@ -8,9 +8,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from tqdm import trange
 from PIL import Image
 from torchvision import transforms
 from torchvision.transforms.functional import to_pil_image
@@ -285,11 +286,11 @@ def cfr_lora_training(args: Arguments):
     CFR_dict = {}
     max_concept_num = args.mace_max_memory # the maximum number of concept that can be processed at once
     if len(train_dataset.dict_for_close_form) > max_concept_num:
-        for layer_num in tqdm(range(len(projection_matrices))):
+        for layer_num in trange(len(projection_matrices)):
             CFR_dict[f'{layer_num}_for_mat1'] = None
             CFR_dict[f'{layer_num}_for_mat2'] = None
 
-        for i in tqdm(range(0, len(train_dataset.dict_for_close_form), max_concept_num)):
+        for i in trange(0, len(train_dataset.dict_for_close_form), max_concept_num):
             contexts_sub, valuess_sub = prepare_k_v(text_encoder, projection_matrices, ca_layers, og_matrices, train_dataset.dict_for_close_form[i:i+5], tokenizer, all_words=False)
             closed_form_refinement(projection_matrices, contexts_sub, valuess_sub, cache_dict=CFR_dict, cache_mode=True)
 
@@ -298,7 +299,7 @@ def cfr_lora_training(args: Arguments):
             torch.cuda.empty_cache()
 
     else:
-        for layer_num in tqdm(range(len(projection_matrices))):
+        for layer_num in trange(len(projection_matrices)):
             CFR_dict[f'{layer_num}_for_mat1'] = .0
             CFR_dict[f'{layer_num}_for_mat2'] = .0
 
@@ -308,13 +309,13 @@ def cfr_lora_training(args: Arguments):
 
     # Load cached prior knowledge for preserving
     prior_preservation_cache_dict = {}
-    for layer_num in tqdm(range(len(projection_matrices))):
+    for layer_num in trange(len(projection_matrices)):
         prior_preservation_cache_dict[f'{layer_num}_for_mat1'] = .0
         prior_preservation_cache_dict[f'{layer_num}_for_mat2'] = .0
 
     # Load cached domain knowledge for preserving
     domain_preservation_cache_dict = {}
-    for layer_num in tqdm(range(len(projection_matrices))):
+    for layer_num in trange(len(projection_matrices)):
         domain_preservation_cache_dict[f'{layer_num}_for_mat1'] = .0
         domain_preservation_cache_dict[f'{layer_num}_for_mat2'] = .0
 
@@ -371,7 +372,7 @@ def cfr_lora_training(args: Arguments):
         lora_layers = AttnProcsLayers(lora_attn_procs)
 
         # values from the original implementation
-        optimizer = torch.optim.AdamW(
+        optimizer = optim.AdamW(
             lora_layers.parameters(),
             lr=args.mace_lr,
             weight_decay=0.01,
@@ -400,7 +401,7 @@ def cfr_lora_training(args: Arguments):
             prob_dist = [x / prob_sum for x in prob_dist]
 
         # Only show the progress bar once on each machine.
-        progress_bar = tqdm(range(global_step, args.mace_max_train_steps))
+        progress_bar = trange(global_step, args.mace_max_train_steps)
         progress_bar.set_description("Steps")
 
         if args.mace_train_seperate:

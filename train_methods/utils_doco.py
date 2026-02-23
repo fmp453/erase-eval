@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 
 import torch
+import torch.optim as optim
 import torch.nn as nn
 from clip_retrieval.clip_client import ClipClient
 from openai import OpenAI
@@ -265,7 +266,7 @@ def clean_prompt(class_prompt_collection):
     return class_prompt_collection
 
 
-def adjust_gradient(model: nn.Module, optim: torch.optim.Optimizer, norm_grad, loss_a: torch.Tensor, loss_b: torch.Tensor, lambda_=1):
+def adjust_gradient(model: nn.Module, optim: optim.Optimizer, norm_grad, loss_a: torch.Tensor, loss_b: torch.Tensor, lambda_=1):
     optim.zero_grad()
 
     loss_b.backward(retain_graph=True)

@@ -7,6 +7,7 @@ from copy import deepcopy
 
 import numpy as np
 import torch
+import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
@@ -261,7 +262,7 @@ def train(args: Arguments):
     unet_lora_params = network.prepare_optimizer_params(args.ace_lr)
 
     losses = []
-    opt = torch.optim.Adam(unet_lora_params, lr=args.ace_lr)
+    opt = optim.Adam(unet_lora_params, lr=args.ace_lr)
     criteria = nn.MSELoss()
     history = []
     is_sc_clip = args.ace_surrogate_concept_clip_path is not None

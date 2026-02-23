@@ -5,6 +5,7 @@
 from pathlib import Path
 
 import torch
+import torch.optim as optim
 import torch.nn as nn
 
 from diffusers import EulerDiscreteScheduler
@@ -225,7 +226,7 @@ def train(args: Arguments):
     for hooker, lr in zip(hookers, lr_list):
         params.append({"params": hooker.lambs, "lr": lr})
 
-    optimizer = torch.optim.AdamW(params)
+    optimizer = optim.AdamW(params)
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
