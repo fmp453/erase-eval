@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from tqdm.auto import tqdm
+from tqdm.auto import trange
 from torch.optim.lr_scheduler import LambdaLR
 from torch.nn.utils import clip_grad_norm_
 from transformers import CLIPTextModel, CLIPTokenizer
@@ -129,7 +129,7 @@ def main(args: Arguments):
     max_grad_norm = 1.0
 
     step = 0
-    progress_bar = tqdm(range(1, args.sdd_num_steps + 1), desc="Training")
+    progress_bar = trange(1, args.sdd_num_steps + 1, desc="Training")
 
     for step in progress_bar:
 

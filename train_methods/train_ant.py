@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from diffusers import UNet2DConditionModel
-from tqdm import tqdm
+from tqdm import trange
 
 from train_methods.train_utils import get_devices, get_models, get_condition, apply_model, gather_parameters, sample_until, seed_everything
 from utils import Arguments
@@ -50,7 +50,7 @@ def train_ant(args: Arguments):
     criteria = nn.MSELoss()
     history = []
 
-    pbar = tqdm(range(args.ant_iterations))
+    pbar = trange(args.ant_iterations)
     for _ in pbar:
         word = random.sample(words, 1)[0]
         emb_0 = get_condition([''], tokenizer, text_encoder)

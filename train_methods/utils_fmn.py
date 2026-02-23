@@ -16,7 +16,6 @@ from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 from torch.utils.data import DataLoader
 from torch.nn.utils import clip_grad_norm_
-from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from accelerate.utils import set_seed
 from safetensors.torch import safe_open
@@ -189,7 +188,7 @@ def train_inversion(
     clip_ti_decay: bool = True
 ):
 
-    progress_bar = tqdm(range(num_steps))
+    progress_bar = trange(num_steps)
     progress_bar.set_description("Steps")
     global_step = 0
 

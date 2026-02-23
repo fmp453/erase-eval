@@ -15,7 +15,7 @@ import torch.optim as optim
 import numpy as np
 from torch.utils.data import DataLoader
 from transformers import CLIPTokenizer, CLIPTextModel
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, UNet2DConditionModel, get_scheduler
 
 from train_methods.data import TextualInversionDataset
@@ -136,7 +136,7 @@ def train_erasing(
     optimizer = optim.AdamW(parameters, lr=args.stereo_ste_lr)
     criteria = nn.MSELoss()
 
-    pbar = tqdm(range(args.stereo_iteration))
+    pbar = trange(args.stereo_iteration)
     erase_concept = [a.strip() for a in erase_concept.split(',')]
     erase_from = [a.strip() for a in erase_from.split(',')]
 
@@ -527,7 +527,7 @@ def robustly_erase_once(
     if remainder > 0:
         balanced_erase_list.extend(np.random.choice(erase_concepts, remainder, replace=False))
 
-    pbar = tqdm(range(args.stereo_iteration))
+    pbar = trange(args.stereo_iteration)
     for i in pbar:
         with torch.no_grad():
             erase_concept_sampled = balanced_erase_list[i]

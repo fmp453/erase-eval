@@ -11,7 +11,7 @@ from PIL import Image
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 
 from diffusers import (
     DiffusionPipeline,
@@ -272,10 +272,10 @@ def main(args: Arguments):
     first_epoch = 0
 
     # Only show the progress bar once on each machine.
-    progress_bar = tqdm(range(global_step, args.doco_max_train_steps))
+    progress_bar = trange(global_step, args.doco_max_train_steps)
     progress_bar.set_description("Steps")
 
-    for epoch in range(first_epoch, args.doco_num_train_epochs):
+    for _ in range(first_epoch, args.doco_num_train_epochs):
         unet.train()
 
         for step, batch in enumerate(train_dataloader):

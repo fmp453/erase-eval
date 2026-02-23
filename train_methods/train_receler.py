@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from tqdm import tqdm
+from tqdm import trange
 from einops import rearrange
 
 from diffusers import UNet2DConditionModel
@@ -330,8 +330,8 @@ def train_receler(args: Arguments):
 
     scheduler.set_timesteps(args.ddim_steps, device)
     # training
-    pbar = tqdm(range(args.receler_iterations))
-    for it in pbar:
+    pbar = trange(args.receler_iterations)
+    for _ in pbar:
         unet.train()
 
         word_idx, word = random.sample(list(enumerate(words)),1)[0]

@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-from tqdm.auto import tqdm
+from tqdm import trange
 from transformers import CLIPTokenizer, CLIPTextModel
 from diffusers import UNet2DConditionModel, DDIMScheduler, AutoencoderKL, DDPMScheduler, SchedulerMixin
 from diffusers.models.lora import LoRALinearLayer
@@ -1179,7 +1179,7 @@ def closed_form_refinement(projection_matrices, all_contexts=None, all_valuess=N
     if cache_dict_path is not None:
         cache_dict = torch.load(cache_dict_path, map_location=projection_matrices[0].weight.device)
         
-    for layer_num in tqdm(range(len(projection_matrices))):
+    for layer_num in trange(len(projection_matrices)):
         gc.collect()
         torch.cuda.empty_cache()
         

@@ -5,7 +5,7 @@ import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from tqdm import tqdm
+from tqdm import trange
 from diffusers import UNet2DConditionModel
 
 from train_methods.train_utils import get_models, gather_parameters, sample_until, get_condition, get_devices, apply_model
@@ -111,7 +111,7 @@ def training(args: Arguments):
     
     
     # TRAINING CODE
-    pbar = tqdm(range(args.race_iterations))
+    pbar = trange(args.race_iterations)
     for _ in pbar:
         word = random.sample(words, 1)[0]
         emb_0 = get_condition([''], tokenizer, text_encoder)

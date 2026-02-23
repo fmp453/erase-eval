@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from tqdm import tqdm
+from tqdm import trange
 
 from torch.autograd import Variable
 from diffusers import UNet2DConditionModel
@@ -222,7 +222,7 @@ def train(args: Arguments):
             y = (y_hard - y).detach() + y
         return y
 
-    pbar = tqdm(range(args.pgd_num_steps * args.eap_iterations))
+    pbar = trange(args.pgd_num_steps * args.eap_iterations)
     scheduler.set_timesteps(args.ddim_steps, devices[1])
     for i in pbar:
         word = random.sample(erased_words, 1)[0]

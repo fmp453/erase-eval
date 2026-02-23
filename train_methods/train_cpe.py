@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import bitsandbytes as bnb
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from diffusers import PNDMScheduler
 from diffusers.models.attention_processor import Attention
 from torch.optim.lr_scheduler import LRScheduler
@@ -515,7 +515,7 @@ def train(args: Arguments, prompts: list[PromptSettings]):
 
         trainable_params = network.prepare_optimizer_params(args.cpe_lr)
 
-        pbar = tqdm(range(args.cpe_iterations))
+        pbar = trange(args.cpe_iterations)
 
         network.requires_grad_(True)
         network.train()
@@ -555,7 +555,7 @@ def train(args: Arguments, prompts: list[PromptSettings]):
         if args.cpe_do_adv_learn:
             adv_prompts.expand_prompts()
             
-            pbar_adv = tqdm(range(args.cpe_adv_iters))
+            pbar_adv = trange(args.cpe_adv_iters)
             network.requires_grad_(False)
             network.eval()
             adv_prompts.requires_grad_(True)

@@ -7,28 +7,10 @@ import torch
 from transformers import CLIPTokenizer, CLIPTextModel
 from transformers.models.clip.modeling_clip import CLIPAttention
 from diffusers import StableDiffusionPipeline
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import StableDiffusionSafetyChecker
 
 from train_methods.train_utils import get_devices, seed_everything, tokenize
 from utils import Arguments
 
-class SafteyChecker(StableDiffusionSafetyChecker):
-    def __init__(self, config):
-        super().__init__(config)
-
-    def forward(self, clip_input, images):
-        has_nsfw_concepts = [False for _ in range(len(images))]
-        return images, has_nsfw_concepts
-
-    def forward_onnx(self, clip_input: torch.Tensor, images: torch.Tensor):
-        has_nsfw_concepts = [False for _ in range(len(images))]
-        return images, has_nsfw_concepts
-
-
-def decode_tokens(tokenizer: CLIPTokenizer, token_array):
-    if hasattr(token_array, "shape") and len(token_array.shape) > 1:
-        return [decode_tokens(tokenizer, row) for row in token_array]
-    return [tokenizer.decode([t]) for t in token_array]
 
 
 # maybe under construction
@@ -89,7 +71,7 @@ def train(args: Arguments):
     device = get_devices(args)[0]
     
     sd_pipeline: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(args.sd_version)
-    sd_pipeline.safety_checker = SafteyChecker(sd_pipeline.safety_checker.config)
+    sd_pipeline.safety_checker = None
     sd_pipeline = sd_pipeline.to(device)
     text_encoder: CLIPTextModel = sd_pipeline.text_encoder
     tokenizer: CLIPTokenizer = sd_pipeline.tokenizer

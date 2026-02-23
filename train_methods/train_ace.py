@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from safetensors.torch import save_file
 from diffusers import UNet2DConditionModel, DDIMScheduler
 from pathlib import Path
-from tqdm import tqdm
+from tqdm import trange
 
 from utils import Arguments
 from train_methods.data import AnchorsDataset
@@ -275,7 +275,7 @@ def train(args: Arguments):
 
     anchor_dataset = AnchorsDataset(prompt_path=args.ace_anchor_prompt_path, concept=prompt)
 
-    pbar = tqdm(range(args.ace_iterations))
+    pbar = trange(args.ace_iterations)
     anchor_dataloader = InfiniteDataLoader(anchor_dataset, args.ace_anchor_batch_size, shuffle=True)
     
     for _, data in zip(pbar, anchor_dataloader):

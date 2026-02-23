@@ -132,11 +132,11 @@ def salun(args: Arguments, mask_path: str):
 
     # Set the number of inference time steps
     ddim_scheduler.set_timesteps(args.ddim_steps, devices[1])
-    progress_bar = trange(1, args.salun_iter+1, desc="Training")
+    progress_bar = trange(1, args.salun_iter + 1, desc="Training")
 
     mask = torch.load(mask_path)
 
-    for step in progress_bar:
+    for _ in progress_bar:
 
         removing_concept = random.choice(args.concepts)
         removing_prompt = removing_concept
@@ -277,8 +277,8 @@ def generate_mask(args: Arguments) -> Path:
 
         noise = torch.randn_like(forget_input, device=device)
         forget_noisy = scheduler.add_noise(forget_input, noise, t)
-        forget_out = unet(forget_noisy, t, forget_emb).sample
-        null_out = unet(forget_noisy, t, null_emb).sample
+        forget_out: torch.Tensor = unet(forget_noisy, t, forget_emb).sample
+        null_out: torch.Tensor = unet(forget_noisy, t, null_emb).sample
 
         preds = (1 + args.guidance_scale) * forget_out - args.guidance_scale * null_out
         loss: torch.Tensor = -criteria(noise, preds)

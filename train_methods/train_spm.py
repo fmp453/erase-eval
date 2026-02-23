@@ -15,7 +15,7 @@ from pydantic import BaseModel, model_validator
 import torch
 import torch.nn as nn
 import bitsandbytes as bnb
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 from train_methods.utils_spm import SPMNetwork, SPMLayer
 
@@ -320,7 +320,7 @@ def train(
             print(f"norm of target: {prompt_pair.target.norm()}")
 
     flush()
-    pbar = tqdm(range(iterations))
+    pbar = trange(iterations)
     loss = None
 
     for _ in pbar:
