@@ -58,7 +58,7 @@ class PromptSettings(BaseModel):  # yaml
     case_number: int = 0
 
     @model_validator(mode='before')
-    def fill_prompts(cls, values):
+    def fill_prompts(cls, values: dict):
         keys = values.keys()
         if "target" not in keys:
             raise ValueError("target must be specified")
