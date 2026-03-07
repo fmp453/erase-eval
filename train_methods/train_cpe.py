@@ -95,13 +95,13 @@ def train_erase_one_stage(
         # loss_prompt_erase/anchor
         pal = torch.tensor([args.cpe_pal]).float().to(device=device_cuda)     
 
-        pal_k_coef_log_dict_erase = dict()
-        pal_v_coef_log_dict_erase = dict()        
+        pal_k_coef_log_dict_erase: dict[str, torch.Tensor] = {}
+        pal_v_coef_log_dict_erase: dict[str, torch.Tensor] = {}        
         loss_prompt_erase_to_k = 0
         loss_prompt_erase_to_v = 0
 
-        pal_k_coef_log_dict_anchor = dict()
-        pal_v_coef_log_dict_anchor = dict()
+        pal_k_coef_log_dict_anchor: dict[str, torch.Tensor] = {}
+        pal_v_coef_log_dict_anchor: dict[str, torch.Tensor] = {}
         loss_prompt_anchor_to_k = 0
         loss_prompt_anchor_to_v = 0   
 
@@ -281,7 +281,6 @@ def train_adv_one_stage(
         loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv_to_v"] = loss_prompt_adv_to_v / len(network_modules)   
         loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv"] = loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv_to_k"] + loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv_to_v"]
 
-        # optim 
         loss_adv[f"loss_adv_stage{stage}/loss_prompt_adv"].backward()
 
         if args.max_grad_norm > 0:
@@ -529,7 +528,7 @@ def train(args: Arguments, prompts: list[PromptSettings]):
             lr_scheduler_num_cycles=args.cpe_lr_scheduler_num_cycles,
             lr_warmup_steps=args.cpe_lr_warmup_steps
         )
-        criteria = torch.nn.MSELoss()
+        criteria = nn.MSELoss()
                 
         network, adv_prompts = train_erase_one_stage(
             args=args,
