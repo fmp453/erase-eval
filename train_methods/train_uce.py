@@ -7,6 +7,7 @@ from functools import reduce
 
 import torch
 from diffusers import UNet2DConditionModel
+from diffusers.models.attention_processor import Attention
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from train_methods.train_utils import get_devices, get_models, tokenize, get_condition
@@ -28,18 +29,21 @@ def edit_model(
     technique='tensor'
 ):
     
-    ### collect all the cross attns modules
+    # collect all the cross attns modules
     sub_nets = unet.named_children()
     ca_layers = []
     for net in sub_nets:
         if 'up' in net[0] or 'down' in net[0]:
             for block in net[1]:
-                if 'Cross' in block.__class__.__name__ :
+                if 'Cross' in block.__class__.__name__:
+                    assert hasattr(block, 'attentions')
                     for attn in block.attentions:
+                        assert isinstance(attn, Attention)
                         for  transformer in attn.transformer_blocks:
                             ca_layers.append(transformer.attn2)
         if 'mid' in net[0]:
             for attn in net[1].attentions:
+                assert isinstance(attn, Attention)
                 for  transformer in attn.transformer_blocks:
                     ca_layers.append(transformer.attn2)
 
