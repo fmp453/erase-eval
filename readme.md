@@ -4,6 +4,13 @@ Official implementation of the paper, [Erasing with Precision: Evaluating Specif
 
 You can evaluate many concept erasure methods for text-to-image generative models (such as Stbale Diffusion and FLUX) by using this implementation.
 
+The hash of our paper is a3fc6d5a3ec5794ace407c3a2229bc92d5cffb01, so you can reproduce
+
+```bash
+git clone https://github.com/fmp453/erase-eval.git
+git checkout a3fc6d5a3ec5794ace407c3a2229bc92d5cffb01
+```
+
 ## Install (our experiments)
 1. base environments
     ```bash
