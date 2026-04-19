@@ -25,7 +25,7 @@ def get_args():
 class Arguments(BaseModel):
     
     mode: Literal["train", "infer"] = Field("train", description="train (erase) or infer")
-    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "original"] = Field("esd")
+    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "hirm", "original"] = Field("esd")
     sd_version: str = Field("compvis/stable-diffusion-v1-4")
     device: str = Field("0", description="gpu id. when using two gpus, separated by comma")
     seed: int = Field(0)
@@ -418,6 +418,15 @@ class Arguments(BaseModel):
     mce_lambda_reg: bool = Field(True)
     mce_reg_alpha: float = Field(0.4)
     mce_reg_beta: int = Field(1, description="no need to use beta for now for testing")
+
+    # configs for HiRM
+    hirm_lr: float = Field(1e-4)
+    hirm_beta1: float = Field(0.9)
+    hirm_beta2: float = Field(0.98)
+    hirm_eps: float = Field(1e-6)
+    hirm_weight_decay: float = Field(1e-8)
+    hirm_epochs: int = Field(50)
+    hirm_steering_coeff: int = Field(5000, description="Steer vector weight in order of topic")
 
     # inference part
     prompt: str = Field("a photo of the English springer", description="prompt in inference phase")
