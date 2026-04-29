@@ -838,7 +838,11 @@ class MCEDataset(Dataset):
             print(f"save_dir {self.metadata} does not exist, downloading the meta data ...")
             if "gcc" in self.metadata:
                 url = "https://drive.google.com/file/d/1VCWJ9YeLwqbT_TyvdV_aZWp0qkpHdEkz/view?usp=sharing"
-                gdown.download(url, self.metadata, fuzzy=True)
+                try:
+                    gdown.download(url, self.metadata, fuzzy=True)
+                except gdown.DownloadError as e:
+                    print(f"Download failed: {e}")
+
             else:
                 raise ValueError("metadata not found, please provide the correct metadata path or download link")
 
