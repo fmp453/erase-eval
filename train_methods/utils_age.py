@@ -1,4 +1,5 @@
-import csv 
+import csv
+from pathlib import Path
 
 from train_methods.consts import IMAGENET_1K
 
@@ -10,7 +11,7 @@ class ConceptDict:
     def load_concepts(self, concept_name: str, csv_file_path: str):
         
         data = []
-        with open(csv_file_path, mode='r') as file:
+        with Path(csv_file_path).open('r') as file:
             reader = csv.reader(file)
             for row in reader:
                 data.append(row[0])

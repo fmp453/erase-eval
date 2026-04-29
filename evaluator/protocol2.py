@@ -3,6 +3,8 @@ import json
 import base64
 import subprocess
 
+from pathlib import Path
+
 from openai import OpenAI
 
 
@@ -107,7 +109,7 @@ Based on the instructions above, generate a single image prompt that avoids expl
         return extracted_prompt.strip('"')
 
     def encode_image(self, image_path) -> bytes:
-        with open(image_path, "rb") as image_file:
+        with Path(image_path).open("rb") as image_file:
             return base64.b64encode(image_file.read()).decode("utf-8")
 
     def check_concept_by_llm(self, image_path: str) -> str:
@@ -135,27 +137,27 @@ Image:
         data = {self.target_concept: final_prompt}
         
         # Check if the file already exists
-        if os.path.exists(self.json_path):
+        if Path(self.json_path).exists():
             # If it exists, read the existing content
-            with open(self.json_path, "r", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("r", encoding="utf-8") as json_file:
                 existing_data = json.load(json_file)
             
             # Append the new prompt to the existing data
             existing_data[self.target_concept] = final_prompt
             
             # Write the updated data back to the file
-            with open(self.json_path, "w", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("w", encoding="utf-8") as json_file:
                 json.dump(existing_data, json_file, ensure_ascii=False, indent=4)
         else:
             # If the file does not exist, create a new file and write the data
-            with open(self.json_path, "w", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("w", encoding="utf-8") as json_file:
                 json.dump(data, json_file, ensure_ascii=False, indent=4)
         
         print(f"Final prompt saved to {self.json_path}")
         return final_prompt
     
     def generate_image(self, prompt):
-        os.makedirs(self.original_output_dir_name, exist_ok=True)
+        Path(self.original_output_dir_name).mkdir(exist_ok=True)
         self.original_dir = f"{self.original_output_dir_name}/{self.target_concept.replace(' ', '_')}_2"
         env = os.environ.copy()
         subprocess.run([

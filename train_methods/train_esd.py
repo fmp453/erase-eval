@@ -3,6 +3,7 @@
 # ref: https://github.com/nannullna/safe-diffusion/blob/main/train_sdd.py
 
 import random
+from pathlib import Path
 
 import torch
 import torch.optim as optim
@@ -99,7 +100,7 @@ def main(args: Arguments):
     
     # You may provide a single file path, or a list of concepts
     if len(args.concepts) == 1 and args.concepts[0].endswith(".txt"):
-        with open(args.concepts[0], "r") as f:
+        with Path(args.concepts[0]).open("r") as f:
             args.concepts = f.read().splitlines()
 
     # This script requires two CUDA devices

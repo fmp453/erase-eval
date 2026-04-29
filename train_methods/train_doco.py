@@ -124,7 +124,7 @@ def main(args: Arguments):
                             args.doco_num_class_prompts,
                             save_images=False,
                         )
-                    with open(Path(class_images_dir, "caption.txt")) as f:
+                    with Path(class_images_dir, "caption.txt").open() as f:
                         class_prompt_collection = [x.strip() for x in f.readlines()]
 
                 # LLM based prompt collection.
@@ -137,12 +137,12 @@ def main(args: Arguments):
                             args.doco_concept_type,
                             args.doco_num_class_prompts,
                         )
-                        with open(class_images_dir / "caption_anchor.txt", "w") as f:
+                        with (class_images_dir / "caption_anchor.txt").open("w") as f:
                             for prompt in class_prompt_collection:
                                 f.write(prompt + "\n")
             # class_prompt is filepath to prompts.
             else:
-                with open(concept["class_prompt"]) as f:
+                with Path(concept["class_prompt"]).open() as f:
                     class_prompt_collection = [x.strip() for x in f.readlines()]
 
             num_new_images = args.doco_num_class_images
@@ -157,9 +157,7 @@ def main(args: Arguments):
 
 
             for example in tqdm(sample_dataloader, desc="Generating class images"):
-                with open(f"{class_images_dir}/caption.txt", "a") as f1, open(
-                    f"{class_images_dir}/images.txt", "a"
-                ) as f2:
+                with (class_images_dir / "caption.txt").open("a") as f1, (class_images_dir / "images.txt").open("a") as f2:
                     images: list[Image.Image] = pipeline(
                         example["prompt"],
                         num_inference_steps=25,

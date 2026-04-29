@@ -98,7 +98,7 @@ def train_step(
 def salun(args: Arguments, mask_path: str):
     # You may provide a single file path, or a list of concepts
     if len(args.concepts) == 1 and args.concepts[0].endswith(".txt"):
-        with open(args.concepts[0], "r") as f:
+        with Path(args.concepts[0]).open("r") as f:
             args.concepts = f.read().splitlines()
 
     devices = get_devices(args)

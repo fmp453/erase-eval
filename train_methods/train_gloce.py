@@ -39,7 +39,7 @@ class PromptSettings(BaseModel):  # yaml
         return values
     
 def load_prompts_from_yaml(path: str) -> list[PromptSettings]:
-    with open(path, "r") as f:
+    with Path(path).open("r") as f:
         prompts = yaml.safe_load(f)
 
     if len(prompts) == 0:

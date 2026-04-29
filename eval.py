@@ -80,7 +80,7 @@ class Arguments(BaseModel):
         return cls.model_validate(vars(parser.parse_args()))
 
 def encode_image(image_path):
-    with open(image_path, "rb") as image_file:
+    with Path(image_path).open("rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 def generate_caption(client: OpenAI, img_path: str, gpt_version: str) -> str:
@@ -263,7 +263,7 @@ def make_prompt(args: Arguments, protocol_number: int, out_dir="") -> str:
             print("generating caption for protocol 1")
             return generate_prompt_for_protocol1(args, out_dir)
         
-        with open("captions/protocol1.json", "r", encoding="utf-8") as json_file:
+        with Path("captions/protocol1.json").open("r", encoding="utf-8") as json_file:
             existing_data = json.load(json_file)
             if concept in existing_data:
                 return existing_data[concept]
@@ -276,7 +276,7 @@ def make_prompt(args: Arguments, protocol_number: int, out_dir="") -> str:
             print("generating caption for protocol 2")
             return generate_prompt_for_protocol2(args, out_dir)
         
-        with open("captions/protocol2.json", "r", encoding="utf-8") as json_file:
+        with Path("captions/protocol2.json").open("r", encoding="utf-8") as json_file:
             existing_data = json.load(json_file)
             if concept in existing_data:
                 return existing_data[concept]

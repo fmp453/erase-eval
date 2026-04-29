@@ -299,9 +299,9 @@ class DocoDataset(Dataset):
         self.instance_images_path = []
         self.class_images_path = []
         for concept in concepts_list:
-            with open(concept["instance_data_dir"], "r") as f:
+            with Path(concept["instance_data_dir"]).open("r") as f:
                 inst_images_path = f.read().splitlines()
-            with open(concept["instance_prompt"], "r") as f:
+            with Path(concept["instance_prompt"]).open("r") as f:
                 inst_prompt = f.read().splitlines()
             inst_img_path = [
                 (x, y, concept["caption_target"])
@@ -636,7 +636,7 @@ class SalUnDataset(Dataset):
 class AnchorsDataset(Dataset):
     def __init__(self, prompt_path, concept):
         self.anchor_list = []
-        with open(prompt_path, "r", encoding='utf-8') as f:
+        with Path(prompt_path).open("r", encoding='utf-8') as f:
             for anchor in f.readlines():
                 anchor_concept = anchor.strip('\n')
                 if anchor_concept != concept:

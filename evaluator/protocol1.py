@@ -70,26 +70,26 @@ Prompt:
 
         if Path(self.json_path).exists():
             # If it exists, read the existing content
-            with open(self.json_path, "r", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("r", encoding="utf-8") as json_file:
                 existing_data = json.load(json_file)
             
             # Append the new prompt to the existing data
             existing_data[self.target_concept] = final_prompt
             
             # Write the updated data back to the file
-            with open(self.json_path, "w", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("w", encoding="utf-8") as json_file:
                 json.dump(existing_data, json_file, ensure_ascii=False, indent=4)
         else:
             data = {self.target_concept: final_prompt}
             # If the file does not exist, create a new file and write the data
-            with open(self.json_path, "w", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("w", encoding="utf-8") as json_file:
                 json.dump(data, json_file, ensure_ascii=False, indent=4)
         
         self.previous_prompts.append(final_prompt)
         return final_prompt
 
     def encode_image(self, image_path):
-        with open(image_path, "rb") as image_file:
+        with Path(image_path).open("rb") as image_file:
             return base64.b64encode(image_file.read()).decode("utf-8")
         
     def generate_image(self, prompt):
@@ -164,19 +164,19 @@ Prompt:
 
         if Path(self.json_path).exists():
             # If it exists, read the existing content
-            with open(self.json_path, "r", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("r", encoding="utf-8") as json_file:
                 existing_data = json.load(json_file)
             
             # Append the new prompt to the existing data
             existing_data[self.target_concept] = final_prompt
             
             # Write the updated data back to the file
-            with open(self.json_path, "w", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("w", encoding="utf-8") as json_file:
                 json.dump(existing_data, json_file, ensure_ascii=False, indent=4)
         else:
             data = {self.target_concept: final_prompt}
             # If the file does not exist, create a new file and write the data
-            with open(self.json_path, "w", encoding="utf-8") as json_file:
+            with Path(self.json_path).open("w", encoding="utf-8") as json_file:
                 json.dump(data, json_file, ensure_ascii=False, indent=4)
             
         return final_prompt
@@ -186,14 +186,14 @@ Prompt:
         generated_prompt = self.generate_prompt()
         while True:
             if cnt > self.num_trials:
-                with open(self.json_path, "r", encoding="utf-8") as json_file:
+                with Path(self.json_path).open("r", encoding="utf-8") as json_file:
                     existing_data = json.load(json_file)
                 
                 # Append the new prompt to the existing data
                 existing_data[self.target_concept] = self.template_prompt
                 
                 # Write the updated data back to the file
-                with open(self.json_path, "w", encoding="utf-8") as json_file:
+                with Path(self.json_path).open("w", encoding="utf-8") as json_file:
                     json.dump(existing_data, json_file, ensure_ascii=False, indent=4)
                 raise RuntimeError(f"failed to generate prompt within {self.num_trials} trials.")
             self.generate_image(generated_prompt)

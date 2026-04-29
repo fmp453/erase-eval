@@ -495,7 +495,7 @@ def robustly_erase_once(
 ):
     nsteps = 50
 
-    with open(args.stereo_anchor_concept_path, 'r') as f:
+    with Path(args.stereo_anchor_concept_path).open('r') as f:
         all_anchor_concepts: list = json.load(f)[erase_concepts[0]]
 
     _, parameters = gather_parameters(args.stereo_method, unet)

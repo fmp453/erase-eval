@@ -13,7 +13,7 @@ from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
 
-from transformers import CLIPTokenizer, CLIPTextModel, CLIPFeatureExtractor
+from transformers import CLIPTokenizer, CLIPTextModel, CLIPImageProcessor
 from diffusers.models.attention_processor import Attention
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
@@ -84,7 +84,7 @@ class CustomDiffusionPipeline(StableDiffusionPipeline):
         tokenizer: CLIPTokenizer,
         unet: UNet2DConditionModel,
         scheduler: SchedulerMixin,
-        feature_extractor: CLIPFeatureExtractor,
+        feature_extractor: CLIPImageProcessor,
         modifier_token_id: list = [],
     ):
         super().__init__(vae, text_encoder, tokenizer, unet, scheduler, None, feature_extractor, None)
@@ -112,7 +112,7 @@ class CustomDiffusionPipeline(StableDiffusionPipeline):
                     )
             torch.save(delta_dict, save_path)
 
-    def load_model(self, save_path):
+    def load_model(self, save_path: str):
         st = torch.load(save_path)
         if 'text_encoder' in st:
             self.text_encoder.load_state_dict(st['text_encoder'])
@@ -144,7 +144,7 @@ class PatchGANDiscriminator(nn.Module):
     def forward(self, img) -> torch.Tensor:
         return self.model(img)
 
-def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False):
+def retrieve(class_prompt, class_images_dir: str, num_class_images: int, save_images=False):
     factor = 1.5
     num_images = int(factor * num_class_images)
     client = ClipClient(
@@ -176,9 +176,9 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
     pbar = tqdm(desc="downloading real regularization images", total=num_class_images)
 
     if save_images:
-        with open(f"{class_images_dir}/caption.txt", "w") as f1, open(
-            f"{class_images_dir}/urls.txt", "w"
-        ) as f2, open(f"{class_images_dir}/images.txt", "w") as f3:
+        with Path(f"{class_images_dir}/caption.txt").open("w") as f1, Path(
+            f"{class_images_dir}/urls.txt").open("w") as f2, Path(
+                f"{class_images_dir}/images.txt").open("w") as f3:
             while total < num_class_images:
                 images = class_images[count]
                 count += 1
@@ -186,7 +186,7 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
                     img = requests.get(images["url"])
                     if img.status_code == 200:
                         _ = Image.open(BytesIO(img.content))
-                        with open(f"{class_images_dir}/images/{total}.jpg", "wb") as f:
+                        with Path(f"{class_images_dir}/images/{total}.jpg").open("wb") as f:
                             f.write(img.content)
                         f1.write(images["caption"] + "\n")
                         f2.write(images["url"] + "\n")
@@ -196,7 +196,7 @@ def retrieve(class_prompt, class_images_dir, num_class_images, save_images=False
                 except:
                     continue
     else:
-        with open(f"{class_images_dir}/caption.txt", "w") as f1:
+        with Path(f"{class_images_dir}/caption.txt").open("w") as f1:
             while count < num_class_images:
                 images = class_images[count]
                 count += 1

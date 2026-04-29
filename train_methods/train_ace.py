@@ -270,7 +270,7 @@ def train(args: Arguments):
         sc_clip = None
     else:
         args.ace_surrogate_concept_clip_path = args.ace_surrogate_concept_clip_path.replace("CONCEPT", args.concepts)
-        with open(args.ace_surrogate_concept_clip_path, "r") as f:
+        with Path(args.ace_surrogate_concept_clip_path).open("r") as f:
             sc_clip = json.load(f)
 
     anchor_dataset = AnchorsDataset(prompt_path=args.ace_anchor_prompt_path, concept=prompt)
