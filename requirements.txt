@@ -23,5 +23,6 @@ pycocotools==2.0.8
 openai==1.59.3
 clip-retrieval
 torch_kmeans
+kmeans-pytorch==0.3
 
 git+https://github.com/facebookresearch/segment-anything.git

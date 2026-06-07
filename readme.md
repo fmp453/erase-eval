@@ -113,6 +113,8 @@ We reimplemented methods listed below using [🤗 Diffusers](https://github.com/
 - [Automatically guides deNoising Trajectories (ANT)](https://github.com/lileyang1210/ANT/)
 - [EraseFlow](https://github.com/Abhiramkns/EraseFlow)
 - [Minimalist Concept Erasure in Generative Models (MCE)](https://github.com/YaNgZhAnG-V5/minimalist_concept_erasure)
+- [Localized Concept Erasure in Text-to-Image Diffusion Models via High-Level Representation Misdirection (HiRM)](https://github.com/Coffeeloveman/HiRM)
+- [Scalable, Precise, and Efficient Concept Erasure for Diffusion Models (SPEED)](https://github.com/Ouxiang-Li/SPEED)
 
 File Stracture is followed by [TabSyn](https://github.com/amazon-science/tabsyn). 
 
