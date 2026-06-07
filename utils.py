@@ -25,7 +25,7 @@ def get_args():
 class Arguments(BaseModel):
     
     mode: Literal["train", "infer"] = Field("train", description="train (erase) or infer")
-    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "hirm", "original"] = Field("esd")
+    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "hirm", "speed", "original"] = Field("esd")
     sd_version: str = Field("compvis/stable-diffusion-v1-4")
     device: str = Field("0", description="gpu id. when using two gpus, separated by comma")
     seed: int = Field(0)
@@ -428,11 +428,24 @@ class Arguments(BaseModel):
     hirm_epochs: int = Field(50)
     hirm_steering_coeff: int = Field(5000, description="Steer vector weight in order of topic")
 
+    # configs for SPEED
+    speed_params: Literal["K", "V", "KV"] = Field("V")
+    speed_aug_num: int =  Field(10)
+    speed_threshold: float =  Field(1e-1)
+    speed_retain_scale: float =  Field(1.0)
+    speed_lamb: float =  Field(0.0)
+    speed_disable_filter: bool = Field(False)
+    speed_retain_path: str | None = Field(None, description="csv path to retain prompts")
+    speed_heads: str | None = Field(None, description="header of retain csv. splitted with comma")
+    speed_file_name: str | None = Field(None, description="file name of edied params")
+        
+
     # inference part
     prompt: str = Field("a photo of the English springer", description="prompt in inference phase")
     negative_prompt: str = Field("")
     images_dir: str = Field("gen-images")
     erased_model_dir: str = Field("models")
+    erased_model_file: str | None = Field(None, description="saved model file endswith .pt or .ckpt. only support SPPED")
     guidance_scale: float = Field(7.5, description="CFG scale")
     num_images_per_prompt: int = Field(5)
     num_inference_steps: float = Field(30)
