@@ -25,7 +25,7 @@ def get_args():
 class Arguments(BaseModel):
     
     mode: Literal["train", "infer"] = Field("train", description="train (erase) or infer")
-    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "hirm", "speed", "original"] = Field("esd")
+    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "hirm", "speed", "care", "original"] = Field("esd")
     sd_version: str = Field("compvis/stable-diffusion-v1-4")
     device: str = Field("0", description="gpu id. when using two gpus, separated by comma")
     seed: int = Field(0)
@@ -438,6 +438,25 @@ class Arguments(BaseModel):
     speed_retain_path: str | None = Field(None, description="csv path to retain prompts")
     speed_heads: str | None = Field(None, description="header of retain csv. splitted with comma")
     speed_file_name: str | None = Field(None, description="file name of edied params")
+
+
+    # configs for CARE
+    care_method: Literal["full", "selfattn", "xattn", "noxattn", "notime"] = Field("xattn", description="which parameters are updated")
+    care_iterations: int = Field(200, description="Number of iterations for the erasing objectives")
+    care_negative_guidance: float = Field(2.0, description="Negative guidance value")
+    care_recare_stage1_lr: float = Field(0.5e-5, description="Learning rate for ReCARE stage 1")
+    care_recare_stage2_lr: float = Field(2e-5, description="Learning rate for ReCARE stage 2")
+    care_ti_lr: float = Field(5e-3, description="Learning rate for textual inversion")
+    care_ti_max_train_steps: int = Field(3000, description="Maximum training steps for textual inversion")
+    care_train_data_dir: str = Field("", description="Images to be used during training")
+    care_learnable_property: Literal["object", "style"] = Field("object", description="object/style")
+    care_initializer_token: str = Field("", description="Initializer token (OPTIONS: person/object/art)")
+    care_n_iterations: int = Field(description="Total number of erasure-attack iterations", default=2)   
+    care_generic_prompt: str = Field("a photo of a", description="Generic prompt for textual inversion visualization")
+    care_anchor_concept_path: str = Field('utils/careset.json', description="Path to anchor concept json (CARE concept)")
+    care_compositional_guidance_scale: float = Field(2.0, description="Compositional guidance scale. The value has to be +1 of the scale you would like to set. If the int = Field(ded scale is 1.0, then the value has to be 2.0")
+    care_center_crop: bool = Field(False, description="Center crop the images during training")
+    care_num_of_adv_concepts: int = Field(2, description="Number of placeholder tokens to include in stage 2")
         
 
     # inference part
@@ -445,6 +464,8 @@ class Arguments(BaseModel):
     negative_prompt: str = Field("")
     images_dir: str = Field("gen-images")
     erased_model_dir: str = Field("models")
+    erased_text_encoder_dir: str = Field("models/text_encoder")
+    erased_tokenizer_dir: str = Field("models/tokenizer")
     erased_model_file: str | None = Field(None, description="saved model file endswith .pt or .ckpt. only support SPPED")
     guidance_scale: float = Field(7.5, description="CFG scale")
     num_images_per_prompt: int = Field(5)
