@@ -115,6 +115,7 @@ We reimplemented methods listed below using [🤗 Diffusers](https://github.com/
 - [Minimalist Concept Erasure in Generative Models (MCE)](https://github.com/YaNgZhAnG-V5/minimalist_concept_erasure)
 - [Localized Concept Erasure in Text-to-Image Diffusion Models via High-Level Representation Misdirection (HiRM)](https://github.com/Coffeeloveman/HiRM)
 - [Scalable, Precise, and Efficient Concept Erasure for Diffusion Models (SPEED)](https://github.com/Ouxiang-Li/SPEED)
+- [Scalable-Precise Concept Unlearning (ScaPre)](https://github.com/kaiyuan02415/scapre)
 - [Co-occurring Associated REtained concepts in Diffusion Unlearning (CARE)](https://github.com/damilab/CARE)
 
 File Stracture is followed by [TabSyn](https://github.com/amazon-science/tabsyn). 
