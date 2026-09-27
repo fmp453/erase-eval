@@ -100,6 +100,7 @@ class PromptEmbedsPair:
         self.positive = positive
         self.unconditional = unconditional
         self.neutral = neutral
+        self.settings = settings
 
         if settings is None:
             # applying the default values of PromptSetting
