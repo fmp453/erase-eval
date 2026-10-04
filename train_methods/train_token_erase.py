@@ -24,13 +24,13 @@ from diffusers.optimization import get_scheduler
 
 from train_methods.train_utils import get_models, get_devices, predict_noise, seed_everything
 from train_methods.train_spm import PromptEmbedsCache, PromptEmbedsPair, PromptSettings, get_random_noise
-from train_methods.utils_token_erase import process_reference_images, create_mrsa_from_references
+from train_methods.utils_token_erase import process_reference_images, create_mrsa_from_references, MultiReferenceSelfAttention
 from utils import Arguments
 
 logger = get_logger(__name__)
 
 
-def hack_self_attention_to_mrsa(model, mrsa):
+def hack_self_attention_to_mrsa(model: nn.Module, mrsa: MultiReferenceSelfAttention):
     """
     Hack the original self-attention module to multi-reference self-attention(MRSA) mechanism
     """
@@ -51,7 +51,6 @@ def hack_self_attention_to_mrsa(model, mrsa):
             else:
                 to_out = self.to_out
 
-            # 这里和原始的attention模块一样
             h = self.heads
             q = self.to_q(x)
             is_cross = context is not None
@@ -62,7 +61,6 @@ def hack_self_attention_to_mrsa(model, mrsa):
 
             sim = torch.einsum('b i d, b j d -> b i j', q, k) * self.scale
 
-            # 如果注意力有掩膜，则应用
             if mask is not None:
                 mask = rearrange(mask, 'b ... -> b (...)')
                 max_neg_value = -torch.finfo(sim.dtype).max
@@ -73,7 +71,6 @@ def hack_self_attention_to_mrsa(model, mrsa):
             attn = sim.softmax(dim=-1)
 
 
-            # the only difference,注入参考图
             out = mrsa(
                 q, k, v, sim, attn, is_cross, place_in_unet,
                 self.heads, scale=self.scale, **kwargs)
@@ -82,8 +79,8 @@ def hack_self_attention_to_mrsa(model, mrsa):
 
         return forward
     
-    def hack_attention_module(net, count, place_in_unet):
-        for name, subnet in net.named_children():
+    def hack_attention_module(net: nn.Module, count, place_in_unet):
+        for _, subnet in net.named_children():
             if net.__class__.__name__ == 'Attention':
                 net.forward = mrsa_forward(net, place_in_unet)
                 return count + 1
@@ -128,7 +125,6 @@ def load_coco_prompts(csv_path: str):
         return prompts
     except Exception as e:
         logger.warning(f"Failed to load COCO prompts: {e}")
-        # 如果加载失败，返回一些默认的通用prompt
         return [
             "a photo of a person",
             "a photo of an object", 
@@ -202,7 +198,7 @@ def predict_noise_with_reference(
     latent_model_input = torch.cat([combined_latents] * 2)
     latent_model_input = scheduler.scale_model_input(latent_model_input, timestep)
     
-    noise_pred = unet(
+    noise_pred: torch.Tensor = unet(
         latent_model_input,
         timestep,
         encoder_hidden_states=text_embeddings,
@@ -308,24 +304,21 @@ def save_progress(
 def main(args: Arguments):
 
     device = get_devices(args)[0]
-
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
-
     seed_everything(args.seed)
     Path(args.save_dir).mkdir(parents=True, exist_ok=True)
 
-    # load models
     tokenizer, text_encoder, vae, unet, _, noise_scheduler = get_models(args)
 
     # Add the placeholder token in tokenizer
     placeholder_tokens = [args.token_eraser_placeholder_token]
 
     if args.token_eraser_num_vectors < 1:
-        raise ValueError(f"--num_vectors has to be larger or equal to 1, but is {args.token_eraser_num_vectors}")
+        raise ValueError(f"num_vectors has to be larger or equal to 1, but is {args.token_eraser_num_vectors}")
 
     # add dummy tokens for multi-vector
     additional_tokens = []
@@ -443,24 +436,20 @@ def main(args: Arguments):
     text_encoder.train()
     weight_dtype = torch.float32
 
-    # Move vae and unet to device and cast to weight_dtype
     unet.to(device, dtype=weight_dtype)
     vae.to(device, dtype=weight_dtype)
 
     ref_data = None
     mrsa = None
-    # 检查是否有prompt配置
     if len(prompt_pairs) > 0:
         prompt_pair = prompt_pairs[0]
         first_prompt_settings = prompt_pair.settings
-        # 检查YAML配置中是否包含reference_images
         if first_prompt_settings is not None and hasattr(first_prompt_settings, 'reference_images'):
             
             ref_config = first_prompt_settings.reference_images
             
             if isinstance(ref_config, dict) and ref_config.get('image_dir'):
-                # 处理参考图像
-                ref_data = process_reference_images(  # 使用新函数
+                ref_data = process_reference_images(
                     first_prompt_settings.reference_images, 
                     vae, 
                     device,
