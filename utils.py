@@ -25,7 +25,7 @@ def get_args():
 class Arguments(BaseModel):
     
     mode: Literal["train", "infer"] = Field("train", description="train (erase) or infer")
-    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "hirm", "speed", "care", "original"] = Field("esd")
+    method: Literal["esd", "ac", "eap", "adv", "locogen", "uce", "mace", "receler", "fmn", "salun", "spm", "sdd", "diffquickfix", "doco", "gloce", "age", "ant", "ef", "mce", "hirm", "speed", "care", "token_erase", "original"] = Field("esd")
     sd_version: str = Field("compvis/stable-diffusion-v1-4")
     device: str = Field("0", description="gpu id. when using two gpus, separated by comma")
     seed: int = Field(0)
@@ -457,6 +457,28 @@ class Arguments(BaseModel):
     care_compositional_guidance_scale: float = Field(2.0, description="Compositional guidance scale. The value has to be +1 of the scale you would like to set. If the int = Field(ded scale is 1.0, then the value has to be 2.0")
     care_center_crop: bool = Field(False, description="Center crop the images during training")
     care_num_of_adv_concepts: int = Field(2, description="Number of placeholder tokens to include in stage 2")
+
+    # configs for token erase
+    token_eraser_placeholder_token: str = Field("")
+    token_eraser_num_vectors: int = Field(1, description="How many textual inversion vectors shall be used to learn the concept.")
+    token_eraser_initializer_token: str | None = Field(None, description="A token to use as initializer word.")
+    token_eraser_learning_rate: float = Field(1e-4, description="Initial learning rate (after the potential warmup period) to use.")
+    token_eraser_scale_lr: bool = Field(False, description="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.")
+    token_eraser_train_batch_size: int = Field(16, description="Batch size (per device) for the training dataloader.")
+    token_eraser_adam_beta1: float = Field(0.9, description="The beta1 parameter for the Adam optimizer.")
+    token_eraser_adam_beta2: float = Field(0.999, description="The beta2 parameter for the Adam optimizer.")
+    token_eraser_adam_weight_decay: float = Field(1e-2, description="Weight decay to use.")
+    token_eraser_adam_epsilon: float = Field(1e-08, description="Epsilon value for the Adam optimizer")
+    token_eraser_use_coco_regularization: bool = Field(False, description="Whether to use COCO prompts for regularization. If False, regularization will be disabled.")
+    token_eraser_coco_prompts_path: str = Field("textsliders/data/coco_10k.csv", description="Path to COCO prompts CSV file for regularization.")
+    token_eraser_regularization_weight: float = Field(0.1, description="Weight for regularization loss to prevent overfitting.")
+    token_eraser_prompts_file: str | None = Field(None, description="prompt file.")
+    token_eraser_num_train_epochs: int = Field(100)
+    token_eraser_max_train_steps: int = Field(5000, description="Total number of training steps to perform.  If provided, overrides num_train_epochs.")
+    token_eraser_lr_warmup_steps: int = Field(500, description="Number of steps for the warmup in the lr scheduler.")
+    token_eraser_lr_num_cycles: int = Field(1, description="Number of hard resets of the lr in cosine_with_restarts scheduler.")
+    token_eraser_text_train_steps: int = Field(default=200, description="Total number of text training steps to perform.")
+    token_eraser_no_safe_serialization: bool = Field(False, description="If specified save the checkpoint not in `safetensors` format, but in original PyTorch format instead.")
         
 
     # inference part
