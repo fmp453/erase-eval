@@ -116,6 +116,7 @@ We reimplemented methods listed below using [🤗 Diffusers](https://github.com/
 - [Localized Concept Erasure in Text-to-Image Diffusion Models via High-Level Representation Misdirection (HiRM)](https://github.com/Coffeeloveman/HiRM)
 - [Scalable, Precise, and Efficient Concept Erasure for Diffusion Models (SPEED)](https://github.com/Ouxiang-Li/SPEED)
 - [Co-occurring Associated REtained concepts in Diffusion Unlearning (CARE)](https://github.com/damilab/CARE)
+- [TokenErase: Robust Concept Erasure via Visual-Injected Token Optimization](https://github.com/xszz666/TokenErase)
 
 File Stracture is followed by [TabSyn](https://github.com/amazon-science/tabsyn). 
 
