@@ -50,6 +50,9 @@ class PromptSettings(BaseModel):  # yaml
     batch_size: int = 1  # default is 1
     dynamic_crops: bool = False  # default is False. only used when model is XL
     use_template: bool = False  # default is False
+
+    reference_images: dict | None = None # for token eraser
+    mrsa_config: dict | None = None # for token eraser
     
     la_strength: float = 1000.0
     sampling_batch_size: int = 4
@@ -100,6 +103,7 @@ class PromptEmbedsPair:
         self.positive = positive
         self.unconditional = unconditional
         self.neutral = neutral
+        self.settings = settings
 
         if settings is None:
             # applying the default values of PromptSetting
